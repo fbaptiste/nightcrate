@@ -35,18 +35,24 @@ forecasts and survey imagery are fetched from external services when needed.
     if you want one.
 - **Gallery:** every project's picture, as you framed it or whole, in a list
   or small, medium or large grids.
-  - Filter by name or object (optionally including everything in each
-    plate-solved image), catalog, object type, constellation, status, rig
-    and imaging dates. Sort by latest or first imaging date, or by name.
+  - Search for an object by name or designation, with suggestions as you
+    type. "M1" finds M 1, not M 10. Optionally include every object in each
+    plate-solved image: results say whether the object is a main target or
+    in the picture, and show the plate-solved picture with the object
+    marked.
+  - Filter by catalog, object type, constellation, status, rig and imaging
+    dates. Sort by latest or first imaging date, or by name.
   - Click an image to turn its card over: imaging months and nights, total
     integration, rigs and status. Expand any image to full size and step
     through the results with the arrow keys.
 - **Messier checklist:** all 110 objects, each showing your own image when a
-  project has one, or a sky-survey picture, crossed through until you image
-  it. A small map of the 110 shows your progress.
-  - Options: the projects under each picture, a rig's field drawn on every
-    picture to show scale, and which objects never rise at a chosen
-    location.
+  project has one, or a sky-survey picture marked "Not imaged" until you
+  image it. A small map of the 110 shows your progress; click a box to jump
+  to its object. Objects not yet imaged that appear in one of your
+  plate-solved pictures are marked.
+  - Options: the projects under each picture, a rig's whole view on the
+    sky-survey pictures with how much of the field the object fills, and
+    which objects never rise at a chosen location.
   - Several projects on one object: arrows step through their images.
 - **Sessions and integration:** enter capture batches manually or derive them
   from cataloged lights. Batches are grouped by night with each night's rig,

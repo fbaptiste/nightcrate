@@ -544,6 +544,8 @@ export interface ThumbnailUrlOptions {
   ws?: string;
   /** Stable descriptor for the checklist framing. */
   renderKey?: string;
+  /** Server-owned rig field for a checklist survey render. */
+  rigId?: number;
 }
 
 /** Build the <img src> URL for a thumbnail — the backend handles cache lookup.
@@ -561,6 +563,7 @@ export function thumbnailUrl(
   const q = new URLSearchParams({ variant });
   if (opts.fovMajorDeg != null) q.set("fov_major_deg", opts.fovMajorDeg.toFixed(4));
   if (opts.fovMinorDeg != null) q.set("fov_minor_deg", opts.fovMinorDeg.toFixed(4));
+  if (opts.rigId != null) q.set("rig_id", String(opts.rigId));
   if (opts.generation != null) q.set("_g", String(opts.generation));
   if (opts.waitMs != null && opts.waitMs > 0) q.set("wait_ms", String(opts.waitMs));
   if (opts.ws) q.set("ws", opts.ws);

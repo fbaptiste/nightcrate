@@ -114,7 +114,14 @@ export function projectSolveImageUrl(
   projectId: number,
   variant: "full" | "thumb_lg" | "thumb_md" | "thumb_sm" = "full",
   solveId?: number,
+  ws?: string,
 ): string {
-  const v = solveId != null ? `?_v=${solveId}` : "";
-  return `/api/projects/${projectId}/solve/image/${variant}${v}`;
+  const params = new URLSearchParams();
+  if (solveId != null) {
+    params.set("solve_id", String(solveId));
+  }
+  if (ws) params.set("ws", ws);
+  if (solveId != null) params.set("_v", String(solveId));
+  const query = params.size ? `?${params.toString()}` : "";
+  return `/api/projects/${projectId}/solve/image/${variant}${query}`;
 }

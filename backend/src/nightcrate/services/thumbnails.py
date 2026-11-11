@@ -28,6 +28,8 @@ import logging
 import os
 import re
 import time
+from collections.abc import AsyncIterator, Hashable
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -58,11 +60,121 @@ _PLACEHOLDER_PNG = bytes.fromhex(
 
 _FETCH_ERROR_BACKOFF = timedelta(minutes=10)
 
-# Cap how many cache-miss tasks can queue renders at once. The shared HiPS
-# service applies the tighter CPU and upstream-request limits across both
-# rendered-image caches.
+# Cap how many cache-miss tasks can render at once. Waiting renders are admitted
+# most-recently-requested first so pictures still visible in the UI move ahead
+# of work left behind by scrolling or a rig change. The shared HiPS service
+# applies the tighter CPU and upstream-request limits across both rendered-image
+# caches.
 _MAX_CONCURRENT_FETCHES = 8
-_fetch_semaphore = asyncio.Semaphore(_MAX_CONCURRENT_FETCHES)
+
+
+@dataclass(slots=True)
+class _GateEntry:
+    key: Hashable
+    recency: int
+    future: asyncio.Future[None] | None
+    active: bool
+    acquired: bool = False
+
+
+class _MostRecentRequestGate:
+    """Bound concurrency while admitting the most recently touched waiter."""
+
+    def __init__(self, capacity: int) -> None:
+        if capacity < 1:
+            raise ValueError("capacity must be positive")
+        self.capacity = capacity
+        self.active_count = 0
+        self._recency = 0
+        self._entries: dict[Hashable, _GateEntry] = {}
+
+    @property
+    def waiting_count(self) -> int:
+        return sum(not entry.active for entry in self._entries.values())
+
+    def _next_recency(self) -> int:
+        self._recency += 1
+        return self._recency
+
+    def schedule(self, key: Hashable) -> _GateEntry:
+        """Reserve an immediate slot or add/refresh *key* as a waiter."""
+        entry = self._entries.get(key)
+        if entry is not None:
+            if not entry.active:
+                entry.recency = self._next_recency()
+            return entry
+
+        active = self.active_count < self.capacity
+        future = None if active else asyncio.get_running_loop().create_future()
+        entry = _GateEntry(
+            key=key,
+            recency=self._next_recency(),
+            future=future,
+            active=active,
+        )
+        self._entries[key] = entry
+        if active:
+            self.active_count += 1
+        return entry
+
+    def touch(self, key: Hashable) -> None:
+        """Move a waiting key to the front without affecting active work."""
+        entry = self._entries.get(key)
+        if entry is not None and not entry.active:
+            entry.recency = self._next_recency()
+
+    async def _acquire(self, key: Hashable) -> _GateEntry:
+        entry = self._entries.get(key)
+        if entry is None:
+            entry = self.schedule(key)
+        if entry.acquired:
+            raise RuntimeError(f"gate key already acquired: {key!r}")
+        entry.acquired = True
+        try:
+            if entry.future is not None:
+                await entry.future
+        except BaseException:
+            self._remove(entry)
+            raise
+        return entry
+
+    def _remove(self, entry: _GateEntry) -> None:
+        if self._entries.get(entry.key) is not entry:
+            return
+        self._entries.pop(entry.key)
+        if entry.active:
+            self.active_count -= 1
+            self._admit_next()
+        elif entry.future is not None and not entry.future.done():
+            entry.future.cancel()
+
+    def _admit_next(self) -> None:
+        while self.active_count < self.capacity:
+            waiting = [entry for entry in self._entries.values() if not entry.active]
+            if not waiting:
+                return
+            entry = max(waiting, key=lambda candidate: candidate.recency)
+            if entry.future is None or entry.future.cancelled():
+                self._entries.pop(entry.key, None)
+                continue
+            entry.active = True
+            self.active_count += 1
+            entry.future.set_result(None)
+
+    def abandon(self, entry: _GateEntry) -> None:
+        """Remove the exact reservation owned by a task that has ended."""
+        self._remove(entry)
+
+    @asynccontextmanager
+    async def slot(self, key: Hashable) -> AsyncIterator[None]:
+        entry = await self._acquire(key)
+        try:
+            yield
+        finally:
+            self._remove(entry)
+
+
+_fetch_gate = _MostRecentRequestGate(_MAX_CONCURRENT_FETCHES)
 
 
 # ── Dataclasses ──────────────────────────────────────────────────────────────
@@ -107,6 +219,16 @@ class ChecklistRender:
             "checklist",
             dso_maj_axis_arcmin=maj_axis_arcmin,
         )
+        return cls.for_field(ra_deg, dec_deg, field_deg)
+
+    @classmethod
+    def for_field(
+        cls,
+        ra_deg: float,
+        dec_deg: float,
+        field_deg: float,
+    ) -> ChecklistRender:
+        """Describe a checklist render at an explicit field width."""
         return cls(
             ra_e4=round(ra_deg * 10_000),
             dec_e4=round(dec_deg * 10_000),
@@ -288,6 +410,7 @@ def make_key(
     ra_deg: float,
     dec_deg: float,
     maj_axis_arcmin: float | None = None,
+    field_deg: float | None = None,
     fov_major_deg: float | None = None,
     fov_minor_deg: float | None = None,
     center_ra_deg: float | None = None,
@@ -309,11 +432,13 @@ def make_key(
     if variant in _RIG_DEPENDENT and (fov_major_deg is None or fov_minor_deg is None):
         raise ValueError(f"variant {variant!r} requires fov_major_deg + fov_minor_deg")
     dim = dimensions_for(variant)
-    checklist = (
-        ChecklistRender.for_object(ra_deg, dec_deg, maj_axis_arcmin)
-        if variant == "checklist"
-        else None
-    )
+    checklist = None
+    if variant == "checklist":
+        checklist = (
+            ChecklistRender.for_field(ra_deg, dec_deg, field_deg)
+            if field_deg is not None
+            else ChecklistRender.for_object(ra_deg, dec_deg, maj_axis_arcmin)
+        )
     # Rig-independent variants deliberately ignore passed-in FOV values so
     # a stray param can never fork the cache.
     if variant not in _RIG_DEPENDENT:
@@ -537,7 +662,7 @@ async def _fetch_and_store(
     short-circuit.
     """
     render_generation = image_cache.generation()
-    async with _fetch_semaphore:
+    async with _fetch_gate.slot(key):
         try:
             if key.variant == "checklist":
                 if key.checklist is None:
@@ -633,6 +758,7 @@ async def get_thumbnail(
     maj_axis_arcmin: float | None,
     max_cache_bytes: int,
     conn_factory,
+    field_deg: float | None = None,
     fov_major_deg: float | None = None,
     fov_minor_deg: float | None = None,
     wait_timeout_s: float = 0.0,
@@ -643,7 +769,8 @@ async def get_thumbnail(
     lookup + touch). ``conn_factory`` is an async context-manager
     factory (typically ``nightcrate.db.session.get_db``) used by the
     background task to open its own connection after the response is
-    sent. ``fov_major_deg`` / ``fov_minor_deg`` are required for the
+    sent. ``field_deg`` overrides the object-framing rule for ``checklist``.
+    ``fov_major_deg`` / ``fov_minor_deg`` are required for the
     ``rig_framed`` variant and rejected with a ``ValueError`` when
     missing.
 
@@ -660,6 +787,7 @@ async def get_thumbnail(
         ra_deg=ra_deg,
         dec_deg=dec_deg,
         maj_axis_arcmin=maj_axis_arcmin,
+        field_deg=field_deg,
         fov_major_deg=fov_major_deg,
         fov_minor_deg=fov_minor_deg,
     )
@@ -728,6 +856,8 @@ async def get_thumbnail(
             variant,
             extent_deg,
         )
+        gate = _fetch_gate
+        gate_entry = gate.schedule(key)
         task = asyncio.create_task(
             _background_wrapper(
                 conn_factory,
@@ -739,7 +869,9 @@ async def get_thumbnail(
             )
         )
         _in_flight[key] = task
+        task.add_done_callback(lambda _task, owner=gate, entry=gate_entry: owner.abandon(entry))
     else:
+        _fetch_gate.touch(key)
         logger.debug(
             "[thumb] miss dso=%d variant=%s — fetch already in flight",
             dso_id,

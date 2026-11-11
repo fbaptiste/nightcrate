@@ -4,6 +4,21 @@ export interface FovGeometry {
   boxHeightPct: number;
 }
 
+export interface RigViewGeometry {
+  boxWidthPct: number;
+  boxHeightPct: number;
+}
+
+export function rigViewGeometry(
+  fieldDeg: number,
+  rig: { majorDeg: number; minorDeg: number },
+): RigViewGeometry {
+  return {
+    boxWidthPct: (rig.majorDeg / fieldDeg) * 100,
+    boxHeightPct: (rig.minorDeg / (fieldDeg * 0.75)) * 100,
+  };
+}
+
 export function fovGeometry(
   picture: { widthDeg: number; heightDeg: number },
   rig: { majorDeg: number; minorDeg: number },

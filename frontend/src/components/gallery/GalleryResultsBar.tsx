@@ -11,6 +11,7 @@ import CropLandscapeIcon from "@mui/icons-material/CropLandscape";
 import GridViewIcon from "@mui/icons-material/GridView";
 import ViewListIcon from "@mui/icons-material/ViewList";
 import type { GalleryView } from "@/api/settings";
+import type { GallerySearchObject } from "@/api/gallery";
 import ViewToggle, { type ViewToggleOption } from "@/components/common/ViewToggle";
 import type { GallerySort } from "@/stores/galleryStore";
 
@@ -29,6 +30,7 @@ interface Props {
   onSort: (sort: GallerySort) => void;
   onDirection: () => void;
   onView: (view: GalleryView) => void;
+  searchObject: GallerySearchObject | null;
 }
 
 export default function GalleryResultsBar({
@@ -39,6 +41,7 @@ export default function GalleryResultsBar({
   onSort,
   onDirection,
   onView,
+  searchObject,
 }: Props) {
   let direction: string;
   if (sort === "name") {
@@ -62,6 +65,16 @@ export default function GalleryResultsBar({
     >
       <Box sx={{ fontWeight: 600 }}>
         {count} {count === 1 ? "project" : "projects"}
+        {searchObject && (
+          <>
+            {" with "}{searchObject.designation}
+            {searchObject.common_name
+              ? ` ${searchObject.common_name}`
+              : searchObject.alias
+                ? ` also ${searchObject.alias}`
+                : ""}
+          </>
+        )}
       </Box>
       <Box sx={{ flex: 1 }} />
       <Box sx={{ display: "flex", alignItems: "center", gap: "6px" }}>

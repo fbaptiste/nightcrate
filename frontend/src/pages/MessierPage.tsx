@@ -103,6 +103,13 @@ export default function MessierPage() {
 
   const [viewerKey, setViewerKey] = useState<string | null>(null);
   const expandRefs = useRef(new Map<string, HTMLButtonElement>());
+  const tileRefs = useRef(new Map<number, { host: HTMLDivElement; front: HTMLButtonElement }>());
+  const [pendingJump, setPendingJump] = useState<number | null>(null);
+  const [highlightedSlot, setHighlightedSlot] = useState<number | null>(null);
+  const highlightTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => {
+    if (highlightTimer.current) clearTimeout(highlightTimer.current);
+  }, []);
   useEffect(() => { if (!visible) queueMicrotask(() => setViewerKey(null)); }, [visible]);
   const closeViewer = (lastKey: string) => {
     setViewerKey(null);
@@ -115,6 +122,23 @@ export default function MessierPage() {
 
   const data = query.data;
   const filteredSlots = useMemo(() => data?.slots.filter((slot) => show === "all" || (show === "imaged" ? slot.state === "imaged" : slot.state !== "imaged")) ?? [], [data, show]);
+  const shownNumbers = useMemo(() => new Set(filteredSlots.map((slot) => slot.number)), [filteredSlots]);
+  useEffect(() => {
+    if (pendingJump == null) return;
+    const frame = requestAnimationFrame(() => {
+      const target = tileRefs.current.get(pendingJump);
+      if (!target) return;
+      // Instant: a long smooth scroll used up most of the 1.5 s highlight
+      // before the tile arrived, and queued survey images on the way.
+      target.host.scrollIntoView({ block: "center" });
+      target.front.focus({ preventScroll: true });
+      setHighlightedSlot(pendingJump);
+      if (highlightTimer.current) clearTimeout(highlightTimer.current);
+      highlightTimer.current = setTimeout(() => setHighlightedSlot(null), 1500);
+      setPendingJump(null);
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [filteredSlots, pendingJump]);
   const viewerEntries = useMemo<ViewerEntry[]>(() => data?.slots.flatMap((slot) => {
     if (slot.state !== "imaged") return [];
     const projects = imageProjects(slot);
@@ -123,7 +147,13 @@ export default function MessierPage() {
     const imageId = viewerImageId(project, view);
     if (imageId == null) return [];
     const title = slot.object?.common_name ? `${slot.object.designation} ${slot.object.common_name}` : (slot.object?.designation ?? `M ${slot.number}`);
-    return [{ key: `m${slot.number}`, projectId: project.project_id, imageId, title, subtitle: project.name }];
+    return [{
+      key: `m${slot.number}`,
+      projectId: project.project_id,
+      source: { kind: "project" as const, imageId },
+      title,
+      subtitle: project.name,
+    }];
   }) ?? [], [data, shownIndices, view]);
 
   const error = query.error instanceof Error ? query.error : null;
@@ -140,6 +170,17 @@ export default function MessierPage() {
             locationValue={locationValue}
             onLocation={(value) => void updateSettings({ messier_location: value })}
             headerRef={headerRef}
+            shownNumbers={shownNumbers}
+            onSlotClick={(number) => {
+              if (!shownNumbers.has(number)) return;
+              setHighlightedSlot(null);
+              setTurned((current) => {
+                const copy = new Set(current);
+                copy.delete(number);
+                return copy;
+              });
+              setPendingJump(number);
+            }}
             controls={<MessierToolbar
               show={show}
               imagedStyle={imagedStyle}
@@ -181,6 +222,8 @@ export default function MessierPage() {
                 onTurn={(next) => setTurned((current) => { const copy = new Set(current); if (next) copy.add(slot.number); else copy.delete(slot.number); return copy; })}
                 onExpand={() => setViewerKey(`m${slot.number}`)}
                 expandRefs={expandRefs}
+                tileRefs={tileRefs}
+                highlighted={highlightedSlot === slot.number}
               />)}
             </Box>
           </Box>

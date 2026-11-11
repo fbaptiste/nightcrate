@@ -2,11 +2,6 @@ import { apiFetch } from "./client";
 import type { ImagingRun } from "./gallery";
 import type { CropSize } from "./projects";
 
-export interface PictureField {
-  width_deg: number;
-  height_deg: number;
-}
-
 export interface MessierLocation {
   id: number;
   name: string;
@@ -18,6 +13,7 @@ export interface MessierRig {
   name: string;
   fov_major_deg: number | null;
   fov_minor_deg: number | null;
+  view_field_deg: number | null;
 }
 
 export interface MessierObject {
@@ -43,7 +39,6 @@ export interface SlotProject {
   last_date: string | null;
   nights: number;
   imaging_runs: ImagingRun[];
-  picture_fields: Partial<Record<CropSize, PictureField | null>> | null;
 }
 
 export interface MessierSlot {
@@ -53,13 +48,21 @@ export interface MessierSlot {
   never_rises: boolean;
   projects: SlotProject[];
   survey: { field_deg: number; render_key: string } | null;
+  coverage_pct: number | null;
+  in_solved_pictures: { project_id: number; name: string }[];
 }
 
 export interface MessierResponse {
   catalog_status: "ready" | "not_downloaded";
   location: MessierLocation | null;
   rig: MessierRig | null;
-  counts: { imaged: number; project: number; never_rises: number; missing: number };
+  counts: {
+    imaged: number;
+    project: number;
+    never_rises: number;
+    missing: number;
+    in_solved: number;
+  };
   slots: MessierSlot[];
   workspace_key: string;
 }

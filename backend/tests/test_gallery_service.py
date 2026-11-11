@@ -4,7 +4,9 @@ from datetime import date
 
 from nightcrate.services.gallery import (
     GalleryCrop,
+    GalleryMark,
     GalleryQuery,
+    GallerySolveMarks,
     GalleryTarget,
     ProjectRecord,
     TargetFacts,
@@ -193,10 +195,32 @@ def test_name_or_target_search():
         records,
         query,
         target_search_hits={2},
-        image_search_hits={3: ["Object"]},
+        image_search_hits={
+            3: GallerySolveMarks(
+                solve_id=7,
+                width=100,
+                height=100,
+                pixel_scale_arcsec=1.0,
+                marks=[
+                    GalleryMark(
+                        dso_id=9,
+                        designation="Object",
+                        pixel_x=50,
+                        pixel_y=50,
+                        inset_radius_px=150,
+                        main_target=False,
+                    )
+                ],
+            )
+        },
     )
     assert {item.project_id for item in result.items} == {1, 2, 3}
     by_id = {item.project_id: item for item in result.items}
-    assert by_id[1].found_in_image == []
-    assert by_id[2].found_in_image == []
-    assert by_id[3].found_in_image == ["Object"]
+    assert by_id[1].match_main_target is False
+    assert by_id[1].match_in_image is False
+    assert by_id[2].match_main_target is True
+    assert by_id[2].match_in_image is False
+    assert by_id[3].match_main_target is False
+    assert by_id[3].match_in_image is True
+    assert by_id[3].solve is not None
+    assert by_id[3].solve.marks[0].designation == "Object"

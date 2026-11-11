@@ -2,29 +2,41 @@
 
 from __future__ import annotations
 
+import asyncio
+import math
 from collections import defaultdict
 from datetime import date
 from typing import Literal
 
 from fastapi import APIRouter, HTTPException, Query
+from pydantic import BaseModel
 
 from nightcrate.api._common import load_designations, load_other_names
 from nightcrate.api.dso import dso_search_clause
+from nightcrate.api.object_search_db import load_solves
+from nightcrate.catalog_loader.designations import (
+    designation_search_prefixes,
+    normalize_designation,
+)
 from nightcrate.core.app_config import get_projects_root
 from nightcrate.db.session import get_db, workspace_key
 from nightcrate.services.dso_sorting import designation_sort_key
 from nightcrate.services.dso_type_groups import group_for_raw_type
 from nightcrate.services.gallery import (
     GalleryCrop,
+    GalleryMark,
     GalleryQuery,
     GalleryResult,
     GalleryRig,
+    GallerySolveMarks,
     GalleryTarget,
     ProjectRecord,
+    SearchObject,
     TargetFacts,
     build_gallery,
     valid_session_date,
 )
+from nightcrate.services.object_search import SolveGeometry, marks_in_solve
 from nightcrate.services.project_images import crop_path
 
 router = APIRouter(prefix="/api/gallery", tags=["Projects"])
@@ -32,6 +44,14 @@ router = APIRouter(prefix="/api/gallery", tags=["Projects"])
 
 class GalleryResponse(GalleryResult):
     workspace_key: str
+    search_object: SearchObject | None = None
+
+
+class GallerySuggestion(BaseModel):
+    dso_id: int
+    designation: str
+    detail: str | None = None
+    project_count: int
 
 
 def _csv_values(value: str | None) -> list[str]:
@@ -76,7 +96,8 @@ async def load_project_records(conn) -> list[ProjectRecord]:
     project_cursor = await conn.execute(
         """
         SELECT p.id, p.name, p.status, p.active, p.created_at,
-               pi.id AS main_image_id
+               pi.id AS main_image_id,
+               EXISTS (SELECT 1 FROM project_solve ps WHERE ps.project_id = p.id) AS has_solve
         FROM project p
         LEFT JOIN project_image pi
           ON pi.project_id = p.id AND pi.is_main = 1
@@ -214,6 +235,7 @@ async def load_project_records(conn) -> list[ProjectRecord]:
             dates=sorted(dates_by_project.get(int(row["id"]), set())),
             rigs=rigs_by_project.get(int(row["id"]), []),
             integration_minutes=integrations.get(int(row["id"]), 0.0),
+            has_solve=bool(row["has_solve"]),
         )
         for row in project_rows
     ]
@@ -222,7 +244,7 @@ async def load_project_records(conn) -> list[ProjectRecord]:
 async def _search_targets(conn, q: str | None) -> set[int] | None:
     if q is None:
         return None
-    clause, params = dso_search_clause(q)
+    clause, params = dso_search_clause(q, exact_designations=True)
     cursor = await conn.execute(
         f"""
         SELECT DISTINCT pt.project_id
@@ -235,40 +257,158 @@ async def _search_targets(conn, q: str | None) -> set[int] | None:
     return {int(row["project_id"]) for row in await cursor.fetchall()}
 
 
-async def _search_images(
-    conn, q: str | None, records: list[ProjectRecord], enabled: bool
-) -> dict[int, list[str]] | None:
-    if q is None or not enabled:
-        return None
-    await conn.create_function("designation_key", 1, designation_sort_key, deterministic=True)
-    clause, params = dso_search_clause(q)
+async def _matching_dsos(conn, q: str, *, exact_designations: bool) -> list[dict]:
+    clause, params = dso_search_clause(q, exact_designations=exact_designations)
     cursor = await conn.execute(
         f"""
-        SELECT DISTINCT ps.project_id, d.id AS dso_id,
-               d.primary_designation, d.common_name
-        FROM project_solve ps
-        JOIN project_dso pd ON pd.solve_id = ps.id
-        JOIN dso d ON d.id = pd.dso_id
+        SELECT DISTINCT d.id, d.primary_designation, d.obj_type,
+               d.ra_deg, d.dec_deg, d.maj_axis_arcmin, d.min_axis_arcmin,
+               d.position_angle_deg, d.common_name, d.constellation,
+               d.distance_pc, d.distance_method, d.mag_b, d.active
+        FROM dso d
         WHERE {clause}
-        ORDER BY ps.project_id, designation_key(d.primary_designation), d.id
         """,  # noqa: S608  # nosec B608 - shared static SQL fragment
         params,
     )
+    rows = []
+    for row in await cursor.fetchall():
+        value = dict(row)
+        value["type_group"] = group_for_raw_type(value["obj_type"])
+        rows.append(value)
+    return rows
+
+
+def _solve_marks(
+    solve: SolveGeometry,
+    dsos: list[dict],
+    target_ids: set[int],
+) -> GallerySolveMarks | None:
+    annotated = marks_in_solve(solve, dsos)
+    if not annotated:
+        return None
+    pixel_scale = math.hypot(solve.wcs.cd2_1, solve.wcs.cd2_2) * 3600.0
+    minimum_inset = 75.0 / pixel_scale if pixel_scale > 0 else 0.0
+    marks = [
+        GalleryMark(
+            dso_id=item.id,
+            designation=item.primary_designation,
+            common_name=item.common_name,
+            pixel_x=item.pixel_x,
+            pixel_y=item.pixel_y,
+            semi_major_px=item.ellipse_semi_major_px,
+            semi_minor_px=item.ellipse_semi_minor_px,
+            angle_deg=item.ellipse_angle_deg,
+            inset_radius_px=max(
+                minimum_inset,
+                5.0 * item.ellipse_semi_major_px
+                if item.ellipse_semi_major_px is not None
+                else minimum_inset,
+            ),
+            main_target=item.id in target_ids,
+        )
+        for item in annotated
+    ]
+    return GallerySolveMarks(
+        solve_id=solve.solve_id,
+        width=solve.image_width,
+        height=solve.image_height,
+        pixel_scale_arcsec=pixel_scale,
+        marks=marks,
+    )
+
+
+def _project_gallery_solves(
+    solves: list[SolveGeometry],
+    dsos: list[dict],
+    target_ids: dict[int, set[int]],
+) -> list[GallerySolveMarks | None]:
+    return [_solve_marks(solve, dsos, target_ids.get(solve.project_id, set())) for solve in solves]
+
+
+def _project_solves(solves: list[SolveGeometry], dsos: list[dict]):
+    return [marks_in_solve(solve, dsos) for solve in solves]
+
+
+async def _search_images(
+    conn,
+    matched_dsos: list[dict],
+    records: list[ProjectRecord],
+    *,
+    enabled: bool,
+    include_retired: bool,
+) -> dict[int, GallerySolveMarks] | None:
+    if not enabled or not matched_dsos:
+        return None
+    active_dsos = [
+        dso
+        for dso in matched_dsos
+        if dso["active"] and dso["ra_deg"] is not None and dso["dec_deg"] is not None
+    ]
+    if not active_dsos:
+        return None
+    eligible = [record for record in records if include_retired or not record.retired]
+    solves = await load_solves(conn, (record.id for record in eligible))
     target_ids = {
         record.id: {facts.target.dso_id for facts in record.targets} for record in records
     }
-    hits: dict[int, list[str]] = defaultdict(list)
-    seen: dict[int, set[str]] = defaultdict(set)
-    for row in await cursor.fetchall():
-        project_id = int(row["project_id"])
-        if int(row["dso_id"]) in target_ids.get(project_id, set()):
-            continue
-        name = row["common_name"] or row["primary_designation"]
-        key = name.casefold()
-        if key not in seen[project_id]:
-            seen[project_id].add(key)
-            hits[project_id].append(name)
-    return dict(hits)
+    projected = await asyncio.to_thread(
+        _project_gallery_solves,
+        solves,
+        active_dsos,
+        target_ids,
+    )
+    return {
+        solve.project_id: marks
+        for solve, marks in zip(solves, projected, strict=True)
+        if marks is not None
+    }
+
+
+async def _is_designation(conn, q: str) -> bool:
+    key = normalize_designation(q)
+    cursor = await conn.execute(
+        """
+        SELECT 1 FROM dso_designation WHERE search_key = ?
+        UNION ALL
+        SELECT 1 FROM dso_group WHERE search_key = ?
+        LIMIT 1
+        """,
+        (key, key),
+    )
+    return await cursor.fetchone() is not None
+
+
+async def _search_object(conn, q: str, dsos: list[dict]) -> SearchObject | None:
+    if len(dsos) != 1:
+        return None
+    dso = dsos[0]
+    dso_id = int(dso["id"])
+    designations = (await load_designations(conn, [dso_id])).get(dso_id, [])
+    query_key = normalize_designation(q)
+    matched = next(
+        (
+            item.display_form
+            for item in designations
+            if normalize_designation(item.display_form) == query_key
+        ),
+        None,
+    )
+    alias = matched if matched and matched != dso["primary_designation"] else None
+    if alias is None and dso["common_name"] is None:
+        alias = next(
+            (
+                item.display_form
+                for item in designations
+                if item.display_form != dso["primary_designation"]
+            ),
+            None,
+        )
+    return SearchObject(
+        dso_id=dso_id,
+        designation=dso["primary_designation"],
+        common_name=dso["common_name"],
+        alias=alias,
+    )
 
 
 @router.get("", response_model=GalleryResponse)
@@ -311,11 +451,124 @@ async def get_gallery(
     async with get_db() as conn:
         records = await load_project_records(conn)
         target_hits = await _search_targets(conn, normalized_q)
-        image_hits = await _search_images(conn, normalized_q, records, search_images)
+        matched_dsos = (
+            await _matching_dsos(conn, normalized_q, exact_designations=True)
+            if normalized_q is not None
+            else []
+        )
+        image_hits = await _search_images(
+            conn,
+            matched_dsos,
+            records,
+            enabled=search_images,
+            include_retired=include_retired,
+        )
+        designation_query = (
+            await _is_designation(conn, normalized_q) if normalized_q is not None else False
+        )
+        search_object = (
+            await _search_object(conn, normalized_q, matched_dsos)
+            if normalized_q is not None
+            else None
+        )
+    query.search_project_names = not designation_query
     result = build_gallery(
         records,
         query,
         target_search_hits=target_hits,
         image_search_hits=image_hits,
     )
-    return GalleryResponse(**result.model_dump(), workspace_key=workspace_key())
+    return GalleryResponse(
+        **result.model_dump(),
+        workspace_key=workspace_key(),
+        search_object=search_object,
+    )
+
+
+@router.get("/suggest", response_model=list[GallerySuggestion])
+async def suggest_gallery_objects(
+    q: str,
+    search_images: bool = Query(False),
+    include_retired: bool = Query(False),
+) -> list[GallerySuggestion]:
+    query = q.strip()
+    if len(query) < 2:
+        return []
+    async with get_db() as conn:
+        candidates = await _matching_dsos(conn, query, exact_designations=False)
+        if not candidates:
+            return []
+        designations = await load_designations(conn, [int(dso["id"]) for dso in candidates])
+        clause, params = dso_search_clause(query)
+        project_cursor = await conn.execute(
+            f"""
+            SELECT DISTINCT pt.dso_id, pt.project_id
+            FROM project_target pt
+            JOIN project p ON p.id = pt.project_id
+            JOIN dso d ON d.id = pt.dso_id
+            WHERE {clause} AND (? OR p.active = 1)
+            """,  # noqa: S608  # nosec B608 - shared static SQL fragment
+            [*params, include_retired],
+        )
+        projects_by_dso: dict[int, set[int]] = defaultdict(set)
+        for row in await project_cursor.fetchall():
+            projects_by_dso[int(row["dso_id"])].add(int(row["project_id"]))
+
+        if search_images:
+            records = [
+                record
+                for record in await load_project_records(conn)
+                if include_retired or not record.retired
+            ]
+            solves = await load_solves(conn, (record.id for record in records))
+            active_candidates = [
+                dso
+                for dso in candidates
+                if dso["active"] and dso["ra_deg"] is not None and dso["dec_deg"] is not None
+            ]
+            projected = await asyncio.to_thread(_project_solves, solves, active_candidates)
+            for solve, marks in zip(solves, projected, strict=True):
+                for mark in marks:
+                    projects_by_dso[mark.id].add(solve.project_id)
+
+    prefixes = designation_search_prefixes(query)
+    suggestions: list[GallerySuggestion] = []
+    for dso in candidates:
+        dso_id = int(dso["id"])
+        if not dso["active"] and not projects_by_dso.get(dso_id):
+            continue
+        choices = designations.get(dso_id, [])
+        matched = next(
+            (
+                item.display_form
+                for item in choices
+                if any(
+                    normalize_designation(item.display_form).startswith(prefix)
+                    for prefix in prefixes
+                )
+            ),
+            dso["primary_designation"],
+        )
+        detail = dso["common_name"]
+        if detail is None:
+            detail = next(
+                (item.display_form for item in choices if item.display_form != matched),
+                None,
+            )
+        suggestions.append(
+            GallerySuggestion(
+                dso_id=dso_id,
+                designation=matched,
+                detail=detail,
+                project_count=len(projects_by_dso.get(dso_id, set())),
+            )
+        )
+    suggestions.sort(
+        key=lambda item: (
+            item.project_count == 0,
+            -item.project_count,
+            designation_sort_key(item.designation),
+            item.dso_id,
+        )
+    )
+    return suggestions[:8]

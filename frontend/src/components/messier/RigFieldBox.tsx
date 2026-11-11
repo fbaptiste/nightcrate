@@ -1,23 +1,16 @@
 import Box from "@mui/material/Box";
-import { fovGeometry } from "@/lib/messierFov";
+import { fovGeometry, rigViewGeometry } from "@/lib/messierFov";
 
 interface Props {
-  picture: { widthDeg: number; heightDeg: number } | null;
-  rig: { majorDeg: number; minorDeg: number } | null;
-  showUnknown?: boolean;
-  small?: boolean;
+  picture: { widthDeg: number; heightDeg: number };
+  rig: { majorDeg: number; minorDeg: number };
+  fieldDeg?: number;
 }
 
-export default function RigFieldBox({ picture, rig, showUnknown = false, small = false }: Props) {
-  const geometry = picture && rig ? fovGeometry(picture, rig) : null;
-  if (!rig) return null;
-  if (!geometry) {
-    return showUnknown ? (
-      <Box sx={{ position: "absolute", left: small ? 6 : 8, bottom: small ? 6 : 8, height: 22, px: "9px", borderRadius: 11, display: "inline-flex", alignItems: "center", bgcolor: "rgba(0, 0, 0, 0.66)", border: "1px solid rgba(255, 255, 255, 0.32)", color: "#ffffff", fontSize: 11, fontWeight: 600, pointerEvents: "none" }}>
-        Scale unknown
-      </Box>
-    ) : null;
-  }
+export default function RigFieldBox({ picture, rig, fieldDeg }: Props) {
+  const geometry = fieldDeg != null
+    ? rigViewGeometry(fieldDeg, rig)
+    : fovGeometry(picture, rig);
   return (
     <Box
       aria-hidden

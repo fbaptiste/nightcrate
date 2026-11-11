@@ -47,6 +47,13 @@ Shared architecture, checks, and privacy rules live in [CLAUDE.md](../CLAUDE.md)
   against the server's working directory (see `PLAN.md` deferred work).
 - Annotation counts must match drawn objects: keep any object whose extent
   intersects the frame, clip the overlay, and clamp labels into the image.
+- **An object's ellipse** comes from the solution's local geometry at the
+  object (`services/image_annotations.py`): map 1′ east and north offsets to
+  pixels, then take the SVD of that Jacobian times the object's axes. That
+  gives the semi-axes and angle in displayed (y-down) pixels, so rotation,
+  mirroring and unequal scales come out right. Before v0.49.0 the position
+  angle minus the picture's rotation was used, as if every ellipse started
+  north–south, and most rings were drawn at the wrong tilt.
 - `pixel_loader` is the shared path-to-normalized-array entry point for new
   code. `api/images.py:_load_image_data` and `api/aberration.py:_load_mono_data`
   still dispatch pre-resolved sources separately; a new format affects all three.
@@ -228,7 +235,10 @@ Since v0.47.0. Spec: [v0.47.0 design](superpowers/specs/2026-11-07-v0.47.0-desig
   project means deleting it.
 - Gallery images are finished display images. The plate-solve image is separate,
   normally linear FITS/XISF. One solve per project today; mosaics are deferred.
-- `project_solve` stores WCS; `project_dso` stores **every** in-frame object.
+- `project_solve` stores WCS; `project_dso` stores the in-frame objects found
+  at solve time, from the 500 largest in the cone
+  (`api/plate_solve.py:query_dsos_in_cone`). Searches compute membership from
+  the WCS instead (see Gallery and project images).
   Pick the automatic main by nearest center, then largest on a tie. Reproject
   overlay coordinates from stored WCS on read, off the event loop.
   The stored solve is view-only; delete it with confirmation before re-solving.
@@ -427,13 +437,30 @@ Design: [v0.46.0 spec](superpowers/specs/2026-11-04-v0.46.0-design.md) and its
   - Targets on inactive (removed-catalog) objects still match.
   - Rigs are one list: rigs declared on the project, plus rigs its sessions
     name.
-- **Search:**
-  - project names match anywhere;
-  - main targets match through the shared `dso_search_clause`, with
-    designations matching from the start, so "M1" also finds M 10–M 19;
-  - "Also search plate-solved projects" adds the stored `project_dso` rows.
-    These are the 500 largest objects at solve time, from the catalogs
-    present then, so later catalogs need a new solve.
+- **Search** (object search, [v0.49.0 spec](superpowers/specs/2026-11-10-v0.49.0-design.md)):
+  - **Submitted searches:** designations match exactly
+    (`dso_search_clause(..., exact_designations=True)`), so "M1" finds M 1
+    and never M 10–M 19. Names and aliases match anywhere. Main targets on
+    inactive (removed-catalog) objects still match.
+  - **Project names** match anywhere, except when the query is a
+    designation.
+  - **Suggestions while typing** (`GET /api/gallery/suggest`, two
+    characters or more) match designations from the start.
+  - **"Also search plate-solved projects"** adds projects whose solve
+    contains a matching active object. Membership is computed at search
+    time from the stored solution (`services/object_search.py`), never
+    from `project_dso`: those rows were computed once at solve time, from a
+    capped list and the catalogs present then.
+    - `objects_near` is a provable superset: an object's distance from the
+      sky position of the image's centre pixel is at most (half diagonal +
+      √2 × its half-size in pixels) × the larger singular value of CD.
+    - The shared `project_dsos` then decides membership, as the Plate Solve
+      tab does. Nothing is capped.
+  - **Results** say "Main target", "In the plate-solved image", or both.
+    In-image results show the solve image with the object marked
+    (`SolveMarkedImage.tsx`). The solve image route takes `solve_id` and
+    answers 204 when the project's solve has changed, so an old mark is
+    never drawn on a new picture.
 - **Images (Fred, 2026-11-07):** each view shows the user's framing for its
   size, otherwise the whole main image.
   - **Sizes and views:**
@@ -580,14 +607,37 @@ Design: [v0.48.0 spec](superpowers/specs/2026-11-09-v0.48.0-design.md).
 - **Never rises:** `90 − |latitude − Dec| < −1`, a conservative test with
   a one-degree margin, for the location chosen on the page. It ignores
   the horizon profile.
-- **Rig field:** the rig's field is drawn centred on each picture
-  (`lib/messierFov.ts`); the picture shrinks when the field is larger.
-  - An own image's scale comes from the project's plate solve, only when
-    the main image is the solved file, or has its proportions within
-    0.5% (`main_image_field`). Thumbnail framings scale that field by
-    their crop fractions.
-  - Survey images span `max(1.5 × major axis, 0.15°)`, 5′ when the size
-    is unknown.
+- **Without a rig,** survey images span `max(1.5 × major axis, 0.15°)`,
+  5′ when the size is unknown.
+- **Rig view** (v0.49.0, [spec](superpowers/specs/2026-11-10-v0.49.0-design.md),
+  "Rig view and the not-imaged ribbon"): with a rig whose field is known,
+  survey pictures show the rig's whole view with the sky filled in, the
+  frame drawn on it (`RigFieldBox`, `lib/messierFov.ts`).
+  - The picture spans `rig_view_field_deg` = max(major, minor × 4/3) / 0.92
+    across its 4:3 width. Only 0.05°–30° is supported; outside it, the
+    close-up survey picture is shown with the frame drawn to scale
+    (`fovGeometry`).
+  - "{n}% of the field" is the Planner's `compute_coverage_pct`, shown
+    when the object has a size, own pictures included.
+  - **Own pictures never get the rig view** (Fred): with "Imaged as: Own
+    image" they look as they do without a rig. Their tile has a teal
+    border, 4 px (3 px small), round with the tile, around the whole tile
+    rather than a letterboxed picture.
+  - **The server owns the field.** The thumbnail route takes `rig_id`
+    (checklist variant only) and derives the field from the active rig.
+    With `render_key`, a mismatch (an equipment edit between loading the
+    page and loading a picture) answers 204 `no-store`, never another
+    field's pixels.
+- **Not imaged:** a corner ribbon on survey pictures of slots not imaged,
+  top-left, so it never covers a small central object.
+- **In a solved picture:** a slot not imaged whose object lies in one of
+  the user's plate-solved pictures (`marks_in_solve`, as in the Gallery's
+  search) gets a pill on its tile, a teal outlined box with a dot on the
+  map, and a count in the progress line.
+- **The progress map** jumps to a box's tile: instant scroll (a smooth one
+  used up the highlight), focus, and a 1.5 s ring. It never changes
+  "Show"; a box whose tile the filter hides does nothing and keeps the
+  default cursor.
 - **Survey images** are the `checklist` thumbnail variant: 800 × 600,
   identified by `ChecklistRender` (centre and field quantised, plus a
   render revision). The same `render_key` names the cache row
@@ -601,18 +651,37 @@ Design: [v0.48.0 spec](superpowers/specs/2026-11-09-v0.48.0-design.md).
     v0.48.0's first look about 100 long-polled requests from tiles
     scrolled past held all six, and the full-size viewer waited about a
     minute;
+  - a tile's first request asks without waiting (`wait_ms=0`), so every
+    tile near the view tells the server about its picture at once; while
+    the answer is 202 it long-polls (`wait_ms=4000`) at least 1 s apart,
+    for 75 s at most. First requests go ahead of polls in the queue;
   - every poll goes through the queue; a 202 releases its place;
   - a tile leaving the 400 px look-ahead cancels its request, and asks
     again with a fresh 75 s budget when it returns;
   - the `IntersectionObserver` root is the page's own scroll box.
     `rootMargin` only grows an explicit root; with the default root the
     scroll box still clips;
+  - the browser keeps finished pictures: requests use the default cache
+    mode, and the server sends `public, max-age=86400` on 200 and
+    `no-store` on 202 and 204. The thumbnail cache's generation (`_g`) is
+    in the URL, so clearing the cache in Admin replaces them;
   - a loaded image survives hiding and showing the page and the
     checklist's refetch on each visit. Its identity is the object, the
-    render key and the workspace; its object URL is revoked only on
-    unmount, a changed identity or a load error. A refetch only retries
-    tiles that failed or have no image yet. Readiness comes from the
-    image's own `onLoad` and resets before paint when the image goes.
+    render key, the workspace and the cache generation. On a changed
+    identity the tile drops its picture at once, and the object URL is
+    revoked after the `<img>` is gone, never before: v0.49.0 found a
+    revoked URL shown again after a quick rig switch back, which left
+    tiles blank for good. A refetch never repeats an in-flight request;
+    it only retries tiles that failed. Readiness comes from the image's
+    own `onLoad` and resets before paint when the image goes.
+- **The server renders the most recently requested picture first**
+  (`services/thumbnails.py`, `_MostRecentRequestGate`, all thumbnail
+  variants, eight at a time). A request for a picture already waiting
+  moves it up; nothing is dropped. A page abandons requests when tiles
+  scroll away or the rig changes, but the server can't tell, and in
+  arrival order the tiles on screen waited behind that work (Fred's
+  report, v0.49.0). Each render's clean-up releases only the slot it
+  reserved, never a newer render of the same picture.
 - **The header is pinned** inside the page's scroll box. The scroll box's
   `scroll-padding-top` follows the header's measured height, so keyboard
   focus and the viewer's return never leave a tile under it.

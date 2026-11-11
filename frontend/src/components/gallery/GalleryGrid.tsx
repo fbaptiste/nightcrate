@@ -17,6 +17,10 @@ interface Props {
   resetKey: string;
   onExpand: (id: number) => void;
   expandRefs: RefObject<Map<number, HTMLButtonElement>>;
+  unavailableSolveIds: ReadonlySet<number>;
+  solveRetries: ReadonlyMap<number, number>;
+  onSolveUnavailable: (solveId: number) => void;
+  showMatchNotes: boolean;
 }
 
 interface TileProps {
@@ -28,6 +32,10 @@ interface TileProps {
   onTurn: (turned: boolean) => void;
   onExpand: () => void;
   expandRefs: RefObject<Map<number, HTMLButtonElement>>;
+  unavailableSolveIds: ReadonlySet<number>;
+  solveRetries: ReadonlyMap<number, number>;
+  onSolveUnavailable: (solveId: number) => void;
+  showMatchNotes: boolean;
 }
 
 function GalleryGridTile({
@@ -39,6 +47,10 @@ function GalleryGridTile({
   onTurn,
   onExpand,
   expandRefs,
+  unavailableSolveIds,
+  solveRetries,
+  onSolveUnavailable,
+  showMatchNotes,
 }: TileProps) {
   const frontRef = useRef<HTMLButtonElement>(null);
   const backRef = useRef<HTMLButtonElement>(null);
@@ -83,6 +95,11 @@ function GalleryGridTile({
             onExpand={onExpand}
             buttonRef={frontRef}
             expandRef={expandRef}
+            solveUnavailable={
+              item.solve != null && unavailableSolveIds.has(item.solve.solve_id)
+            }
+            solveRetry={item.solve ? (solveRetries.get(item.solve.solve_id) ?? 0) : 0}
+            onSolveUnavailable={onSolveUnavailable}
           />
         }
         back={
@@ -164,6 +181,16 @@ function GalleryGridTile({
             </NameWithAlternates>
           ))}
         </Box>
+        {showMatchNotes && item.match_main_target && !item.has_solve && (
+          <Box sx={{ color: "text.secondary", fontSize: view === "small" ? 11.5 : 12.5 }}>
+            Not plate solved, so nothing is marked.
+          </Box>
+        )}
+        {showMatchNotes && item.match_main_target && item.has_solve && !item.solve && (
+          <Box sx={{ color: "text.secondary", fontSize: view === "small" ? 11.5 : 12.5 }}>
+            Not in the plate-solved image.
+          </Box>
+        )}
       </Box>
     </Box>
   );
@@ -176,6 +203,10 @@ export default function GalleryGrid({
   resetKey,
   onExpand,
   expandRefs,
+  unavailableSolveIds,
+  solveRetries,
+  onSolveUnavailable,
+  showMatchNotes,
 }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const trackWidth = useTrackWidth(view, containerRef);
@@ -226,6 +257,10 @@ export default function GalleryGrid({
           onTurn={(showBack) => setItemTurned(item.project_id, showBack)}
           onExpand={() => onExpand(item.project_id)}
           expandRefs={expandRefs}
+          unavailableSolveIds={unavailableSolveIds}
+          solveRetries={solveRetries}
+          onSolveUnavailable={onSolveUnavailable}
+          showMatchNotes={showMatchNotes}
         />
       ))}
     </Box>

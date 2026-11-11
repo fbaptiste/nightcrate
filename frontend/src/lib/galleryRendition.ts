@@ -125,6 +125,13 @@ export function formatImagingRuns(item: RunsItem): string[] {
  * | 1/10, 2/null, 3/30      | 1, 3       |
  * | 1/null                  | (empty)    |
  */
-export function viewerSequence(items: GalleryItem[]): GalleryItem[] {
-  return items.filter((item) => item.main_image_id != null);
+export function viewerSequence(
+  items: GalleryItem[],
+  unavailableSolveIds: ReadonlySet<number> = new Set(),
+): GalleryItem[] {
+  return items.filter(
+    (item) =>
+      (item.solve != null && !unavailableSolveIds.has(item.solve.solve_id)) ||
+      item.main_image_id != null,
+  );
 }

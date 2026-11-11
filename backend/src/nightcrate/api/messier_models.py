@@ -4,10 +4,9 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from nightcrate.services.gallery import GalleryCrop, ImagingRun
-from nightcrate.services.messier import PictureField
 
 CropSize = Literal["small", "medium", "large"]
 
@@ -23,6 +22,7 @@ class MessierRig(BaseModel):
     name: str
     fov_major_deg: float | None
     fov_minor_deg: float | None
+    view_field_deg: float | None
 
 
 class MessierObject(BaseModel):
@@ -48,12 +48,16 @@ class SlotProject(BaseModel):
     last_date: str | None
     nights: int
     imaging_runs: list[ImagingRun]
-    picture_fields: dict[CropSize, PictureField | None] | None
 
 
 class SurveyImage(BaseModel):
     field_deg: float
     render_key: str
+
+
+class SolvedPicture(BaseModel):
+    project_id: int
+    name: str
 
 
 class MessierSlot(BaseModel):
@@ -63,6 +67,8 @@ class MessierSlot(BaseModel):
     never_rises: bool
     projects: list[SlotProject]
     survey: SurveyImage | None
+    coverage_pct: float | None
+    in_solved_pictures: list[SolvedPicture] = Field(default_factory=list)
 
 
 class MessierCounts(BaseModel):
@@ -70,6 +76,7 @@ class MessierCounts(BaseModel):
     project: int
     never_rises: int
     missing: int
+    in_solved: int
 
 
 class MessierResponse(BaseModel):

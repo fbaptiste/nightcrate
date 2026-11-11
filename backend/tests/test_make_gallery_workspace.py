@@ -66,15 +66,48 @@ async def test_build_writes_deterministic_framed_thumbnail_rows_and_files(tmp_pa
             ORDER BY project_id, size
             """
         ).fetchall()
+        solved_with_images = conn.execute(
+            """
+            SELECT COUNT(*)
+            FROM project p
+            JOIN project_image pi ON pi.project_id = p.id AND pi.is_main = 1
+            JOIN project_solve ps ON ps.project_id = p.id
+            """
+        ).fetchone()[0]
+        main_images = conn.execute(
+            "SELECT COUNT(*) FROM project_image WHERE is_main = 1"
+        ).fetchone()[0]
+        known = conn.execute(
+            """
+            SELECT p.id, p.name, ps.id, ps.center_ra_deg, ps.center_dec_deg,
+                   ps.image_width, ps.image_height
+            FROM project p
+            JOIN project_solve ps ON ps.project_id = p.id
+            WHERE p.name IN ('Leo Triplet', 'Hamburger Galaxy', 'Markarian''s Chain')
+            ORDER BY p.name
+            """
+        ).fetchall()
 
     assert len(rows) == 6
     assert {row[2] for row in rows} == set(CROP_SIZES)
     assert {row[3] for row in rows} == {None}
     assert len({row[1] for row in rows}) == 2
     assert len({tuple(row[4:]) for row in rows}) == 2
+    assert solved_with_images == main_images
+    assert len(known) == 3
+    assert {(row[5], row[6]) for row in known} == {(1200, 900)}
 
     for row_id, project_id, size, *_ in rows:
         path = crop_path(destination / "project_data" / str(project_id), size, row_id)
         assert path.is_file()
         with Image.open(path) as image:
             assert image.size == CROP_SIZES[size]
+
+    for project_id, _name, solve_id, *_ in known:
+        solve_dir = destination / "project_data" / str(project_id) / "solve" / str(solve_id)
+        assert {path.name for path in solve_dir.glob("*.jpg")} == {
+            "full.jpg",
+            "thumb_lg.jpg",
+            "thumb_md.jpg",
+            "thumb_sm.jpg",
+        }
