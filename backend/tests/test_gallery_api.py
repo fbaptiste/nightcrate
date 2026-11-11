@@ -77,16 +77,23 @@ async def _crop(
     return crop_id
 
 
-async def _solve(conn, project_id: int, dso_ids: list[int]) -> None:
+async def _solve(
+    conn,
+    project_id: int,
+    dso_ids: list[int],
+    *,
+    center_ra_deg: float = 0.0,
+    center_dec_deg: float = 0.0,
+) -> None:
     cursor = await conn.execute(
         """
         INSERT INTO project_solve (
             project_id, image_path, image_width, image_height,
             center_ra_deg, center_dec_deg, cd1_1, cd1_2, cd2_1, cd2_2,
             crpix1, crpix2
-        ) VALUES (?, '/synthetic/solve.fits', 100, 100, 0, 0, 1, 0, 0, 1, 50, 50)
+        ) VALUES (?, '/synthetic/solve.fits', 100, 100, ?, ?, 1, 0, 0, 1, 50, 50)
         """,
-        (project_id,),
+        (project_id, center_ra_deg, center_dec_deg),
     )
     for dso_id in dso_ids:
         await conn.execute(
@@ -120,7 +127,30 @@ async def test_image_search_with_no_active_coordinate_matches_keeps_main_targets
         target_project = await _project(conn, "Inactive main target")
         solved_project = await _project(conn, "Only in a solve")
         await _target(conn, target_project, dsos.inactive_id)
-        await _solve(conn, solved_project, [dsos.inactive_id])
+        inactive = await (
+            await conn.execute(
+                "SELECT ra_deg, dec_deg FROM dso WHERE id = ?",
+                (dsos.inactive_id,),
+            )
+        ).fetchone()
+        assert inactive is not None
+        await conn.execute(
+            """
+            UPDATE dso
+            SET common_name = 'Sh2-240 coordinate-less match',
+                ra_deg = NULL,
+                dec_deg = NULL
+            WHERE id = ?
+            """,
+            (dsos.ids["m31"],),
+        )
+        await _solve(
+            conn,
+            solved_project,
+            [dsos.inactive_id],
+            center_ra_deg=float(inactive["ra_deg"]),
+            center_dec_deg=float(inactive["dec_deg"]),
+        )
         await conn.commit()
 
     items = (
@@ -161,6 +191,9 @@ async def test_inactive_target_appears_in_suggestions(client: AsyncClient):
 
 @pytest.mark.parametrize("query", ["M", "  M "])
 async def test_suggestions_require_two_trimmed_characters(client: AsyncClient, query: str):
+    async with get_db() as conn:
+        await make_library_dsos(conn)
+
     response = await client.get("/api/gallery/suggest", params={"q": query})
 
     assert response.status_code == 200

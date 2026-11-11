@@ -143,6 +143,15 @@ spec comes next, decided with Fred one question at a time.
     entry replaced; no other personal details, ignored files or
     `instructions/`.
 - [x] Fred's acceptance of the candidate (2026-11-11: "finalize").
+- [x] Published as [PR #28](https://github.com/fbaptiste/nightcrate/pull/28)
+  (tag `v0.49.0`). **PR review after publication** (fresh Codex review of
+  everything changed after the last independent review, records `43`–`44`):
+  no blocker or major; two minors, confirmed by Claude: two tests added at
+  finalization would pass without the code they cover (the inactive object
+  lay outside the test picture; the short-query test had no catalog
+  objects). Fred: "yes, fix both". Codex fixed them (`45`–`46`), each shown
+  to fail with its code removed (Claude repeated the inactive-object one);
+  the tag moved to the fix commit.
 - **From the start sweep (2026-11-10):**
   - v0.46.0-D1, the single rig list on gallery cards and in the filter:
     three releases completed with no evidence either way; Fred closed it
