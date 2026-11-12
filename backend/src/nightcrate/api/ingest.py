@@ -76,6 +76,8 @@ from nightcrate.services.ingest_models import (
     SourceFolder,
     SourceFolderCreate,
     SourceFolderUpdate,
+    UncatalogedFile,
+    UncatalogedList,
 )
 from nightcrate.services.ingest_scanner import (
     header_bearing,
@@ -343,6 +345,26 @@ async def remove_folder(project_id: int, folder_id: int) -> None:
     async with get_db() as conn:
         await conn.execute("PRAGMA foreign_keys = ON")
         folder = await _get_folder_or_404(conn, project_id, folder_id)
+        cursor = await conn.execute(
+            "SELECT path FROM project_source_folder WHERE project_id = ? AND id != ?",
+            (project_id, folder_id),
+        )
+        other_folders = [row["path"] for row in await cursor.fetchall()]
+        cursor = await conn.execute(
+            "SELECT id, path FROM uncataloged_file WHERE project_id = ?", (project_id,)
+        )
+        remove_uncataloged_ids = [
+            row["id"]
+            for row in await cursor.fetchall()
+            if _folder_can_retry_path(folder["path"], row["path"])
+            and not any(_folder_can_retry_path(other, row["path"]) for other in other_folders)
+        ]
+        if remove_uncataloged_ids:
+            placeholders = ",".join("?" * len(remove_uncataloged_ids))
+            await conn.execute(
+                f"DELETE FROM uncataloged_file WHERE id IN ({placeholders})",  # nosec B608
+                remove_uncataloged_ids,
+            )
         # Exact prefix match (folder + separator) so underscores/percent in real
         # paths can't act as LIKE wildcards. folder_prefix picks the separator the
         # folder's children actually carry: `/` for a plain directory or one
@@ -507,30 +529,159 @@ async def _run_ingest(project_id: int, folders: list[str]) -> IngestStatus:
             subs_updated=counters["updated"],
             subs_skipped=counters["skipped"],
             errors_count=len(errors),
+            first_error=_first_error(errors),
         )
 
 
+def _first_error(errors: list[dict]) -> str | None:
+    if not errors:
+        return None
+    first = errors[0]
+    if not first.get("path"):
+        return first["error"]
+    path = first["path"]
+    if first["error"].startswith(("couldn't", "scan results")):
+        label = path
+    else:
+        label = Path(path.rsplit("::", 1)[-1]).name
+    return f"{label}: {first['error']}"
+
+
 async def _ingest_folder(conn, project_id, run_id, folder, pool, errors, counters) -> None:
-    entries = scan_directory(folder)
-    counters["scanned"] += len(entries)
+    report = scan_directory(folder)
+    parsed = await _parse_in_pool(header_bearing(report.entries), pool)
+    counters_before = counters.copy()
+    errors_before = len(errors)
+    failures: list[dict] = []
+    try:
+        await conn.execute("BEGIN")
+        counters["scanned"] += len(report.entries)
 
-    # Non-image categories: park a file_location row (no entity link).
-    for entry in entries:
-        if entry.category in (CATEGORY_PXIPROJECT, CATEGORY_LOG, CATEGORY_OTHER):
-            await _upsert_plain_location(conn, project_id, entry)
+        for entry in report.entries:
+            if entry.category in (CATEGORY_PXIPROJECT, CATEGORY_LOG, CATEGORY_OTHER):
+                await _upsert_plain_location(conn, project_id, entry)
 
-    # Header-bearing files: parse in parallel, then persist on the main process.
-    to_parse = header_bearing(entries)
-    parsed = await _parse_in_pool(to_parse, pool)
+        for result in parsed:
+            if result.get("error"):
+                errors.append({"path": result["path"], "error": result["error"]})
+                failures.append(result)
+                continue
+            file_counters = counters.copy()
+            await conn.execute("SAVEPOINT ingest_file")
+            try:
+                await _persist_parsed(conn, project_id, run_id, result, counters)
+            except Exception as exc:  # noqa: BLE001 - keep the other files in this folder
+                await conn.execute("ROLLBACK TO ingest_file")
+                await conn.execute("RELEASE ingest_file")
+                counters.update(file_counters)
+                message = f"{type(exc).__name__}: {exc}"
+                errors.append({"path": result["path"], "error": message})
+                failures.append({"path": result["path"], "error": message, "reason": "unreadable"})
+            else:
+                await conn.execute("RELEASE ingest_file")
 
-    for result in parsed:
-        if result.get("error"):
-            errors.append({"path": result["path"], "error": result["error"]})
-            continue
-        try:
-            await _persist_parsed(conn, project_id, run_id, result, counters)
-        except Exception as exc:  # noqa: BLE001 - one bad file shouldn't abort the run
-            errors.append({"path": result["path"], "error": f"{type(exc).__name__}: {exc}"})
+        if report.root_error is not None:
+            errors.append({"path": folder, "error": f"couldn't be read — {report.root_error}"})
+        else:
+            for directory, message in report.unlisted_dirs:
+                errors.append({"path": directory, "error": f"couldn't be read — {message}"})
+            failures.extend(
+                {"path": path, "error": message, "reason": "unreadable"}
+                for path, message in report.unreadable_files
+            )
+            errors.extend(
+                {"path": path, "error": message} for path, message in report.unreadable_files
+            )
+            await _reconcile_uncataloged(
+                conn,
+                project_id,
+                run_id,
+                folder,
+                failures,
+                [path for path, _ in report.unlisted_dirs],
+                report.skipped_dirs,
+            )
+        await conn.commit()
+    except Exception as exc:  # noqa: BLE001 - the folder is the atomic unit
+        await conn.rollback()
+        counters.clear()
+        counters.update(counters_before)
+        del errors[errors_before:]
+        errors.append(
+            {
+                "path": folder,
+                "error": f"scan results couldn't be saved — {type(exc).__name__}: {exc}",
+            }
+        )
+
+
+def _path_is_covered(path: str, folder: str) -> bool:
+    prefix = folder_prefix(folder)
+    if "::" in prefix:
+        return path.startswith(prefix)
+    return "::" not in path and path.startswith(prefix)
+
+
+def _path_is_under(path: str, directory: str) -> bool:
+    separator = "/" if "::" in directory else os.sep
+    return path == directory or path.startswith(directory.rstrip(separator) + separator)
+
+
+def _folder_can_retry_path(folder: str, path: str) -> bool:
+    if not _path_is_covered(path, folder):
+        return False
+    relative = path[len(folder_prefix(folder)) :]
+    directories = relative.replace("\\", "/").split("/")[:-1]
+    return not any(
+        component.startswith(".") or component.lower().endswith(".pxiproject")
+        for component in directories
+    )
+
+
+async def _reconcile_uncataloged(
+    conn,
+    project_id: int,
+    run_id: int,
+    folder: str,
+    failures: list[dict],
+    unlisted_dirs: list[str],
+    skipped_dirs: list[str],
+) -> None:
+    cursor = await conn.execute(
+        "SELECT id, path FROM uncataloged_file WHERE project_id = ?", (project_id,)
+    )
+    excluded = [*unlisted_dirs, *skipped_dirs]
+    delete_ids = [
+        row["id"]
+        for row in await cursor.fetchall()
+        if _path_is_covered(row["path"], folder)
+        and not any(_path_is_under(row["path"], path) for path in excluded)
+    ]
+    if delete_ids:
+        placeholders = ",".join("?" * len(delete_ids))
+        await conn.execute(
+            f"DELETE FROM uncataloged_file WHERE id IN ({placeholders})",  # nosec B608
+            delete_ids,
+        )
+    for failure in failures:
+        await conn.execute(
+            """
+            INSERT INTO uncataloged_file (project_id, path, reason, message, run_id)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(project_id, path) DO UPDATE SET
+                reason = excluded.reason,
+                message = excluded.message,
+                run_id = excluded.run_id,
+                detected_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+            """,
+            (
+                project_id,
+                failure["path"],
+                failure.get("reason", "unreadable"),
+                failure["error"],
+                run_id,
+            ),
+        )
 
 
 async def _parse_in_pool(entries, pool) -> list[dict]:
@@ -850,6 +1001,9 @@ async def catalog_summary(project_id: int) -> CatalogSummary:
         s.pxiprojects = cat.get("pxiproject", 0)
         s.logs = cat.get("log", 0)
         s.other = cat.get("other", 0)
+        s.uncataloged = await _count(
+            conn, "SELECT COUNT(*) FROM uncataloged_file WHERE project_id = ?", (project_id,)
+        )
         s.total_files = (
             s.lights
             + s.darks
@@ -863,6 +1017,32 @@ async def catalog_summary(project_id: int) -> CatalogSummary:
             + s.other
         )
         return s
+
+
+@router.get("/{project_id}/catalog/uncataloged", response_model=UncatalogedList)
+async def catalog_uncataloged(project_id: int) -> UncatalogedList:
+    async with get_db() as conn:
+        await get_or_404(conn, "project", project_id, "Project")
+        timezone = await _project_display_tz(conn, project_id)
+        cursor = await conn.execute(
+            """
+            SELECT uf.id, uf.path, uf.reason, uf.message, uf.detected_at,
+                   EXISTS (
+                       SELECT 1 FROM file_location fl
+                       WHERE fl.project_id = uf.project_id AND fl.path = uf.path
+                   ) AS cataloged_earlier
+            FROM uncataloged_file uf
+            WHERE uf.project_id = ?
+            ORDER BY uf.detected_at DESC, uf.path
+            """,
+            (project_id,),
+        )
+        files = []
+        for row in await cursor.fetchall():
+            value = row_to_dict(row)
+            value["cataloged_earlier"] = bool(value["cataloged_earlier"])
+            files.append(UncatalogedFile(**value))
+        return UncatalogedList(timezone=timezone, files=files)
 
 
 @router.get("/{project_id}/catalog/frames", response_model=CatalogFramesPage)

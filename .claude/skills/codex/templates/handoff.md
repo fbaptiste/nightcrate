@@ -11,7 +11,8 @@ From: Claude. To: Codex (implementation profile). Phase <n> of <m>.
 - **Acceptance commands:** <exact commands>. If `uv run` cannot use its cache,
   use `.venv/bin/python -m pytest` and say which ran.
 - **Tests:** run only the test modules named here, by path. Never run the
-  whole backend suite or any GPU test (`tests/test_compute.py`). The sandbox
+  whole backend suite, any GPU test (`tests/test_compute.py`), or
+  `tests/test_projects_api.py` (its rendering path initialises MLX). The sandbox
   hides the GPU, so MLX aborts the interpreter and macOS shows a crash dialog on
   Fred's screen for each aborted process. Claude runs the full suite outside
   the sandbox.

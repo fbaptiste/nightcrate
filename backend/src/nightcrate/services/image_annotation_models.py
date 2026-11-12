@@ -16,6 +16,13 @@ class WcsParams(BaseModel):
     naxis2: int
 
 
+class FileSolution(BaseModel):
+    """A usable stored solution, or the reason a stored solution is unusable."""
+
+    wcs: WcsParams | None = None
+    unavailable_reason: str | None = None
+
+
 class AnnotatedDso(BaseModel):
     id: int
     primary_designation: str

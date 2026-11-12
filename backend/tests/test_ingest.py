@@ -9,6 +9,8 @@ Two layers:
 
 from __future__ import annotations
 
+import hashlib
+import zipfile
 from pathlib import Path
 
 import numpy as np
@@ -59,6 +61,40 @@ class TestClassifyExtension:
     def test_pxiproject_dir(self):
         assert classify_extension("MyProject.pxiproject", is_dir=True) == CATEGORY_PXIPROJECT
         assert classify_extension("MyProject.pxiproject", is_dir=False) == CATEGORY_PXIPROJECT
+
+
+class TestScanReport:
+    def test_reports_unlisted_unreadable_and_skipped_paths(self, tmp_path, monkeypatch):
+        hidden = tmp_path / ".stash"
+        hidden.mkdir()
+        project = tmp_path / "Session.pxiproject"
+        project.mkdir()
+        unlisted = tmp_path / "offline"
+        unlisted.mkdir()
+        unreadable = tmp_path / "bad.fits"
+        unreadable.write_bytes(b"bad")
+        original_iterdir = Path.iterdir
+        original_stat = Path.stat
+
+        def iterdir(path):
+            if path == unlisted:
+                raise PermissionError("not allowed")
+            return original_iterdir(path)
+
+        def stat(path, *args, **kwargs):
+            if path == unreadable:
+                raise PermissionError("not allowed")
+            return original_stat(path, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "iterdir", iterdir)
+        monkeypatch.setattr(Path, "stat", stat)
+
+        report = scan_directory(str(tmp_path))
+
+        assert report.root_error is None
+        assert report.unlisted_dirs == [(str(unlisted), "PermissionError: not allowed")]
+        assert report.unreadable_files == [(str(unreadable), "PermissionError: not allowed")]
+        assert report.skipped_dirs == [str(hidden), str(project)]
 
 
 # ── Pure: frame classification + stack detection ─────────────────────────────
@@ -257,11 +293,13 @@ class TestScanner:
         (tmp_path / "notes.txt").write_text("n")
         (tmp_path / ".secret.fits").write_bytes(b"x")
         (tmp_path / "Proj.pxiproject").mkdir()
+        (tmp_path / ".Hidden.pxiproject").mkdir()
 
         entries = {e.name: e for e in scan_directory(str(tmp_path))}
         assert "light.fits" in entries
         assert entries["light.fits"].category == CATEGORY_SUB
         assert entries["Proj.pxiproject"].category == CATEGORY_PXIPROJECT
+        assert entries[".Hidden.pxiproject"].category == CATEGORY_PXIPROJECT
         # Hidden file/dir excluded; pxiproject not descended into.
         assert ".secret.fits" not in entries
         assert all(
@@ -326,7 +364,9 @@ class TestScanner:
         assert "path" in result
 
     def test_scan_missing_dir_returns_empty(self, tmp_path: Path):
-        assert scan_directory(str(tmp_path / "nope")) == []
+        report = scan_directory(str(tmp_path / "nope"))
+        assert report.entries == []
+        assert report.root_error is not None
 
     def test_parse_image_file_reads_header_and_hash(self, tmp_path: Path):
         path = tmp_path / "frame.fits"
@@ -397,6 +437,29 @@ def _write_fits(
     for k, v in (extra or {}).items():
         hdu.header[k] = v
     hdu.writeto(path, overwrite=True)
+
+
+def _xisf_pair(seed: int = 0) -> tuple[bytes, bytes]:
+    from tests.test_xisf_io import _make_xisf
+
+    raw = (np.arange(16, dtype=np.uint16) + seed).tobytes()
+    checksum = f"sha256:{hashlib.sha256(raw).hexdigest()}"
+    good = _make_xisf(4, 4, 1, "UInt16", raw, checksum=checksum)
+    damaged = bytearray(good)
+    damaged[-1] ^= 1
+    return good, bytes(damaged)
+
+
+async def _bind_folder(client: AsyncClient, project_id: int, path: str | Path) -> dict:
+    response = await client.post(f"/api/projects/{project_id}/folders", json={"path": str(path)})
+    assert response.status_code == 201, response.text
+    return response.json()
+
+
+async def _uncataloged(client: AsyncClient, project_id: int) -> dict:
+    response = await client.get(f"/api/projects/{project_id}/catalog/uncataloged")
+    assert response.status_code == 200, response.text
+    return response.json()
 
 
 @pytest.fixture
@@ -473,6 +536,551 @@ class TestFolderBinding:
 
 
 class TestIngestEndToEnd:
+    async def test_damaged_xisf_is_listed_then_cleared_after_repair(self, client, tmp_path):
+        from tests.test_xisf_io import _make_xisf
+
+        folder = tmp_path / "xisf"
+        folder.mkdir()
+        raw = np.arange(16, dtype=np.uint16).tobytes()
+        checksum = f"sha256:{hashlib.sha256(raw).hexdigest()}"
+        good_bytes = _make_xisf(4, 4, 1, "UInt16", raw, checksum=checksum)
+        image = folder / "light.xisf"
+        image.write_bytes(good_bytes)
+
+        pid = await _make_project(client, "Damaged XISF")
+        await client.post(f"/api/projects/{pid}/folders", json={"path": str(folder)})
+        initial = (await client.post(f"/api/projects/{pid}/ingest")).json()
+        assert initial["errors_count"] == 0
+        damaged = bytearray(good_bytes)
+        damaged[-1] ^= 1
+        image.write_bytes(damaged)
+        run = (await client.post(f"/api/projects/{pid}/ingest")).json()
+
+        assert run["errors_count"] == 1
+        assert run["first_error"].startswith("light.xisf: This XISF file is damaged.")
+        summary = (await client.get(f"/api/projects/{pid}/catalog/summary")).json()
+        assert summary["uncataloged"] == 1
+        listing = (await client.get(f"/api/projects/{pid}/catalog/uncataloged")).json()
+        assert listing["files"][0]["reason"] == "damaged"
+        assert listing["files"][0]["path"] == str(image)
+        assert listing["files"][0]["cataloged_earlier"] is True
+        frames = (await client.get(f"/api/projects/{pid}/catalog/frames")).json()
+        assert frames["total"] == 1
+        assert frames["rows"][0]["path"] == str(image)
+
+        image.write_bytes(good_bytes)
+        repaired = (await client.post(f"/api/projects/{pid}/ingest")).json()
+        assert repaired["errors_count"] == 0
+        assert (await client.get(f"/api/projects/{pid}/catalog/uncataloged")).json()["files"] == []
+
+    async def test_damaged_archive_xisf_is_listed(self, client, tmp_path):
+        from tests.test_xisf_io import _make_xisf
+
+        raw = np.arange(16, dtype=np.uint16).tobytes()
+        checksum = f"sha256:{hashlib.sha256(raw).hexdigest()}"
+        damaged = bytearray(_make_xisf(4, 4, 1, "UInt16", raw, checksum=checksum))
+        damaged[-1] ^= 1
+        archive = tmp_path / "night.zip"
+        with zipfile.ZipFile(archive, "w") as output:
+            output.writestr("bad.xisf", damaged)
+        pid = await _make_project(client, "Damaged archive")
+        await client.post(f"/api/projects/{pid}/folders", json={"path": str(archive)})
+
+        run = (await client.post(f"/api/projects/{pid}/ingest")).json()
+        listing = (await client.get(f"/api/projects/{pid}/catalog/uncataloged")).json()
+
+        assert run["errors_count"] == 1
+        assert listing["files"][0]["path"] == f"{archive}::bad.xisf"
+        assert listing["files"][0]["reason"] == "damaged"
+
+    async def test_file_savepoint_rolls_back_one_file_and_its_counters(
+        self, client, tmp_path, monkeypatch
+    ):
+        from nightcrate.api import ingest as ingest_api
+
+        folder = tmp_path / "atomic-files"
+        folder.mkdir()
+        good = folder / "good.fits"
+        bad = folder / "bad.fits"
+        _write_fits(good, imagetyp="LIGHT")
+        _write_fits(bad, imagetyp="LIGHT")
+        original = ingest_api._persist_parsed
+
+        async def fail_after_persist(conn, project_id, run_id, result, counters):
+            await original(conn, project_id, run_id, result, counters)
+            if result["path"] == str(bad):
+                raise RuntimeError("injected after persistence")
+
+        monkeypatch.setattr(ingest_api, "_persist_parsed", fail_after_persist)
+        pid = await _make_project(client, "Atomic file")
+        await client.post(f"/api/projects/{pid}/folders", json={"path": str(folder)})
+
+        run = (await client.post(f"/api/projects/{pid}/ingest")).json()
+        frames = (await client.get(f"/api/projects/{pid}/catalog/frames")).json()
+        failures = (await client.get(f"/api/projects/{pid}/catalog/uncataloged")).json()
+
+        assert run["subs_inserted"] == 1
+        assert frames["total"] == 1
+        assert frames["rows"][0]["path"] == str(good)
+        assert failures["files"][0]["path"] == str(bad)
+        assert failures["files"][0]["reason"] == "unreadable"
+
+    async def test_reconciliation_failure_rolls_back_the_folder(
+        self, client, tmp_path, monkeypatch
+    ):
+        from nightcrate.api import ingest as ingest_api
+        from tests.test_xisf_io import _make_xisf
+
+        folder = tmp_path / "atomic-folder"
+        folder.mkdir()
+        raw = np.arange(16, dtype=np.uint16).tobytes()
+        checksum = f"sha256:{hashlib.sha256(raw).hexdigest()}"
+        good_bytes = _make_xisf(4, 4, 1, "UInt16", raw, checksum=checksum)
+        image = folder / "frame.xisf"
+        damaged = bytearray(good_bytes)
+        damaged[-1] ^= 1
+        image.write_bytes(damaged)
+        pid = await _make_project(client, "Atomic folder")
+        await client.post(f"/api/projects/{pid}/folders", json={"path": str(folder)})
+        await client.post(f"/api/projects/{pid}/ingest")
+        image.write_bytes(good_bytes)
+        original = ingest_api._reconcile_uncataloged
+
+        async def fail_after_reconcile(*args, **kwargs):
+            await original(*args, **kwargs)
+            raise RuntimeError("injected reconciliation failure")
+
+        monkeypatch.setattr(ingest_api, "_reconcile_uncataloged", fail_after_reconcile)
+
+        run = (await client.post(f"/api/projects/{pid}/ingest")).json()
+        failures = (await client.get(f"/api/projects/{pid}/catalog/uncataloged")).json()
+        summary = (await client.get(f"/api/projects/{pid}/catalog/summary")).json()
+
+        assert run["errors_count"] == 1
+        assert run["files_scanned"] == 0
+        assert "scan results couldn't be saved" in run["first_error"]
+        assert len(failures["files"]) == 1
+        assert summary["unknown_frames"] == 0
+
+    async def test_mixed_good_damaged_truncated_and_corrupt_files(self, client, tmp_path):
+        folder = tmp_path / "mixed-failures"
+        folder.mkdir()
+        good_a, damaged = _xisf_pair(10)
+        good_b, _ = _xisf_pair(20)
+        (folder / "good-a.xisf").write_bytes(good_a)
+        (folder / "good-b.xisf").write_bytes(good_b)
+        (folder / "damaged.xisf").write_bytes(damaged)
+        (folder / "truncated.xisf").write_bytes(good_a[:20])
+        (folder / "corrupt.fits").write_bytes(b"not a FITS file")
+        pid = await _make_project(client, "Mixed failures")
+        await _bind_folder(client, pid, folder)
+
+        run = (await client.post(f"/api/projects/{pid}/ingest")).json()
+        listing = await _uncataloged(client, pid)
+        summary = (await client.get(f"/api/projects/{pid}/catalog/summary")).json()
+        frames = (await client.get(f"/api/projects/{pid}/catalog/frames")).json()
+
+        assert run["errors_count"] == 3
+        assert run["first_error"].split(":", 1)[0] in {
+            "corrupt.fits",
+            "damaged.xisf",
+            "truncated.xisf",
+        }
+        assert {Path(row["path"]).name: row["reason"] for row in listing["files"]} == {
+            "corrupt.fits": "unreadable",
+            "damaged.xisf": "damaged",
+            "truncated.xisf": "unreadable",
+        }
+        assert {Path(row["path"]).name for row in frames["rows"]} == {
+            "good-a.xisf",
+            "good-b.xisf",
+        }
+        assert summary["uncataloged"] == 3
+
+    @pytest.mark.parametrize(
+        ("scan_target", "binding_order"),
+        [
+            ("child", ("parent", "child")),
+            ("parent", ("parent", "child")),
+            ("all", ("parent", "child")),
+            ("all", ("child", "parent")),
+        ],
+        ids=["scan-child", "scan-parent", "scan-all-parent-first", "scan-all-child-first"],
+    )
+    async def test_nested_folder_repair_clears_failure(
+        self, client, tmp_path, scan_target, binding_order
+    ):
+        parent = tmp_path / f"nested-{scan_target}-{binding_order[0]}"
+        child = parent / "child"
+        child.mkdir(parents=True)
+        good, damaged = _xisf_pair(30)
+        image = child / "frame.xisf"
+        image.write_bytes(damaged)
+        pid = await _make_project(client, f"Nested {scan_target} {binding_order[0]}")
+        paths = {"parent": parent, "child": child}
+        bindings = {}
+        for label in binding_order:
+            bindings[label] = await _bind_folder(client, pid, paths[label])
+        await client.post(f"/api/projects/{pid}/ingest?folder_id={bindings['child']['id']}")
+        assert len((await _uncataloged(client, pid))["files"]) == 1
+
+        image.write_bytes(good)
+        url = f"/api/projects/{pid}/ingest"
+        if scan_target != "all":
+            url += f"?folder_id={bindings[scan_target]['id']}"
+        run = (await client.post(url)).json()
+
+        assert run["errors_count"] == 0
+        assert (await _uncataloged(client, pid))["files"] == []
+
+    async def test_scanning_one_folder_leaves_unrelated_failure_rows(self, client, tmp_path):
+        good, damaged = _xisf_pair(40)
+        folders = [tmp_path / "unrelated-a", tmp_path / "unrelated-b"]
+        for folder in folders:
+            folder.mkdir()
+            (folder / "bad.xisf").write_bytes(damaged)
+        pid = await _make_project(client, "Unrelated failures")
+        bindings = [await _bind_folder(client, pid, folder) for folder in folders]
+        await client.post(f"/api/projects/{pid}/ingest")
+        (folders[0] / "bad.xisf").write_bytes(good)
+
+        await client.post(f"/api/projects/{pid}/ingest?folder_id={bindings[0]['id']}")
+
+        rows = (await _uncataloged(client, pid))["files"]
+        assert [row["path"] for row in rows] == [str(folders[1] / "bad.xisf")]
+
+    async def test_missing_root_keeps_rows_and_reports_folder_error(self, client, tmp_path):
+        folder = tmp_path / "missing-root"
+        folder.mkdir()
+        _, damaged = _xisf_pair(50)
+        image = folder / "bad.xisf"
+        image.write_bytes(damaged)
+        pid = await _make_project(client, "Missing root")
+        await _bind_folder(client, pid, folder)
+        await client.post(f"/api/projects/{pid}/ingest")
+        folder.rename(tmp_path / "root-offline")
+
+        run = (await client.post(f"/api/projects/{pid}/ingest")).json()
+
+        assert run["errors_count"] == 1
+        assert run["first_error"].startswith(f"{folder}: couldn't be read")
+        assert [row["path"] for row in (await _uncataloged(client, pid))["files"]] == [str(image)]
+
+    async def test_unlistable_subdir_keeps_its_rows_and_reconciles_rest(
+        self, client, tmp_path, monkeypatch
+    ):
+        folder = tmp_path / "partially-offline"
+        blocked = folder / "blocked"
+        visible = folder / "visible"
+        blocked.mkdir(parents=True)
+        visible.mkdir()
+        good, damaged = _xisf_pair(60)
+        blocked_image = blocked / "bad.xisf"
+        visible_image = visible / "bad.xisf"
+        blocked_image.write_bytes(damaged)
+        visible_image.write_bytes(damaged)
+        pid = await _make_project(client, "Partially offline")
+        await _bind_folder(client, pid, folder)
+        await client.post(f"/api/projects/{pid}/ingest")
+        blocked_image.write_bytes(good)
+        visible_image.write_bytes(good)
+        original_iterdir = Path.iterdir
+
+        def iterdir(path):
+            if path == blocked:
+                raise PermissionError("offline")
+            return original_iterdir(path)
+
+        monkeypatch.setattr(Path, "iterdir", iterdir)
+        run = (await client.post(f"/api/projects/{pid}/ingest")).json()
+
+        assert run["errors_count"] == 1
+        assert [row["path"] for row in (await _uncataloged(client, pid))["files"]] == [
+            str(blocked_image)
+        ]
+
+    async def test_unstatable_fits_is_listed_as_unreadable(self, client, tmp_path, monkeypatch):
+        folder = tmp_path / "unstatable"
+        folder.mkdir()
+        image = folder / "frame.fits"
+        _write_fits(image, imagetyp="LIGHT")
+        original_stat = Path.stat
+
+        def stat(path, *args, **kwargs):
+            if path == image:
+                raise PermissionError("cannot stat")
+            return original_stat(path, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "stat", stat)
+        pid = await _make_project(client, "Unstatable FITS")
+        await _bind_folder(client, pid, folder)
+
+        run = (await client.post(f"/api/projects/{pid}/ingest")).json()
+        rows = (await _uncataloged(client, pid))["files"]
+
+        assert run["errors_count"] == 1
+        assert rows[0]["path"] == str(image)
+        assert rows[0]["reason"] == "unreadable"
+
+    async def test_archive_listing_failure_keeps_rows_without_archive_row(
+        self, client, tmp_path, monkeypatch
+    ):
+        from nightcrate.services import archive_io
+
+        _, damaged = _xisf_pair(70)
+        archive = tmp_path / "offline.zip"
+        with zipfile.ZipFile(archive, "w") as output:
+            output.writestr("bad.xisf", damaged)
+        pid = await _make_project(client, "Offline archive")
+        await _bind_folder(client, pid, archive)
+        await client.post(f"/api/projects/{pid}/ingest")
+
+        def fail_listing(*_args, **_kwargs):
+            raise OSError("archive unavailable")
+
+        monkeypatch.setattr(archive_io, "list_contents", fail_listing)
+        run = (await client.post(f"/api/projects/{pid}/ingest")).json()
+        rows = (await _uncataloged(client, pid))["files"]
+        others = (await client.get(f"/api/projects/{pid}/catalog/others")).json()["rows"]
+
+        assert run["errors_count"] == 1
+        assert [row["path"] for row in rows] == [f"{archive}::bad.xisf"]
+        assert all(row["path"] != str(archive) for row in others)
+
+    async def test_archive_failure_survives_parent_scan_then_archive_repair(self, client, tmp_path):
+        good, damaged = _xisf_pair(80)
+        parent = tmp_path / "archive-parent"
+        parent.mkdir()
+        archive = parent / "night.zip"
+        with zipfile.ZipFile(archive, "w") as output:
+            output.writestr("bad.xisf", damaged)
+        pid = await _make_project(client, "Archive overlap")
+        archive_binding = await _bind_folder(client, pid, archive)
+        parent_binding = await _bind_folder(client, pid, parent)
+        await client.post(f"/api/projects/{pid}/ingest?folder_id={archive_binding['id']}")
+
+        parent_run = (
+            await client.post(f"/api/projects/{pid}/ingest?folder_id={parent_binding['id']}")
+        ).json()
+        assert parent_run["errors_count"] == 0
+        assert len((await _uncataloged(client, pid))["files"]) == 1
+
+        with zipfile.ZipFile(archive, "w") as output:
+            output.writestr("bad.xisf", good)
+        await client.post(f"/api/projects/{pid}/ingest?folder_id={archive_binding['id']}")
+        assert (await _uncataloged(client, pid))["files"] == []
+
+    @pytest.mark.parametrize("child_name", ["Session.pxiproject/raw", ".stash"])
+    async def test_skipped_filesystem_subtree_preserves_child_failure(
+        self, client, tmp_path, child_name
+    ):
+        good, damaged = _xisf_pair(90)
+        parent = tmp_path / ("skipped-pxi" if "pxiproject" in child_name else "skipped-hidden")
+        child = parent / child_name
+        child.mkdir(parents=True)
+        image = child / "bad.xisf"
+        image.write_bytes(damaged)
+        pid = await _make_project(client, f"Skipped {child_name}")
+        child_binding = await _bind_folder(client, pid, child)
+        parent_binding = await _bind_folder(client, pid, parent)
+        await client.post(f"/api/projects/{pid}/ingest?folder_id={child_binding['id']}")
+
+        parent_run = (
+            await client.post(f"/api/projects/{pid}/ingest?folder_id={parent_binding['id']}")
+        ).json()
+        assert parent_run["errors_count"] == 0
+        assert [row["path"] for row in (await _uncataloged(client, pid))["files"]] == [str(image)]
+
+        image.write_bytes(good)
+        await client.post(f"/api/projects/{pid}/ingest?folder_id={child_binding['id']}")
+        assert (await _uncataloged(client, pid))["files"] == []
+
+    async def test_skipped_archive_hidden_subtree_preserves_child_failure(self, client, tmp_path):
+        good, damaged = _xisf_pair(100)
+        archive = tmp_path / "hidden.zip"
+        with zipfile.ZipFile(archive, "w") as output:
+            output.writestr(".stash/bad.xisf", damaged)
+        pid = await _make_project(client, "Archive hidden subtree")
+        child_binding = await _bind_folder(client, pid, f"{archive}::.stash")
+        root_binding = await _bind_folder(client, pid, archive)
+        await client.post(f"/api/projects/{pid}/ingest?folder_id={child_binding['id']}")
+
+        root_run = (
+            await client.post(f"/api/projects/{pid}/ingest?folder_id={root_binding['id']}")
+        ).json()
+        assert root_run["errors_count"] == 0
+        assert len((await _uncataloged(client, pid))["files"]) == 1
+
+        with zipfile.ZipFile(archive, "w") as output:
+            output.writestr(".stash/bad.xisf", good)
+        await client.post(f"/api/projects/{pid}/ingest?folder_id={child_binding['id']}")
+        assert (await _uncataloged(client, pid))["files"] == []
+
+    @pytest.mark.parametrize(
+        ("child_name", "expect_kept"),
+        [("ordinary", True), (".stash", False)],
+        ids=["parent-can-retry", "parent-skips-child"],
+    )
+    async def test_remove_child_folder_reconciles_failure_ownership(
+        self, client, tmp_path, child_name, expect_kept
+    ):
+        _, damaged = _xisf_pair(110)
+        parent = tmp_path / f"remove-{child_name}"
+        child = parent / child_name
+        child.mkdir(parents=True)
+        (child / "bad.xisf").write_bytes(damaged)
+        pid = await _make_project(client, f"Remove {child_name}")
+        await _bind_folder(client, pid, parent)
+        child_binding = await _bind_folder(client, pid, child)
+        await client.post(f"/api/projects/{pid}/ingest?folder_id={child_binding['id']}")
+
+        response = await client.delete(f"/api/projects/{pid}/folders/{child_binding['id']}")
+
+        assert response.status_code == 204
+        assert bool((await _uncataloged(client, pid))["files"]) is expect_kept
+
+    async def test_remove_only_covering_folder_deletes_failure(self, client, tmp_path):
+        _, damaged = _xisf_pair(120)
+        folder = tmp_path / "only-cover"
+        folder.mkdir()
+        (folder / "bad.xisf").write_bytes(damaged)
+        pid = await _make_project(client, "Only covering folder")
+        binding = await _bind_folder(client, pid, folder)
+        await client.post(f"/api/projects/{pid}/ingest")
+
+        await client.delete(f"/api/projects/{pid}/folders/{binding['id']}")
+
+        assert (await _uncataloged(client, pid))["files"] == []
+
+    async def test_second_failure_insert_rolls_back_entire_folder(
+        self, client, tmp_path, monkeypatch
+    ):
+        from nightcrate.api import ingest as ingest_api
+
+        folder = tmp_path / "mid-reconcile"
+        folder.mkdir()
+        stable = folder / "stable.fits"
+        _write_fits(stable, imagetyp="LIGHT")
+        repaired, damaged = _xisf_pair(130)
+        old = folder / "old.xisf"
+        old.write_bytes(damaged)
+        pid = await _make_project(client, "Mid reconcile")
+        await _bind_folder(client, pid, folder)
+        await client.post(f"/api/projects/{pid}/ingest")
+        before = await _uncataloged(client, pid)
+        old.write_bytes(repaired)
+        (folder / "new-a.fits").write_bytes(b"bad a")
+        (folder / "new-b.fits").write_bytes(b"bad b")
+
+        async def fail_on_second_insert(
+            conn, project_id, run_id, _folder, failures, _unlisted, _skipped
+        ):
+            await conn.execute("DELETE FROM uncataloged_file WHERE project_id = ?", (project_id,))
+            first = failures[0]
+            await conn.execute(
+                "INSERT INTO uncataloged_file "
+                "(project_id, path, reason, message, run_id) VALUES (?, ?, ?, ?, ?)",
+                (
+                    project_id,
+                    first["path"],
+                    first.get("reason", "unreadable"),
+                    first["error"],
+                    run_id,
+                ),
+            )
+            raise RuntimeError("injected second failure insert")
+
+        monkeypatch.setattr(ingest_api, "_reconcile_uncataloged", fail_on_second_insert)
+        run = (await client.post(f"/api/projects/{pid}/ingest")).json()
+
+        assert run["errors_count"] == 1
+        assert run["files_scanned"] == 0
+        assert run["subs_inserted"] == 0
+        assert run["subs_updated"] == 0
+        assert (await _uncataloged(client, pid))["files"] == before["files"]
+        frames = (await client.get(f"/api/projects/{pid}/catalog/frames")).json()
+        assert frames["total"] == 1
+        assert frames["rows"][0]["path"] == str(stable)
+
+    async def test_post_pass_failure_keeps_committed_parse_results(
+        self, client, tmp_path, monkeypatch
+    ):
+        from nightcrate.api import ingest as ingest_api
+
+        folder = tmp_path / "post-pass"
+        folder.mkdir()
+        good = folder / "good.fits"
+        _write_fits(good, imagetyp="LIGHT")
+        bad = folder / "bad.fits"
+        bad.write_bytes(b"bad FITS")
+        pid = await _make_project(client, "Post-pass failure")
+        await _bind_folder(client, pid, folder)
+
+        async def fail_post_pass(*_args, **_kwargs):
+            raise RuntimeError("injected post-pass failure")
+
+        monkeypatch.setattr(ingest_api, "assign_rigs_and_sessions", fail_post_pass)
+        run = (await client.post(f"/api/projects/{pid}/ingest")).json()
+
+        assert run["status"] == "failed"
+        assert run["errors_count"] == 2
+        frames = (await client.get(f"/api/projects/{pid}/catalog/frames")).json()
+        assert [row["path"] for row in frames["rows"]] == [str(good)]
+        assert [row["path"] for row in (await _uncataloged(client, pid))["files"]] == [str(bad)]
+
+    async def test_uncataloged_list_contract_order_timezone_and_404(self, client):
+        from nightcrate.db.session import get_db
+
+        pid = await _make_project(client, "Uncataloged contract")
+        async with get_db() as conn:
+            cursor = await conn.execute(
+                "INSERT INTO location (name, latitude, longitude, timezone) "
+                "VALUES ('Catalog site', 33, -112, 'America/Phoenix')"
+            )
+            await conn.execute(
+                "UPDATE project SET location_id = ? WHERE id = ?", (cursor.lastrowid, pid)
+            )
+            rows = [
+                ("/fail/a.fits", "unreadable", "a", "2026-01-01T00:00:00Z"),
+                ("/fail/c.fits", "unsupported", "c", "2026-01-02T00:00:00Z"),
+                ("/fail/b.fits", "damaged", "b", "2026-01-02T00:00:00Z"),
+            ]
+            for path, reason, message, detected_at in rows:
+                await conn.execute(
+                    "INSERT INTO uncataloged_file "
+                    "(project_id, path, reason, message, detected_at) VALUES (?, ?, ?, ?, ?)",
+                    (pid, path, reason, message, detected_at),
+                )
+            await conn.execute(
+                "INSERT INTO file_location (project_id, path, category) "
+                "VALUES (?, '/fail/b.fits', 'other')",
+                (pid,),
+            )
+            await conn.commit()
+
+        response = await client.get(f"/api/projects/{pid}/catalog/uncataloged")
+        missing = await client.get("/api/projects/999999/catalog/uncataloged")
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["timezone"] == "America/Phoenix"
+        assert [row["path"] for row in body["files"]] == [
+            "/fail/b.fits",
+            "/fail/c.fits",
+            "/fail/a.fits",
+        ]
+        assert set(body["files"][0]) == {
+            "id",
+            "path",
+            "reason",
+            "message",
+            "detected_at",
+            "cataloged_earlier",
+        }
+        assert body["files"][0]["cataloged_earlier"] is True
+        assert body["files"][1]["cataloged_earlier"] is False
+        assert missing.status_code == 404
+
     async def test_ingest_classifies_and_counts(self, client, imaging_folder):
         pid = await _make_project(client, "E2E")
         await client.post(f"/api/projects/{pid}/folders", json={"path": str(imaging_folder)})

@@ -1,6 +1,6 @@
 # NightCrate Database Schema
 
-**NightCrate version:** 0.49.0
+**NightCrate version:** 0.50.0
 
 Complete schema including existing tables and v0.8.0 equipment tables (revised design). All table names use singular form. Broken into logical groups for readability.
 
@@ -603,7 +603,7 @@ Omitted from diagrams for readability. Every seedable table carries:
 
 ## 13. Imaging Core (v0.40.0)
 
-The Sessions / Sub-Frames / Ingest schema (migration 0037). `sub_frame` is the core atom — lights, darks, flats, and bias all share it, distinguished by `frame_type`. `session` is the ingest's per-observing-night grouping (distinct from `project_session` of migration 0035, which is the user-facing capture batch). Several tables (`session_log_file`, `session_event`, `autofocus_run`, `guiding_log_file`, `guiding_sample`, `dither_event`) are created EMPTY here and populated by later versions (v0.43/0.44). `project` also gains a nullable `cover_sub_frame_id INTEGER REFERENCES sub_frame(id)`. **Migration 0040 reworked ownership:** `sub_frame`, `processed_image`, and `file_location` each gained `project_id NOT NULL` (CASCADE) and per-project identity (`UNIQUE(project_id, content_hash)` / `UNIQUE(project_id, path)`) — each project owns its own row for a file; the same physical file cataloged into two projects is two independent rows. **Migration 0043 (v0.41.1)** ALTER-adds `frame_type_source` / `project_target_source` (`auto`|`user`, default `auto`) so a hand-corrected frame type or target survives every re-scan. **Migrations 0044–0046 (v0.41.1)** removed automatic equipment identification: 0044 cleared every equipment FK, 0045 dropped migration 0041's `rig_source` / `camera_source` / `filter_source` along with the four alias/observation tables, and **0046** dropped the equipment FK columns themselves (all but `rig_id`) plus `integration_time_per_project_filter`, rebuilt the calibration views on header facts, and added **`project_source_folder.rig_id`** — the user-declared rig tag that frames inherit, sessions key on, and calibration matching scopes to. **Migration 0055 (v0.41.3)** ALTER-adds `sub_frame.quality_analyzed_at` / `quality_status` (`ok`|`no_stars`|`unreadable`) / `quality_error`, so the analyze pass knows what it has measured — `hfr IS NULL` cannot serve, because a successfully analyzed calibration frame has no HFR. **Migration 0057 (v0.41.5)** rebuilds `weather_cache` to widen its `source` CHECK with `cloud_models` — the second Open-Meteo response, holding multi-model cloud cover (SQLite cannot ALTER a CHECK in place, so the table is rebuilt and existing rows carried over). **Migration 0056 (v0.41.3)** ALTER-adds `project_source_folder.project_target_id` (SET NULL) — the target tag, the second user-declared per-folder fact. Lights beneath a tagged folder inherit it; `services/ingest_sessions.py:assign_rigs_and_sessions` is the single owner of rig, target and session alike, and skips any frame whose `project_target_source` is `'user'`.
+The Sessions / Sub-Frames / Ingest schema (migration 0037). `sub_frame` is the core atom — lights, darks, flats, and bias all share it, distinguished by `frame_type`. `session` is the ingest's per-observing-night grouping (distinct from `project_session` of migration 0035, which is the user-facing capture batch). Several tables (`session_log_file`, `session_event`, `autofocus_run`, `guiding_log_file`, `guiding_sample`, `dither_event`) are created EMPTY here and populated by later versions (v0.43/0.44). `project` also gains a nullable `cover_sub_frame_id INTEGER REFERENCES sub_frame(id)`. **Migration 0040 reworked ownership:** `sub_frame`, `processed_image`, and `file_location` each gained `project_id NOT NULL` (CASCADE) and per-project identity (`UNIQUE(project_id, content_hash)` / `UNIQUE(project_id, path)`) — each project owns its own row for a file; the same physical file cataloged into two projects is two independent rows. **Migration 0043 (v0.41.1)** ALTER-adds `frame_type_source` / `project_target_source` (`auto`|`user`, default `auto`) so a hand-corrected frame type or target survives every re-scan. **Migrations 0044–0046 (v0.41.1)** removed automatic equipment identification: 0044 cleared every equipment FK, 0045 dropped migration 0041's `rig_source` / `camera_source` / `filter_source` along with the four alias/observation tables, and **0046** dropped the equipment FK columns themselves (all but `rig_id`) plus `integration_time_per_project_filter`, rebuilt the calibration views on header facts, and added **`project_source_folder.rig_id`** — the user-declared rig tag that frames inherit, sessions key on, and calibration matching scopes to. **Migration 0055 (v0.41.3)** ALTER-adds `sub_frame.quality_analyzed_at` / `quality_status` (`ok`|`no_stars`|`unreadable`) / `quality_error`, so the analyze pass knows what it has measured — `hfr IS NULL` cannot serve, because a successfully analyzed calibration frame has no HFR. **Migration 0057 (v0.41.5)** rebuilds `weather_cache` to widen its `source` CHECK with `cloud_models` — the second Open-Meteo response, holding multi-model cloud cover (SQLite cannot ALTER a CHECK in place, so the table is rebuilt and existing rows carried over). **Migration 0056 (v0.41.3)** ALTER-adds `project_source_folder.project_target_id` (SET NULL) — the target tag, the second user-declared per-folder fact. Lights beneath a tagged folder inherit it; `services/ingest_sessions.py:assign_rigs_and_sessions` is the single owner of rig, target and session alike, and skips any frame whose `project_target_source` is `'user'`. **Migration 0072 (v0.50.0)** adds `uncataloged_file`: the files a scan could list but not catalog, one row per (project, path). See [v0.50.0](#v0500--files-a-scan-couldnt-catalog-migration-0072).
 
 ```mermaid
 erDiagram
@@ -622,6 +622,16 @@ erDiagram
         INTEGER subs_inserted
         TEXT started_at
         TEXT finished_at
+    }
+
+    uncataloged_file {
+        INTEGER id PK
+        INTEGER project_id FK
+        TEXT path "UNIQUE(project_id, path)"
+        TEXT reason "CHECK: damaged, unsupported, unreadable"
+        TEXT message
+        INTEGER run_id FK "SET NULL"
+        TEXT detected_at "UTC"
     }
 
     session {
@@ -680,6 +690,9 @@ erDiagram
         TEXT file_hash
         TEXT last_verified_status "CHECK: ok, missing, hash_mismatch, unreadable"
     }
+
+    project ||--o{ uncataloged_file : "could not catalog"
+    ingestion_run ||--o{ uncataloged_file : "detected in"
 
     session_log_file {
         INTEGER id PK
@@ -1018,3 +1031,15 @@ Rules: [development decisions](docs/development-decisions.md#messier-checklist).
 | Migration | Change |
 |-----------|--------|
 | `0071.thumbnail_checklist` | Rebuilds `thumbnail_cache` (rename, create, copy every row with its id, drop, recreate its three indexes) to widen the `variant` CHECK with `checklist` and add the nullable `render_key`. The unique index adds `COALESCE(render_key, '')`. A `checklist` row's key is `r{revision}_ra{RA×10⁴}_dec{Dec×10⁴}_f{field in millidegrees}_800x600` (revision 1); existing rows keep NULL. No foreign key points at the table. |
+
+### v0.50.0 — Files a scan couldn't catalog (migration 0072)
+
+Rules: [development decisions](docs/development-decisions.md#projects-catalog-and-sessions).
+
+| Migration | Change |
+|-----------|--------|
+| `0072.uncataloged_file` | Creates `uncataloged_file`: one row per (project, path) that a scan could list but could not catalog. It has `reason` CHECK (`damaged`/`unsupported`/`unreadable`), `message`, `run_id` FK SET NULL, and `detected_at` (ISO UTC). The project FK cascades. A new table only: no existing row changes. |
+
+| Table | Purpose |
+|-------|---------|
+| `uncataloged_file` | One row per project path that the latest covering scan could list but could not catalog. `reason` is `damaged`, `unsupported`, or `unreadable`; `(project_id, path)` is unique. The project FK cascades and the detecting ingestion run FK sets null. |

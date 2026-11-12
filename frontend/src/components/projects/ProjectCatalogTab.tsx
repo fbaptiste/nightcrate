@@ -44,6 +44,7 @@ import CatalogFrameTable from "./CatalogFrameTable";
 import CatalogThumbnailSheet from "./CatalogThumbnailSheet";
 import CatalogMasterTable from "./CatalogMasterTable";
 import CatalogOtherTable from "./CatalogOtherTable";
+import UncatalogedFileTable from "./UncatalogedFileTable";
 import {
   fileSelectionKey,
   processedImageSelectionKey,
@@ -60,6 +61,7 @@ import {
   fetchCatalogMasters,
   fetchCatalogOthers,
   fetchCatalogSummary,
+  fetchUncatalogedFiles,
   fetchQualityCounts,
   isMaster,
   isSubFrame,
@@ -102,7 +104,8 @@ type TabKey =
   | "dark_flat"
   | "bias"
   | "masters"
-  | "others";
+  | "others"
+  | "uncataloged";
 
 /** Plural noun per tab, for scope-stating labels ("Analyze 276 Blue lights").
  *  Exhaustive on purpose — adding a TabKey must not silently fall through. */
@@ -114,6 +117,7 @@ const TAB_NOUNS: Record<TabKey, string> = {
   bias: "bias frames",
   masters: "masters",
   others: "files",
+  uncataloged: "files not cataloged",
 };
 
 interface CatalogPage {
@@ -208,6 +212,11 @@ export default function ProjectCatalogTab({ projectId }: Props) {
     queryKey: ["project-catalog-summary", projectId],
     queryFn: () => fetchCatalogSummary(projectId),
   });
+  const uncatalogedQuery = useQuery({
+    queryKey: ["project-catalog-uncataloged", projectId],
+    queryFn: () => fetchUncatalogedFiles(projectId),
+    enabled: tab === "uncataloged",
+  });
   // The project's targets are the only values a folder's target tag may take.
   const { data: projectTargets = [] } = useQuery({
     queryKey: ["project-targets", projectId],
@@ -238,12 +247,16 @@ export default function ProjectCatalogTab({ projectId }: Props) {
       if (tab === "masters") return fetchCatalogMasters(projectId, PAGE_SIZE, off);
       if (tab === "others")
         return fetchCatalogOthers(projectId, PAGE_SIZE, off, unclassifiedOnly);
+      if (tab === "uncataloged") {
+        return { rows: [], total: 0, timezone: "UTC" };
+      }
       return fetchCatalogFrames(projectId, PAGE_SIZE, off, tab, filterName, sort);
     },
     getNextPageParam: (_last, allPages) => {
       const loaded = allPages.reduce((n, p) => n + p.rows.length, 0);
       return loaded < (allPages[0]?.total ?? 0) ? loaded : undefined;
     },
+    enabled: tab !== "uncataloged",
   });
   // Memoized: `items` feeds `analyzerItems` -> `openInAnalyzer` -> every row's
   // `onOpen`. A fresh array each render would change that prop's identity and
@@ -252,7 +265,9 @@ export default function ProjectCatalogTab({ projectId }: Props) {
   // Kept current for `toggleSelect`, which reads it through the ref so its own
   // identity can stay stable across renders.
   itemsRef.current = items;
-  const tz = data?.pages[0]?.timezone ?? "UTC";
+  const tz = tab === "uncataloged"
+    ? uncatalogedQuery.data?.timezone ?? "UTC"
+    : data?.pages[0]?.timezone ?? "UTC";
 
   // Per-filter pills (count + total exposure) for the Lights & Flats tabs.
   const showFilterPills = tab === "light" || tab === "flat";
@@ -286,6 +301,9 @@ export default function ProjectCatalogTab({ projectId }: Props) {
       queryKey: ["project-catalog-filters", projectId],
     });
     queryClient.invalidateQueries({ queryKey: ["quality-counts", projectId] });
+    queryClient.invalidateQueries({
+      queryKey: ["project-catalog-uncataloged", projectId],
+    });
   };
 
   /** The counts above, plus the row data itself. */
@@ -342,7 +360,8 @@ export default function ProjectCatalogTab({ projectId }: Props) {
       invalidateRigDependent();
       setSnack(
         `Scan ${s.status}: ${s.subs_inserted} new, ${s.subs_updated} updated` +
-          (s.errors_count ? `, ${s.errors_count} errors` : ""),
+          (s.errors_count ? `, ${s.errors_count} errors` : "") +
+          (s.first_error ? ` — ${s.first_error}` : ""),
       );
     },
     onError: (e: Error) => setSnack(e.message),
@@ -351,7 +370,7 @@ export default function ProjectCatalogTab({ projectId }: Props) {
   // ── Frame quality analysis (v0.41.3) ────────────────────────────────────────
   // Scope is whatever the list is showing: the active sub-tab plus the filter
   // pill, so the button label states exactly what it will do.
-  const isFrameTab = tab !== "masters" && tab !== "others";
+  const isFrameTab = tab !== "masters" && tab !== "others" && tab !== "uncataloged";
   const { data: qCounts } = useQuery({
     queryKey: ["quality-counts", projectId, tab, filterName],
     queryFn: () => fetchQualityCounts(projectId, tab, filterName),
@@ -491,12 +510,19 @@ export default function ProjectCatalogTab({ projectId }: Props) {
   // Embedded analyzer overlay. Stepping walks this list, so it inherits the
   // active tab + filter pill for free.
   const [analyzerIndex, setAnalyzerIndex] = useState<number | null>(null);
-  // Anything in the list with a real path can be opened, masters included — a
-  // stack is often the thing you most want to look at. Plain files in Others are
-  // excluded, so a file id colliding with a sub-frame id cannot enter this list.
+  // Anything in the active list with a real path can be opened, masters and
+  // not-cataloged files included. Plain files in Others stay excluded. Only one
+  // source list contributes at a time, so ids from different tables cannot collide.
   const analyzerItems: AnalyzerItem[] = useMemo(
-    () =>
-      items
+    () => {
+      if (tab === "uncataloged") {
+        return (uncatalogedQuery.data?.files ?? []).map((file) => ({
+          id: file.id,
+          path: file.path,
+          name: folderName(file.path),
+        }));
+      }
+      return items
         .filter((i): i is CatalogItem & { id: number; path: string } => {
           // Frames and masters are openable in the analyzer; plain files are not.
           if (!isSubFrame(i) && !isMaster(i)) return false;
@@ -506,8 +532,9 @@ export default function ProjectCatalogTab({ projectId }: Props) {
           id: f.id,
           path: f.path,
           name: f.path.split("/").pop() ?? String(f.id),
-        })),
-    [items],
+        }));
+    },
+    [items, tab, uncatalogedQuery.data?.files],
   );
 
   const openInAnalyzer = useCallback(
@@ -529,6 +556,7 @@ export default function ProjectCatalogTab({ projectId }: Props) {
     { key: "bias", label: "Bias", count: summary?.bias ?? 0 },
     { key: "masters", label: "Masters", count: summary?.processed ?? 0 },
     { key: "others", label: "Others", count: othersCount },
+    { key: "uncataloged", label: "Not cataloged", count: summary?.uncataloged ?? 0 },
   ];
   const showRigColumn = new Set(
     folders.flatMap((folder) => folder.rig_id == null ? [] : [folder.rig_id]),
@@ -558,9 +586,9 @@ export default function ProjectCatalogTab({ projectId }: Props) {
         .map((item) => subFrameSelectionKey(item.id)),
     [items],
   );
-  // Everything listed can be REMOVED from the catalog, so the selection bar shows
-  // on every tab; only the correction actions inside it are gated on there being
-  // sub frames to correct.
+  // Everything in the regular catalog lists can be removed, so their selection
+  // bar shows on every view; the not-cataloged list has no selection controls.
+  // Correction actions are gated on there being sub frames to correct.
   const selectableKeys = useMemo(() => items.map(itemSelectionKey), [items]);
   const selectedFrameIds = useMemo(
     () =>
@@ -570,7 +598,7 @@ export default function ProjectCatalogTab({ projectId }: Props) {
     [selected],
   );
   const canCorrect = tab !== "masters" && correctableKeys.length > 0;
-  const showSelectionBar = items.length > 0 && !(tab === "light" && lightView === "thumbnails");
+  const showSelectionBar = tab !== "uncataloged" && items.length > 0 && !(tab === "light" && lightView === "thumbnails");
   const allSelected =
     showSelectionBar &&
     selectableKeys.length > 0 &&
@@ -756,6 +784,22 @@ export default function ProjectCatalogTab({ projectId }: Props) {
             : `${summary.unknown_frames} frames could not be classified`}{" "}
           — their headers don't say what kind of frame they are. Review opens
           Others filtered to just these; select them and set the frame type.
+        </Alert>
+      )}
+
+      {summary && summary.uncataloged > 0 && tab !== "uncataloged" && (
+        <Alert
+          severity="info"
+          sx={{ mb: 2, maxWidth: 900 }}
+          action={
+            <Button color="inherit" size="small" onClick={() => changeTab("uncataloged")}>
+              Review
+            </Button>
+          }
+        >
+          {summary.uncataloged === 1
+            ? "1 file wasn't cataloged — a scan couldn't read it."
+            : `${summary.uncataloged} files weren't cataloged — a scan couldn't read them.`}
         </Alert>
       )}
 
@@ -1023,7 +1067,14 @@ export default function ProjectCatalogTab({ projectId }: Props) {
         </Stack>
       )}
 
-      {tab === "masters" ? (
+      {tab === "uncataloged" ? (
+        <UncatalogedFileTable
+          rows={uncatalogedQuery.data?.files ?? []}
+          timezone={tz}
+          loading={uncatalogedQuery.isLoading}
+          onOpen={openInAnalyzer}
+        />
+      ) : tab === "masters" ? (
         <CatalogMasterTable
           key={tab}
           rows={items as CatalogMaster[]}

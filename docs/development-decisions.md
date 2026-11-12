@@ -12,6 +12,12 @@ Shared architecture, checks, and privacy rules live in [CLAUDE.md](../CLAUDE.md)
 - AutoSTF uses **avgDev, not MAD**: shadow clip `median − 1.25 × avgDev`, target
   median 0.25, self-inverse MTF for midtones. Stretch runs server-side:
   `stretch=auto` computes stats/linearity/STF together; slider edits use `stf`.
+- The analyzer starts star detection (`/api/images/quality`) only after the
+  displayed image has loaded. On a 95 MP master, detection takes about 6 s.
+  Started alongside the full-size render, it slowed the picture from about
+  1.3 s to about 7 s (v0.50.0). The Image Info panel's last row, File size,
+  comes from `/api/images/metadata` (`file_size_bytes`). The size is taken
+  before the header read, because FITS header reads close a passed buffer.
 - GPU stretch/statistics are safe only on their serialized path. Thumbnail
   renderers use numpy, decimate before stretching, and never call the GPU-backed
   stretch helpers from `asyncio.to_thread`. Concurrent mlx calls can segfault.
@@ -26,15 +32,48 @@ Shared architecture, checks, and privacy rules live in [CLAUDE.md](../CLAUDE.md)
 - I/O accepts `Path | BinaryIO`. zip/tar entries extract in memory; 7z uses a
   cleaned-up temporary directory. Header reads can close a passed buffer:
   read bytes once and give each consumer a fresh `BytesIO`, not a re-seek.
-- XISF `PCL:AstrometricSolution` properties form one complete WCS and win as a
-  whole over contradictory FITS keywords: **CD = matrix as-is, CRVAL = reference
-  sky coordinates, CRPIX = reference image coordinates + 1.** No transpose or
-  y-flip. If the properties do not produce a complete solution, use the FITS
-  keyword WCS: convert CDELT/CROTA to CD first and then flip it to displayed
-  top-down rows (`CRPIX2 = H + 1 - CRPIX2`; negate the second CD column). The
-  XISF `geometry` dimensions are authoritative over stale FITS `NAXIS` cards.
-  `read_header` still reports the file's real keywords for the Header tab;
-  nonlinear spline distortion is not modeled for annotations.
+- The XISF reader follows the published *XISF Version 1.0 Specification*,
+  revision 2 (1.02, October 2026). It covers the §7.2 baseline decoder plus the
+  stored solution's first layer. Data blocks are read through
+  `xisf_blocks.read_block` (`verify_block` checks one without decompressing):
+  - locate it (inline base64/hex, embedded `Data`, or attachment);
+  - verify its checksum over the stored bytes;
+  - decompress its subblocks from the `subblocks` attribute. `c == u` pieces
+    are stored as-is; output is bounded, and input must be fully consumed;
+  - unshuffle the whole block, leaving a trailing partial item as is.
+  There are no in-data subblock size headers.
+  - **Errors:** `XISFError` is a `ValueError`, so routers return its plain
+    message as a 422. A checksum failure in an image's pixel block
+    (`XISFChecksumError`) means damaged: that image is refused everywhere. A
+    damaged or unsupported property block makes only that property
+    unavailable; the header and the solution still read.
+    `XISFUnavailableError` means an unsupported feature, and the rest of the
+    file stays readable.
+  - **Header reads** (`read_header`, ingest, the Header tab) never read attached
+    blocks; they show summaries. Canonical metadata comes only from decoded
+    values.
+  - **String properties** are element text, never base64-decoded unless their
+    `location` says so.
+- XISF stored solutions are looked up in this order:
+  1. `AstrometricSolution:*`, written by PixInsight 1.9.5 and later;
+  2. the legacy `PCL:AstrometricSolution:*`;
+  3. the FITS keyword WCS.
+
+  Only layer 1 is used: **CD = matrix as-is, CRVAL = reference sky coordinates,
+  CRPIX = reference image coordinates + 0.5.** XISF pixel (i, j) covers
+  [i, i+1) × [j, j+1), while FITS pixel centres are whole numbers from 1. There
+  is no transpose or y-flip.
+  - **Evidence for +0.5** (v0.50.0, 36 files: 4 with the new names, 32 legacy):
+    against native solves, the median offset was 0.00 px; with +1 it was
+    −0.5 px.
+  - **Rules for the new namespace:** `Version` major 1; gnomonic only; default
+    native coordinates only; finite values and a non-singular matrix.
+  - **An unusable new-style solution** returns a reason and never falls back to
+    the legacy names or FITS keywords.
+  - **FITS keyword WCS:** convert CDELT/CROTA to CD, then flip to displayed
+    top-down rows (`CRPIX2 = H + 1 - CRPIX2`; negate the second CD column).
+  - The XISF `geometry` dimensions are authoritative over stale FITS `NAXIS`
+    cards. Nonlinear spline distortion is not modeled for annotations.
 - `astropy.wcs.WCS.world_to_pixel` returns 0-based coordinates that match numpy
   indexing and the displayed image (row 0 at the top). Use them directly for
   annotations; a y-flip misaligns every overlay.
@@ -306,6 +345,24 @@ Since v0.47.0. Spec: [v0.47.0 design](superpowers/specs/2026-11-07-v0.47.0-desig
   and darks matching lights alone. Darks/dark-flats/bias have no filter.
 - Ingest must accept incomplete equipment/filter metadata; do not restore a
   light-needs-filter CHECK. Keep unrecognized header values as hints.
+- Scans verify each XISF image's pixel checksum (`xisf_io.verify_image`) without
+  decompressing it. A file a scan can't catalog becomes a row in
+  `uncataloged_file`, one per (project, path), with reason `damaged`,
+  `unsupported` or `unreadable`. The project's Files tab lists them under
+  "Not cataloged".
+  - **Coverage:** a directory scan covers paths without `::` under its prefix.
+    An archive folder covers its `folder_prefix`.
+  - **Rows kept:** directories a scan couldn't list, and subtrees it
+    deliberately skips (hidden folders, `.pxiproject` bundles), keep their rows.
+  - **Unreadable folder:** an offline or unreadable folder changes nothing and
+    reports a folder-level error.
+  - **Transactions:** each folder is one transaction, with a savepoint per file.
+    The post-pass doesn't change which files are cataloged.
+  - **Folder removal** deletes the rows no other bound folder can retry.
+- Adding project images verifies the XISF behind every path before inserting,
+  including `.pxiproject::index` references to an XISF. The request is all or
+  nothing: 422 `"{file}: {message}"`. Other resolution failures keep the earlier
+  insert-then-render behaviour.
 - **No automatic equipment identification.** The old resolver, alias queue,
   per-frame equipment overrides, and most equipment FKs were removed. A project's
   rig assignments and each folder's declared `rig_id` supply equipment context.

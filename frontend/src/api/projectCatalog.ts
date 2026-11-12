@@ -27,6 +27,7 @@ export interface IngestStatus {
   subs_updated: number;
   subs_skipped: number;
   errors_count: number;
+  first_error: string | null;
   started_at: string | null;
   finished_at: string | null;
   message: string | null;
@@ -45,6 +46,21 @@ export interface CatalogSummary {
   other: number;
   sessions: number;
   total_files: number;
+  uncataloged: number;
+}
+
+export interface UncatalogedFile {
+  id: number;
+  path: string;
+  reason: "damaged" | "unsupported" | "unreadable";
+  message: string;
+  detected_at: string;
+  cataloged_earlier: boolean;
+}
+
+export interface UncatalogedList {
+  timezone: string;
+  files: UncatalogedFile[];
 }
 
 export interface CatalogFrame {
@@ -334,6 +350,12 @@ export function fetchCatalogSummary(
   projectId: number,
 ): Promise<CatalogSummary> {
   return apiFetch<CatalogSummary>(`/projects/${projectId}/catalog/summary`);
+}
+
+export function fetchUncatalogedFiles(
+  projectId: number,
+): Promise<UncatalogedList> {
+  return apiFetch<UncatalogedList>(`/projects/${projectId}/catalog/uncataloged`);
 }
 
 export function fetchCatalogFrames(

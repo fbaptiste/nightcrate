@@ -34,7 +34,7 @@ from nightcrate.services import (
     xisf_io,
 )
 from nightcrate.services.coordinate_format import format_dec_dms, format_ra_hms
-from nightcrate.services.image_annotation_models import WcsParams
+from nightcrate.services.image_annotation_models import FileSolution, WcsParams
 from nightcrate.services.image_annotations import detect_wcs_from_cards
 from nightcrate.services.path_resolver import (
     FITS_EXTENSIONS,
@@ -248,6 +248,18 @@ def read_wcs_params(
     if file_type == "xisf":
         return xisf_io.read_wcs_params(source, hdu)
     return detect_wcs_from_cards(read_header_cards(source, file_type, image_index, hdu))
+
+
+def read_file_solution(
+    source: Path | BinaryIO,
+    file_type: str,
+    image_index: int,
+    hdu: int,
+) -> FileSolution:
+    """Read a usable stored solution, retaining any XISF-specific reason."""
+    if file_type == "xisf":
+        return xisf_io.read_solution(source, hdu)
+    return FileSolution(wcs=read_wcs_params(source, file_type, image_index, hdu))
 
 
 def cards_to_dict(cards: list[dict]) -> dict[str, str]:

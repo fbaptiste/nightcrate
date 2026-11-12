@@ -187,6 +187,11 @@ export interface WcsParams {
   naxis2: number;
 }
 
+export interface FileSolution {
+  wcs: WcsParams | null;
+  unavailable_reason: string | null;
+}
+
 export interface AnnotatedDso {
   id: number;
   primary_designation: string;
@@ -220,8 +225,8 @@ export interface ImageAnnotationResult {
   dsos: AnnotatedDso[];
 }
 
-export function detectWcs(path: string, hdu: number = 0): Promise<WcsParams | null> {
-  return apiFetch<WcsParams | null>(
+export function detectWcs(path: string, hdu: number = 0): Promise<FileSolution> {
+  return apiFetch<FileSolution>(
     `/plate-solve/detect-wcs?path=${encodeURIComponent(path)}&hdu=${hdu}`,
   );
 }

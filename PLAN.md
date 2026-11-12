@@ -1,12 +1,254 @@
 # NightCrate — active plan
 
-**Version:** v0.49.0 — Object search
+**Version:** v0.50.0 — XISF specification update
 
-**Branch:** `v0.49.0/object-search`
+**Branch:** `v0.50.0/xisf-spec-update`
 
 **Status:** Complete — awaiting merge
 
+## v0.50.0 — XISF specification update
+
+Fred started this version on 2026-11-11, after merging v0.49.0, and chose its
+number. Its scope is the roadmap's next item, the updated XISF specification,
+moved here unchanged below. The spec comes next, decided with Fred one
+question at a time.
+
+- [x] Start from updated `main` on `v0.50.0/xisf-spec-update`.
+- [x] Spec: [v0.50.0 design](docs/superpowers/specs/2026-11-11-v0.50.0-design.md),
+  written from the full revised specification. Fred decided (2026-11-11):
+  - an image whose pixel checksum fails is refused everywhere, with a
+    message. A damaged property block only makes that property
+    unavailable, and a catalog thumbnail of a file damaged after
+    cataloging stays blank (v0.50.0-D1);
+  - gnomonic solutions only. Claude's other calls are listed at its end. **Fred
+  approved the spec** (2026-11-11: "approved, go ahead with the plan").
+- [x] Implementation plan: [v0.50.0 plan](docs/superpowers/plans/2026-11-11-v0.50.0.md).
+  Codex's review converged in 5 rounds, recorded in the plan's Codex review
+  section.
+  - Fred decided D1 (2026-11-11): damaged files stay out of the catalog,
+    and he added a "Not cataloged" sub-tab listing every file a scan
+    couldn't catalog.
+  - One deferral, v0.50.0-R1, with Codex's agreement.
+  - **Fred approved the final plan** (2026-11-11: "approved, go ahead with
+    the implementation").
+- [x] Implementation (Codex, worktree `.superpowers/wt-v0.50.0`, detached
+  at `33ad668`), with Claude's review of each part (records `11`–`35`,
+  local):
+  - [x] A1–A2, the block reader and pixels.
+    - Fred's PixInsight 1.9.6 compressed files open, and the mono master
+      equals its uncompressed copy bit for bit.
+    - On a 135-file sample of Fred's drive, all 133 files that loaded
+      before load with identical pixels.
+    - A full 380 MB load takes 0.46 s. The memory peak (1.9 GB) is the
+      existing normalisation's, the same as for an uncompressed file.
+  - [x] A3–A4, property values and stored solutions.
+    - 10 solutions found that weren't before (the new names), none lost.
+    - 59 legacy property solutions moved by exactly −0.5 px.
+    - Against native solves on 36 files, the median offset is 0.00 px with
+      +0.5, against −0.5 px with +1. Eight large or drizzled frames exceed
+      0.25 px on an axis, unexplained (not attributed).
+  - [x] A5–A7, the API and messages, damaged-file checks, and
+    `uncataloged_file`.
+    - One fix round added the missing scan tests, restored hidden
+      `.pxiproject` assets, and kept add-images' old behaviour for
+      non-XISF path errors.
+    - 574 targeted tests pass outside the sandbox.
+    - Migration 0072 on a copy of Fred's database: 87 tables and 221,278
+      rows identical; integrity ok; no foreign-key errors.
+  - [x] B1–B3, the Image Analyzer, the scan message, and the Not cataloged
+    tab.
+    - 34 headless rendered checks on private servers, in both themes and
+      at tablet width.
+    - Two layout fixes: the note's margins, and the table fitting a
+      tablet.
+  - **Catalog check:** Fred's catalog holds no XISF files, so the old
+    String-decoding bug can't have changed any stored value.
+  - [x] Fresh independent review of the whole change, then two fix rounds,
+    each reviewed fresh (records `32`–`41`).
+    - The first review found one blocker (a huge declared size allocated
+      before validation) and four majors: geometry, `bounds`, colour space
+      and channels, and reader errors as 500s in `detect-wcs`/`annotate`
+      with no message in the analyzer. All were accepted and fixed.
+    - The review of those fixes found the size guard still bypassable
+      (memory followed declared sizes), integer bounds not saturating, and
+      the inline String cap applied after decoding. All fixed: memory now
+      follows real output.
+    - The last review found nothing.
+    - One minor (scalars read from element text) is kept and documented as
+      a compatibility extension.
+    - Fred's drive has no file the geometry, bounds or colour fixes change:
+      all 9,894 images are Gray 1-channel or RGB 3-channel, with float
+      bounds 0:1 or no integer bounds.
+    - After the fixes: 603 targeted tests; the 135-file regression is
+      unchanged; `ha.xisf` is still bit-identical; a 0.43 s load.
+- [x] Brought into the main checkout and staged (2026-11-11).
+  - The full backend suite passes (4,036 passed, 10 skipped);
+    `npm run build` is clean.
+  - Fred's running dev server applied migration 0072. His database is at
+    0072 with integrity ok, no foreign-key errors, and unchanged counts.
+- [x] **Fred's look, 2026-11-11.** Large images opened slowly in the Image
+  Analyzer.
+  - Measured on a 95 MP master: star detection (about 6 s) ran alongside the
+    full-size render, so the picture took 6.9 s.
+  - Fred chose the recommended fix: star detection now waits for the
+    picture, which appears in 1.7 s, with the star numbers filling in after.
+  - He also asked for the file size: first as a pill, then, on seeing it,
+    as the last row of the Image Info panel ("File size 416.3 MB", in the
+    app's file-browser units). It shows even when the header has no
+    fields.
+  - Both are Claude's narrow changes. 57 image API tests, the build and a
+    rendered check pass. They go into the batched Codex review at
+    finalisation.
+- [x] Candidate preparation (2026-11-11, Fred: "ok, finalize please"):
+  - **Version:** 0.50.0 in `VERSION`, `backend/pyproject.toml` and
+    `uv.lock`.
+  - **Documentation synced:**
+    - the schema documents' version headers;
+    - a `DB_SCHEMA.md` section for migration 0072, with the table moved
+      out of the v0.40.0 list;
+    - the development decisions, README, and agent-collaboration §10.
+  - **Checks:**
+    - ruff, format, and bandit (0 findings; this version adds three
+      reviewed `# nosec`: two `B608` deletes with bound placeholders, and
+      one `B405` type-only import);
+    - the frontend build, and ESLint on changed files (one warning in
+      `FitsImage.tsx`, from before this version);
+    - local links and diff whitespace.
+    - **Full backend suite:** 4,046 passed, 4 skipped, 0 failed (54 min).
+      It started before the size-lookup containment fix and one added test,
+      so the image API (58) and plate-solve API tests were re-run after
+      both and pass.
+  - **Coverage** (the same test modules, before this version and on the
+    candidate):
+    - images API 69% → 74%;
+    - ingest API 71% → 75%;
+    - projects API 82% → 83%;
+    - scanner 88% → 94%;
+    - XISF reader 91% → 92%;
+    - the new block reader 91%;
+    - plate-solve API 96% → 96%. It dipped to 94% until a test for the new
+      500 path was added.
+  - **Batched Codex review of Claude-authored changes, and its check**
+    (`42`–`45`):
+    - one major (stale state in the star-detection timing) and five minors
+      (blob containment, two documentation overclaims, schema placement,
+      `PLAN.md` status, and detection after a failed picture);
+    - all fixed but one point: requiring a visible Image tab. Recorded in
+      the plan's Codex review section.
+  - **Privacy scan** of the staged diff: no personal paths, equipment or
+    locations.
+- [x] Fred's acceptance of the candidate (2026-11-11: "finalize please",
+  staged tree `3843809`). He also approved the agent-collaboration §10 note
+  and the handoff-template line about `tests/test_projects_api.py` ("yes to
+  that please").
+- [x] Published as [PR #29](https://github.com/fbaptiste/nightcrate/pull/29)
+  (tag `v0.50.0`). **PR review after publication** (a fresh Codex review of
+  everything changed after the last check, records `46`–`47`) found no code
+  problem and three minor documentation inaccuracies:
+  - "damaged files are refused everywhere" needed qualifying for property
+    blocks and the thumbnail exception;
+  - two review rounds were undercounted in the plan's record;
+  - D1's implementation status was stale.
+  Fred: "yes, fix all three". Fixed in a documentation commit, and the tag
+  moved to it. The PR description was corrected. The published commit
+  message keeps its wording; history isn't rewritten.
+
+**What changed in the specification** (checked 2026-11-11 against the
+published [XISF Version 1.0 Specification](https://pixinsight.com/doc/docs/XISF-1.0-spec/XISF-1.0-spec.html)).
+The format version stays 1.0, and files still declare `version="1.0"`.
+PixInsight revised the document twice:
+- revision 1 (1.01, September 2026): the `AstrometricSolution` property
+  namespace, Zstandard codecs, a normative colour-transformation annex, an RGB
+  working space definition, an XML schema, and corrections, including to the
+  compressed-block format and checksums;
+- revision 2 (1.02, October 2026): incompressible subblocks are stored
+  uncompressed, and decoders must check that each subblock decompresses to
+  its exact length.
+
+**Findings before the spec** (2026-11-11). Fred's test files: two masters
+re-saved by PixInsight 1.9.6 (XISF module 1.2.0) and one by 1.9.5 (module
+1.1.3), all uncompressed and without checksums.
+1. **Bug: NightCrate finds no plate solution in any of them.**
+   - `read_wcs_params` returns nothing, and the header has no WCS cards.
+   - PixInsight now writes the solution under the spec's
+     `AstrometricSolution:` names. The reader looks only for the older
+     `PCL:AstrometricSolution:` names.
+   - Checked and ruled out: the three corpus files that store their
+     solution only as FITS keywords (v0.42.0: the M74 final and master, the
+     NGC 7380 master) carry no new names. They are the corpus's only files
+     from PixInsight 1.8.9-1, which wrote FITS keywords. The corpus's 32
+     files with the old `PCL:` names come from 1.8.9-2 through 1.9.3. Fred's
+     1.9.5 and 1.9.6 files use the new names.
+2. **Bug: NightCrate can't open compressed files from PixInsight 1.9.6.**
+   - Fred saved two test files with Zstandard + byte shuffling and SHA-256
+     checksums: a mono master and an RGB final.
+   - Both fail in `load_image_data` with a Zstandard error.
+   - The spec (§10.6, §10.6.1) gives subblock sizes in a `subblocks`
+     attribute, and stores incompressible subblocks as-is. That applies to
+     45 of 91 subblocks in the mono master.
+   - The reader instead looks for size headers inside the data (the original
+     April 2026 guess) or one single stream (the later fix for real files).
+   - A decoder written from the spec reads both files, and both checksums
+     match. The mono master is bit-identical to Fred's uncompressed copy, and
+     decodes in 0.5 s.
+3. **Checksums.** The spec (§10.5, §10.6.2) requires verification when a
+   `checksum` attribute is present, and forbids decompressing a block that
+   fails it. The reader ignores the attribute.
+4. **Byte shuffling.** The spec (§10.6.3) leaves a trailing partial item
+   unshuffled. The reader raises an error instead.
+5. **Bug: plain-text String properties are base64-decoded** (§11.1.6:
+   decode only blocks whose `location` asks for it). Text that happens to be
+   valid base64 turns into garbage: "M101" becomes "3]5", and the
+   solution's "ICRS" becomes " $R".
+6. **Half-pixel offset in stored solutions.** The spec (§11.5.3.7.1) puts
+   pixel (i, j) at [i, i+1) × [j, j+1), with its centre at (i+0.5, j+0.5)
+   and y growing downward. FITS pixel centres are whole numbers counted from
+   1, so CRPIX = reference + 0.5. The reader adds 1.
+7. **Baseline decoder gaps** (§7.2):
+   - big-endian blocks (`byteOrder`);
+   - the normal (interleaved) pixel storage model;
+   - inline and embedded pixel data;
+   - vector and matrix properties stored outside the header or compressed.
+8. **Elements.** PixInsight 1.9.6 now writes `Resolution` and `Thumbnail`.
+   A `Thumbnail` is serialized like an `Image` (§11.12). The reader's
+   property search descends into child elements, so it could pick up a
+   thumbnail's own properties.
+
+**The solution namespace** (§11.5.3.7):
+- Four layers; only the first (projection, reference point, linear matrix)
+  is required.
+- A decoder must reject a major `Version` it doesn't support.
+- An unknown projection makes the whole solution unavailable.
+- A decoder must not fall back to other properties or FITS keywords to
+  evaluate a solution.
+- NightCrate's overlays use TAN (Gnomonic) only.
+
+- **From the start sweep (2026-11-11):** no open item has new evidence or is
+  overdue. v0.46.0-R1 waits on Distribution's design; v0.47.0-R1 and R2 wait
+  on checks outside this scope.
+- **Still due from earlier versions:**
+  - the CDS checks under v0.43.1 ("When CDS returns");
+  - the iPad/Safari check of v0.46.0's framing dialog: dragging the frame,
+    and the long-press tooltip;
+  - Safari, Firefox and touch devices on v0.48.0's Messier page.
+
+### Scope (Fred, 2026-10-30)
+
+PixInsight has published an updated XISF specification. A version before
+Distribution reviews it against NightCrate's clean-room XISF reader
+(`services/xisf_io.py`) and fixes what it affects. The review should cover:
+- image data;
+- compression;
+- properties, including the astrometric solution;
+- FITS keywords;
+- reading files written by older PixInsight versions.
+
+The review uses the published specification only, as the existing reader
+does.
+
 ## v0.49.0 — Object search
+
+Merged in [PR #28](https://github.com/fbaptiste/nightcrate/pull/28) on 2026-11-11.
 
 Fred started this version on 2026-11-10, after merging v0.48.0. Its scope is
 the roadmap's next item, the object search, moved here unchanged below. The
@@ -2991,24 +3233,9 @@ ahead of the gallery; it became v0.44.0. On
 after it, also ahead of the gallery; it became v0.45.0. The gallery became
 v0.46.0. On 2026-11-07 Fred placed rigs that don't change underneath their
 records as the very next version after the gallery; it became v0.47.0. The
-Messier checklist became v0.48.0. Object search became v0.49.0, the active
-version above.
+Messier checklist became v0.48.0 and object search v0.49.0. The updated XISF
+specification became v0.50.0, the active version above.
 Version numbers are otherwise assigned when each version starts.
-
-### Updated XISF specification (before Distribution)
-
-Fred (2026-10-30): PixInsight has published an updated XISF specification. A
-version before Distribution reviews it against NightCrate's clean-room XISF
-reader (`services/xisf_io.py`) and fixes what it affects. Nothing has been
-assessed yet. The review should cover:
-- image data;
-- compression;
-- properties, including the astrometric solution;
-- FITS keywords;
-- reading files written by older PixInsight versions.
-
-The review uses the published specification only, as the existing reader
-does.
 
 ### Distribution
 

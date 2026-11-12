@@ -47,6 +47,7 @@ import { ZoneOverlayMap } from "@/components/aberration/ZoneOverlayMap";
 import { SidebarSection } from "@/components/SidebarSection";
 import { FitsHeaderTable } from "@/components/fits/FitsHeaderTable";
 import { FitsImage, type FitsImageHandle, type PixelInfo } from "@/components/fits/FitsImage";
+import { formatSize } from "@/components/projects/CatalogCards";
 import { HduSelector } from "@/components/fits/HduSelector";
 import { Histogram } from "@/components/fits/Histogram";
 import { StretchControls } from "@/components/fits/StretchControls";
@@ -64,7 +65,7 @@ import {
   type PlateSolveResult,
   type WcsParams,
 } from "@/api/plateSolve";
-import { setActivity } from "@/api/client";
+import { ApiError, setActivity } from "@/api/client";
 import DsoAnnotationOverlay from "@/components/plate-solve/DsoAnnotationOverlay";
 import { CHANNEL_COLOR_ARRAY, CHANNEL_COLORS, LUMINOSITY_COLOR } from "@/lib/channelColors";
 import { rgbToHex, findColorName } from "@/lib/colorName";
@@ -149,6 +150,16 @@ const IMAGE_COMMENTARY = [
   "Processing tip: have you tried selecting all and pressing delete?",
   "At this point the noise IS the signal",
 ];
+
+/** Pause between the picture loading and star detection starting. */
+const QUALITY_START_DELAY_MS = 500;
+
+function apiErrorDetail(error: unknown): string {
+  if (error instanceof ApiError && typeof error.detail === "string" && error.detail) {
+    return error.detail;
+  }
+  return error instanceof Error ? error.message : String(error);
+}
 
 function formatDateObs(raw: string | null): string | null {
   if (!raw) return null;
@@ -328,10 +339,33 @@ export default function ImageAnalyzerView({
   // Separate from stats on purpose: detection costs ~0.36 s on a 26 MP frame
   // against ~0.07 s for all of /stats, so the star block fills in afterwards
   // rather than holding up the whole panel on every image.
+  // Star detection waits for the picture: on a 95 MP master it takes ~6 s and,
+  // started alongside the full-size render, slowed the picture from ~1.3 s to
+  // ~7 s (v0.50.0, measured on PixInsight masters).
+  const imageKey = `${activePath}|${selectedHdu}`;
+  // The image whose picture has loaded since the analyzer last switched to it.
+  // Cleared during the render that changes the image (React's "adjust state
+  // when a prop changes" pattern), so an earlier load of the same file can't
+  // unlock detection before this visit's picture is on screen.
+  const [settledImageKey, setSettledImageKey] = useState<string | null>(null);
+  const [qualityReadyKey, setQualityReadyKey] = useState<string | null>(null);
+  const [lastImageKey, setLastImageKey] = useState(imageKey);
+  if (lastImageKey !== imageKey) {
+    setLastImageKey(imageKey);
+    setSettledImageKey(null);
+    setQualityReadyKey(null);
+  }
+  // Start detection only once the picture has stayed briefly, so stepping
+  // quickly through frames doesn't start it for frames passed over.
+  useEffect(() => {
+    if (settledImageKey !== imageKey) return;
+    const timer = window.setTimeout(() => setQualityReadyKey(imageKey), QUALITY_START_DELAY_MS);
+    return () => window.clearTimeout(timer);
+  }, [settledImageKey, imageKey]);
   const qualityQuery = useQuery({
     queryKey: ["image-quality", activePath, selectedHdu],
     queryFn: () => fetchImageQuality(activePath, selectedHdu),
-    enabled: hasStretch,
+    enabled: hasStretch && qualityReadyKey === imageKey,
     staleTime: Infinity,
     refetchOnWindowFocus: false,
   });
@@ -374,7 +408,7 @@ export default function ImageAnalyzerView({
     staleTime: 60_000,
   });
 
-  const effectiveWcs = solvedWcs ?? wcsQuery.data;
+  const effectiveWcs = solvedWcs ?? wcsQuery.data?.wcs ?? null;
 
   const annotationQuery = useQuery({
     // Fingerprint the WCS, don't just record that one exists: a header solution
@@ -387,7 +421,7 @@ export default function ImageAnalyzerView({
       selectedHdu,
       solvedWcs
         ? `solved:${solvedWcs.crval1},${solvedWcs.crval2},${solvedWcs.crpix1},${solvedWcs.crpix2},${solvedWcs.cd1_1},${solvedWcs.cd1_2},${solvedWcs.cd2_1},${solvedWcs.cd2_2},${solvedWcs.naxis1},${solvedWcs.naxis2}`
-        : wcsQuery.data
+        : wcsQuery.data?.wcs
           ? "hdr"
           : "none",
     ],
@@ -463,9 +497,18 @@ export default function ImageAnalyzerView({
       const msg = String(extensionsQuery.error);
       setErrorMsg(msg);
       onError?.(msg);
+    } else if (statsHistogramQuery.isError) {
+      const msg = apiErrorDetail(statsHistogramQuery.error);
+      setErrorMsg(msg);
+      onError?.(msg);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- onError identity is the host's business
-  }, [extensionsQuery.isError, extensionsQuery.error]);
+  }, [
+    extensionsQuery.isError,
+    extensionsQuery.error,
+    statsHistogramQuery.isError,
+    statsHistogramQuery.error,
+  ]);
 
   // Per-file reset. `path` is controlled by the host, so this replaces the old
   // imperative openFile(): whatever opens a file just changes the prop.
@@ -759,6 +802,7 @@ export default function ImageAnalyzerView({
                       onZoomChange={setCurrentZoom}
                       onPixelHover={pixelInspectorOn ? setPixelData : undefined}
                       pixelPatchRadius={patchRadius}
+                      onImageSettled={() => setSettledImageKey(imageKey)}
                     />
                   </Box>
                   {(fileName || dateObs || exposure || filter) && (
@@ -958,8 +1002,14 @@ export default function ImageAnalyzerView({
                           display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
                           gap: 2, bgcolor: "rgba(0,0,0,0.6)",
                         }}>
-                          <Typography color="common.white">
-                            No WCS information found in image headers.
+                          <Typography
+                            color="common.white"
+                            sx={{ px: 3, maxWidth: 560, textAlign: "center" }}
+                          >
+                            {wcsQuery.isError
+                              ? apiErrorDetail(wcsQuery.error)
+                              : wcsQuery.data?.unavailable_reason ??
+                                "No WCS information found in image headers."}
                           </Typography>
                           <Button
                             variant="contained"
@@ -1054,14 +1104,8 @@ export default function ImageAnalyzerView({
           {/* Key fields summary — curated header info */}
           <SidebarSection label="Image Info">
           {(() => {
-            const meta = metadataQuery.data?.canonical;
-            if (!meta || Object.keys(meta).length === 0) {
-              return (
-                <Typography variant="caption" color="text.secondary" sx={{ px: 1.5, py: 0.5, fontSize: "0.65rem" }}>
-                  No metadata available
-                </Typography>
-              );
-            }
+            const meta = metadataQuery.data?.canonical ?? {};
+            const fileSize = metadataQuery.data?.file_size_bytes ?? null;
             const displayFields: [string, string][] = [
               ["object_name", "Object"],
               ["filter_name", "Filter"],
@@ -1084,6 +1128,8 @@ export default function ImageAnalyzerView({
                 }
                 return { label, val };
               });
+            // The stored file's size, last (Fred, 2026-11-11).
+            if (fileSize != null) rows.push({ label: "File size", val: formatSize(fileSize) });
             return rows.length > 0 ? (
               <Box sx={{ px: 1.5, py: 0.5, display: "grid", gridTemplateColumns: "auto 1fr", columnGap: 1, rowGap: 0.125, fontSize: "0.65rem", fontFamily: monoFontFamily }}>
                 {rows.map(({ label, val }) => (
@@ -1487,7 +1533,7 @@ export default function ImageAnalyzerView({
                 annotationResult={annotationQuery.data ?? null}
                 wcs={effectiveWcs}
                 solveResult={solvedResult}
-                hasHeaderSolution={wcsQuery.data != null}
+                hasHeaderSolution={wcsQuery.data?.wcs != null}
                 onSolveAgain={openPlateSolve}
                 onUseHeaderSolution={() => {
                   setSolvedWcs(null);
