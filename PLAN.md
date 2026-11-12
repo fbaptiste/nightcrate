@@ -16,8 +16,11 @@ question at a time.
 - [x] Start from updated `main` on `v0.50.0/xisf-spec-update`.
 - [x] Spec: [v0.50.0 design](docs/superpowers/specs/2026-11-11-v0.50.0-design.md),
   written from the full revised specification. Fred decided (2026-11-11):
-  a failed checksum refuses the image everywhere, with a message; gnomonic
-  solutions only. Claude's other calls are listed at its end. **Fred
+  - an image whose pixel checksum fails is refused everywhere, with a
+    message. A damaged property block only makes that property
+    unavailable, and a catalog thumbnail of a file damaged after
+    cataloging stays blank (v0.50.0-D1);
+  - gnomonic solutions only. Claude's other calls are listed at its end. **Fred
   approved the spec** (2026-11-11: "approved, go ahead with the plan").
 - [x] Implementation plan: [v0.50.0 plan](docs/superpowers/plans/2026-11-11-v0.50.0.md).
   Codex's review converged in 5 rounds, recorded in the plan's Codex review
@@ -138,6 +141,17 @@ question at a time.
   staged tree `3843809`). He also approved the agent-collaboration §10 note
   and the handoff-template line about `tests/test_projects_api.py` ("yes to
   that please").
+- [x] Published as [PR #29](https://github.com/fbaptiste/nightcrate/pull/29)
+  (tag `v0.50.0`). **PR review after publication** (a fresh Codex review of
+  everything changed after the last check, records `46`–`47`) found no code
+  problem and three minor documentation inaccuracies:
+  - "damaged files are refused everywhere" needed qualifying for property
+    blocks and the thumbnail exception;
+  - two review rounds were undercounted in the plan's record;
+  - D1's implementation status was stale.
+  Fred: "yes, fix all three". Fixed in a documentation commit, and the tag
+  moved to it. The PR description was corrected. The published commit
+  message keeps its wording; history isn't rewritten.
 
 **What changed in the specification** (checked 2026-11-11 against the
 published [XISF Version 1.0 Specification](https://pixinsight.com/doc/docs/XISF-1.0-spec/XISF-1.0-spec.html)).
