@@ -63,6 +63,7 @@ class IngestStatus(BaseModel):
     subs_updated: int = 0
     subs_skipped: int = 0
     errors_count: int = 0
+    first_error: str | None = None
     started_at: str | None = None
     finished_at: str | None = None
     message: str | None = None
@@ -83,6 +84,21 @@ class CatalogSummary(BaseModel):
     other: int = 0
     sessions: int = 0
     total_files: int = 0
+    uncataloged: int = 0
+
+
+class UncatalogedFile(BaseModel):
+    id: int
+    path: str
+    reason: Literal["damaged", "unsupported", "unreadable"]
+    message: str
+    detected_at: str
+    cataloged_earlier: bool
+
+
+class UncatalogedList(BaseModel):
+    timezone: str = "UTC"
+    files: list[UncatalogedFile]
 
 
 class CatalogFrame(BaseModel):

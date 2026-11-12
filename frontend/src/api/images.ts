@@ -255,6 +255,8 @@ export function recordRecentFile(path: string): Promise<void> {
 export interface ImageMetadata {
   canonical: Record<string, string | number | null>;
   unrecognized_keywords: string[];
+  /** Size of the stored image (file, archive entry or project image); null when unknown. */
+  file_size_bytes: number | null;
 }
 
 export function fetchMetadata(path: string, hdu: number): Promise<ImageMetadata> {

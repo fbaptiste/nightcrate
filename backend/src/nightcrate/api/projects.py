@@ -31,7 +31,7 @@ from nightcrate.api.project_models import (
 )
 from nightcrate.core.app_config import get_projects_root
 from nightcrate.db.session import get_db, workspace_key
-from nightcrate.services import archive_io, pxiproject_io
+from nightcrate.services import archive_io, pixel_loader, pxiproject_io, xisf_io
 from nightcrate.services.project_images import (
     VARIANT_SIZES,
     CropFrameError,
@@ -244,6 +244,50 @@ def _enumerate_paths(file_path: str) -> list[str]:
             return [file_path]
 
     return [file_path]
+
+
+def _verify_project_image(path: str) -> None:
+    """Verify XISF pixels behind a project-image path before DB insertion."""
+    lower_path = path.lower()
+    if not lower_path.endswith(".xisf") and ".pxiproject::" not in lower_path:
+        return
+    try:
+        source, file_type, image_index = pixel_loader.resolve(path)
+    except xisf_io.XISFError as exc:
+        name = Path(path.rsplit("::", 1)[-1]).name
+        raise _ProjectImageXISFError(name, str(exc)) from exc
+    except Exception:
+        # Verification is additive validation. Preserve the prior save-and-render
+        # behavior when a path is missing or a virtual reference cannot resolve.
+        return
+    if file_type == "xisf":
+        try:
+            xisf_io.verify_image(source)
+        except xisf_io.XISFError as exc:
+            raise _ProjectImageXISFError(Path(path.rsplit("::", 1)[-1]).name, str(exc)) from exc
+        return
+    if file_type != "pxiproject":
+        return
+    try:
+        entry = pxiproject_io.list_project_images(source)[image_index]
+    except xisf_io.XISFError as exc:
+        raise _ProjectImageXISFError(Path(path).name, str(exc)) from exc
+    except Exception:
+        return
+    if entry["source"] != "referenced" or not entry["file_path"]:
+        return
+    referenced = Path(entry["file_path"])
+    if referenced.suffix.lower() == ".xisf":
+        try:
+            xisf_io.verify_image(referenced)
+        except xisf_io.XISFError as exc:
+            raise _ProjectImageXISFError(referenced.name, str(exc)) from exc
+
+
+class _ProjectImageXISFError(ValueError):
+    def __init__(self, name: str, message: str) -> None:
+        super().__init__(message)
+        self.name = name
 
 
 # ── Project CRUD ────────────────────────────────────────────────────────────
@@ -515,6 +559,12 @@ async def add_images(
         all_paths: list[str] = []
         for fp in body.file_paths:
             all_paths.extend(await asyncio.to_thread(_enumerate_paths, fp))
+
+        for vpath in all_paths:
+            try:
+                await asyncio.to_thread(_verify_project_image, vpath)
+            except _ProjectImageXISFError as exc:
+                raise HTTPException(status_code=422, detail=f"{exc.name}: {exc}") from exc
 
         created_ids: list[int] = []
         for i, vpath in enumerate(all_paths):

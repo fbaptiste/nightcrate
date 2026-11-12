@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import logging
 from concurrent.futures import ProcessPoolExecutor
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from nightcrate.services.ingest_classify import (
@@ -40,7 +40,21 @@ class ScanEntry:
     mtime: str  # ISO 8601 UTC
 
 
-def scan_directory(root: str) -> list[ScanEntry]:
+@dataclass
+class ScanReport:
+    """Files found plus places the scan could not or deliberately did not list."""
+
+    entries: list[ScanEntry]
+    root_error: str | None = None
+    unlisted_dirs: list[tuple[str, str]] = field(default_factory=list)
+    unreadable_files: list[tuple[str, str]] = field(default_factory=list)
+    skipped_dirs: list[str] = field(default_factory=list)
+
+    def __iter__(self):
+        return iter(self.entries)
+
+
+def scan_directory(root: str) -> ScanReport:
     """Recursively walk *root*, skipping hidden files/dirs, classifying each file.
 
     `.pxiproject` directories are recorded as a single entry (a project asset),
@@ -56,28 +70,57 @@ def scan_directory(root: str) -> list[ScanEntry]:
         return _scan_archive(root)
 
     base = Path(root).expanduser()
-    entries: list[ScanEntry] = []
-    if not base.exists():
-        return entries
+    report = ScanReport(entries=[])
+    try:
+        base.stat()
+        children = sorted(base.iterdir(), key=lambda path: path.name)
+    except OSError as exc:
+        report.root_error = f"{type(exc).__name__}: {exc}"
+        return report
 
-    for path in _walk(base):
-        if is_sidecar(path.name):
-            continue
-        try:
-            stat = path.stat()
-        except OSError:
-            continue
-        is_pxi = path.is_dir()
-        entries.append(
-            ScanEntry(
-                path=str(path),
-                name=path.name,
-                category=classify_extension(path.name, is_dir=is_pxi),
-                size_bytes=stat.st_size if not is_pxi else 0,
-                mtime=_iso_mtime(stat.st_mtime),
+    stack = [(base, children)]
+    while stack:
+        _current, children = stack.pop()
+        for path in children:
+            try:
+                is_dir = path.is_dir()
+            except OSError:
+                is_dir = False
+            is_hidden = path.name.startswith(".")
+            is_pxiproject = is_dir and path.name.lower().endswith(".pxiproject")
+            if is_hidden and not is_dir:
+                continue
+            if is_dir and (is_hidden or is_pxiproject):
+                report.skipped_dirs.append(str(path))
+            if is_hidden and not is_pxiproject:
+                continue
+            if is_pxiproject:
+                pass
+            elif is_dir:
+                try:
+                    stack.append((path, sorted(path.iterdir(), key=lambda child: child.name)))
+                except OSError as exc:
+                    report.unlisted_dirs.append((str(path), f"{type(exc).__name__}: {exc}"))
+                continue
+            if is_sidecar(path.name):
+                continue
+            category = classify_extension(path.name, is_dir=is_dir)
+            try:
+                stat = path.stat()
+            except OSError as exc:
+                if category == CATEGORY_SUB:
+                    report.unreadable_files.append((str(path), f"{type(exc).__name__}: {exc}"))
+                continue
+            report.entries.append(
+                ScanEntry(
+                    path=str(path),
+                    name=path.name,
+                    category=category,
+                    size_bytes=stat.st_size if not is_dir else 0,
+                    mtime=_iso_mtime(stat.st_mtime),
+                )
             )
-        )
-    return entries
+    return report
 
 
 def _archive_root(root: str) -> tuple[Path, str] | None:
@@ -91,7 +134,7 @@ def _archive_root(root: str) -> tuple[Path, str] | None:
     return archive, right.strip("/") if sep else ""
 
 
-def _scan_archive(root: str) -> list[ScanEntry]:
+def _scan_archive(root: str) -> ScanReport:
     """Walk a directory inside an archive, yielding ``archive::entry`` paths.
 
     Archives carry no per-entry mtime in the TOC listing we use, so every entry
@@ -101,20 +144,21 @@ def _scan_archive(root: str) -> list[ScanEntry]:
     so it reads as the archive's date rather than the file's own.
 
     ``.pxiproject`` bundles are recorded as one asset and not descended into,
-    matching ``_walk``. Nested archives are catalogued as plain files.
+    matching the filesystem scanner. Nested archives are catalogued as plain files.
     """
     from nightcrate.services.archive_io import list_contents
 
     parsed = _archive_root(root)
     if parsed is None:
-        return []
+        return ScanReport(entries=[], root_error="The archive couldn't be opened.")
     archive, start = parsed
+    report = ScanReport(entries=[])
     try:
         mtime = _iso_mtime(archive.stat().st_mtime)
-    except OSError:
-        return []
+    except OSError as exc:
+        report.root_error = f"{type(exc).__name__}: {exc}"
+        return report
 
-    entries: list[ScanEntry] = []
     stack = [start]
     while stack:
         subdir = stack.pop()
@@ -122,18 +166,28 @@ def _scan_archive(root: str) -> list[ScanEntry]:
             children = list_contents(archive, subdir)
         except (OSError, ValueError) as exc:
             logger.warning("%s cannot list %s::%s — %s", _LOG_PREFIX, archive, subdir, exc)
+            message = f"{type(exc).__name__}: {exc}"
+            virtual_dir = f"{archive}::{subdir}" if subdir else str(archive)
+            if subdir == start:
+                report.root_error = message
+            else:
+                report.unlisted_dirs.append((virtual_dir, message))
             continue
         for child in children:
             name = child["name"]
             if name.startswith("."):
+                if child["type"] == "dir":
+                    entry_path = f"{subdir}/{name}" if subdir else name
+                    report.skipped_dirs.append(f"{archive}::{entry_path}")
                 continue
             entry_path = f"{subdir}/{name}" if subdir else name
             if child["type"] == "dir":
                 # A .pxiproject is a directory, but it is one asset — the same
-                # rule _walk applies on the filesystem. Descending into it would
+                # rule applied on the filesystem. Descending into it would
                 # catalog its internals as loose files.
                 if name.lower().endswith(".pxiproject"):
-                    entries.append(
+                    report.skipped_dirs.append(f"{archive}::{entry_path}")
+                    report.entries.append(
                         ScanEntry(
                             path=f"{archive}::{entry_path}",
                             name=name,
@@ -147,7 +201,7 @@ def _scan_archive(root: str) -> list[ScanEntry]:
                 continue
             if is_sidecar(name):
                 continue
-            entries.append(
+            report.entries.append(
                 ScanEntry(
                     path=f"{archive}::{entry_path}",
                     name=name,
@@ -156,30 +210,7 @@ def _scan_archive(root: str) -> list[ScanEntry]:
                     mtime=mtime,
                 )
             )
-    return entries
-
-
-def _walk(base: Path):
-    """Yield files (and `.pxiproject` dirs) under *base*, skipping hidden names."""
-    stack = [base]
-    while stack:
-        current = stack.pop()
-        try:
-            children = sorted(current.iterdir(), key=lambda p: p.name)
-        except OSError:
-            continue
-        for child in children:
-            if child.name.startswith("."):
-                if child.name.lower().endswith(".pxiproject"):
-                    yield child  # a pxiproject can be dot-prefixed? treat as asset
-                continue
-            if child.is_dir():
-                if child.name.lower().endswith(".pxiproject"):
-                    yield child
-                else:
-                    stack.append(child)
-            else:
-                yield child
+    return report
 
 
 def _iso_mtime(epoch: float) -> str:
@@ -215,6 +246,11 @@ def parse_image_file(path_str: str) -> dict:
         raw_header = {c["key"]: c["value"] for c in cards if c.get("key")}
         meta = extract_metadata(raw_header)
         content_hash = file_sha256(path)
+        if ftype == "xisf":
+            from nightcrate.services import xisf_io
+
+            for index in range(len(xisf_io.list_extensions(path))):
+                xisf_io.verify_image(path, index)
         stat = path.stat()
         return {
             "path": path_str,
@@ -226,7 +262,21 @@ def parse_image_file(path_str: str) -> dict:
             "error": None,
         }
     except Exception as exc:  # noqa: BLE001 - any parse failure is a recorded error, not fatal
-        return {"path": path_str, "error": f"{type(exc).__name__}: {exc}"}
+        from nightcrate.services.xisf_io import (
+            XISFChecksumError,
+            XISFError,
+            XISFUnavailableError,
+        )
+
+        message = str(exc) if isinstance(exc, XISFError) else f"{type(exc).__name__}: {exc}"
+        reason = (
+            "damaged"
+            if isinstance(exc, XISFChecksumError)
+            else "unsupported"
+            if isinstance(exc, XISFUnavailableError)
+            else "unreadable"
+        )
+        return {"path": path_str, "error": message, "reason": reason}
 
 
 def _parse_archive_entry(path_str: str) -> dict:
@@ -255,6 +305,11 @@ def _parse_archive_entry(path_str: str) -> dict:
 
         cards = read_header(io.BytesIO(raw))
         raw_header = {c["key"]: c["value"] for c in cards if c.get("key")}
+        if ftype == "xisf":
+            from nightcrate.services import xisf_io
+
+            for index in range(len(xisf_io.list_extensions(io.BytesIO(raw)))):
+                xisf_io.verify_image(io.BytesIO(raw), index)
         return {
             "path": path_str,
             "content_hash": hashlib.sha256(raw).hexdigest(),
@@ -265,7 +320,21 @@ def _parse_archive_entry(path_str: str) -> dict:
             "error": None,
         }
     except Exception as exc:  # noqa: BLE001 - a bad entry is a recorded error, not fatal
-        return {"path": path_str, "error": f"{type(exc).__name__}: {exc}"}
+        from nightcrate.services.xisf_io import (
+            XISFChecksumError,
+            XISFError,
+            XISFUnavailableError,
+        )
+
+        message = str(exc) if isinstance(exc, XISFError) else f"{type(exc).__name__}: {exc}"
+        reason = (
+            "damaged"
+            if isinstance(exc, XISFChecksumError)
+            else "unsupported"
+            if isinstance(exc, XISFUnavailableError)
+            else "unreadable"
+        )
+        return {"path": path_str, "error": message, "reason": reason}
 
 
 # ── ProcessPool ──────────────────────────────────────────────────────────────

@@ -1,5 +1,6 @@
 """Plate solving API — ASTAP integration + image annotation endpoints."""
 
+import asyncio
 import logging
 import math
 from uuid import UUID
@@ -13,6 +14,7 @@ from nightcrate.db.session import get_db
 from nightcrate.services import solve_operations
 from nightcrate.services.dso_type_groups import group_for_raw_type
 from nightcrate.services.image_annotation_models import (
+    FileSolution,
     ImageAnnotationResult,
     WcsParams,
 )
@@ -24,8 +26,8 @@ from nightcrate.services.image_annotations import (
 from nightcrate.services.path_resolver import resolve_path
 from nightcrate.services.plate_solve import (
     cards_to_dict,
+    read_file_solution,
     read_header_cards,
-    read_wcs_params,
     run_solve,
     validate_astap_path,
 )
@@ -51,6 +53,16 @@ def _failure_detail(message: str, failure_reason: str | None, attempts) -> dict:
         "failure_reason": failure_reason,
         "attempts": [attempt.model_dump(mode="json") for attempt in attempts],
     }
+
+
+async def _read_image_value(reader, *args, path: str):
+    try:
+        return await asyncio.to_thread(reader, *args)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("[plate-solve] image read failed for %s", path)
+        raise HTTPException(status_code=500, detail="Internal processing error") from exc
 
 
 @router.post("/solve")
@@ -202,10 +214,12 @@ async def cancel(request: CancelSolveRequest) -> dict:
 async def detect_wcs(
     path: str = Query(..., description="Image path"),
     hdu: int = Query(0),
-) -> WcsParams | None:
+) -> FileSolution:
     """Check if an image has WCS information in its headers."""
     source, file_type, image_index, _ck = resolve_path(path)
-    return read_wcs_params(source, file_type, image_index, hdu)
+    return await _read_image_value(
+        read_file_solution, source, file_type, image_index, hdu, path=path
+    )
 
 
 @router.get("/annotate")
@@ -245,7 +259,9 @@ async def annotate(
         ny = naxis2
         if not nx or not ny:
             source, file_type, image_index, _ck = resolve_path(path)
-            cards = read_header_cards(source, file_type, image_index, hdu)
+            cards = await _read_image_value(
+                read_header_cards, source, file_type, image_index, hdu, path=path
+            )
             raw = cards_to_dict(cards)
             nx = nx or int(float(raw.get("NAXIS1", "0")))
             ny = ny or int(float(raw.get("NAXIS2", "0")))
@@ -258,11 +274,17 @@ async def annotate(
         )
     else:
         source, file_type, image_index, _ck = resolve_path(path)
-        wcs_params = read_wcs_params(source, file_type, image_index, hdu)
+        solution = await _read_image_value(
+            read_file_solution, source, file_type, image_index, hdu, path=path
+        )
+        wcs_params = solution.wcs
         if wcs_params is None:
             raise HTTPException(
                 status_code=422,
-                detail="No WCS information available. Plate solve the image first.",
+                detail=(
+                    solution.unavailable_reason
+                    or "No WCS information available. Plate solve the image first."
+                ),
             )
 
     center_ra, center_dec, diag_radius, fov_w, fov_h, pixel_scale = compute_fov(

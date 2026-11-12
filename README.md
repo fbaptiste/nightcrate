@@ -15,7 +15,8 @@ forecasts and survey imagery are fetched from external services when needed.
   headers, tag rigs/targets, inspect frames in a table grouped by night (or as
   thumbnails), keep notes and finished images.
   Files stay where they are. Rescanning updates the catalog without duplicating
-  records within a project. A project can start with a finished image and manual
+  records within a project. Files a scan couldn't catalog, such as a damaged
+  XISF, are listed with the reason under "Not cataloged". A project can start with a finished image and manual
   sessions; importing raw captures is optional. Plate solving a project image
   identifies the catalog objects in it, and you choose one or more as main
   targets. Each project has a status (Active, Paused, Complete, Abandoned)
@@ -76,8 +77,9 @@ forecasts and survey imagery are fetched from external services when needed.
   reviewed list: every name is searchable, one is shown, and hovering a
   result's name shows the others. The catalog and planner panels link to
   SIMBAD, Wikipedia, Google search and Google Images.
-- **Image analysis:** FITS, XISF, PixInsight projects, PNG/JPEG/TIFF and archive
-  entries; auto/manual stretch, histogram, pixel inspection, FITS header editing,
+- **Image analysis:** FITS, XISF (including PixInsight 1.9.6's compressed,
+  checksummed files and the plate solutions it stores), PixInsight projects,
+  PNG/JPEG/TIFF and archive entries; auto/manual stretch, histogram, pixel inspection, FITS header editing,
   aberration inspection, built-in plate solving (Gaia DR3 stars, offline after a
   one-time download), with ASTAP optional, and catalog-object overlays. Either
   solver searches near the header position first and then the whole sky.

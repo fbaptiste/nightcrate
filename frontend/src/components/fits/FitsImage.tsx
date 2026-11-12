@@ -23,6 +23,8 @@ interface Props {
   onZoomChange?: (zoom: number) => void;
   onPixelHover?: (info: PixelInfo | null) => void;
   pixelPatchRadius?: number;
+  /** Called when the displayed image has loaded successfully. */
+  onImageSettled?: () => void;
 }
 
 export interface FitsImageHandle {
@@ -44,7 +46,7 @@ const IS_TOUCH_DEVICE = typeof navigator !== "undefined" && navigator.maxTouchPo
 
 
 export const FitsImage = forwardRef<FitsImageHandle, Props>(
-  function FitsImage({ path, hdu, linked, perChannel, activity, onZoomChange, onPixelHover, pixelPatchRadius = 50 }, ref) {
+  function FitsImage({ path, hdu, linked, perChannel, activity, onZoomChange, onPixelHover, pixelPatchRadius = 50, onImageSettled }, ref) {
     const src = imageUrl(path, hdu, linked, perChannel, activity);
     const containerRef = useRef<HTMLDivElement | null>(null);
     const imgRef = useRef<HTMLImageElement | null>(null);
@@ -617,7 +619,7 @@ export const FitsImage = forwardRef<FitsImageHandle, Props>(
             draggable={false}
             width={halfImgW * 2 || undefined}
             height={halfImgH * 2 || undefined}
-            onLoad={() => { setImageLoaded(true); setImageLoading(false); forceRender((n) => n + 1); }}
+            onLoad={() => { setImageLoaded(true); setImageLoading(false); forceRender((n) => n + 1); onImageSettled?.(); }}
             onError={() => { setImageLoaded(true); setImageLoading(false); forceRender((n) => n + 1); }}
             sx={{
               display: "block",

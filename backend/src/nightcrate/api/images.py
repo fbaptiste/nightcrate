@@ -249,6 +249,8 @@ async def get_metadata(
 ) -> dict:
     """Return canonical metadata and unrecognized keywords for a file."""
     p, ft, idx, _ck = resolve_path(path)
+    # Before the header read: FITS header reads close a passed buffer.
+    file_size_bytes = _file_size_bytes(p, ft, idx)
     try:
         if ft == "pxiproject":
             cards = pxiproject_io.read_header(p, idx)
@@ -284,7 +286,39 @@ async def get_metadata(
     return {
         "canonical": canonical,
         "unrecognized_keywords": unrecognized,
+        "file_size_bytes": file_size_bytes,
     }
+
+
+def _file_size_bytes(p: Path | BinaryIO, ft: str, idx: int) -> int | None:
+    """Size of the stored image, for the analyzer's size pill; None when unknown.
+
+    A plain file is its size on disk. An archive entry is the extracted entry's
+    size (``resolve_path`` already holds it in memory). A PixInsight project
+    image is its referenced file, or its stored blob inside ``project.data``.
+    """
+    try:
+        if ft == "pxiproject" and isinstance(p, Path):
+            entry = pxiproject_io.list_project_images(p)[idx]
+            if entry["source"] == "referenced" and entry["file_path"]:
+                referenced = Path(entry["file_path"])
+                return referenced.stat().st_size if referenced.is_file() else None
+            if entry["data_src"]:
+                # The same containment rule as pxiproject_io.load_image_data:
+                # a blob path must stay inside project.data.
+                data_dir = (p / "project.data").resolve()
+                blob = (data_dir / entry["data_src"]).resolve()
+                if not blob.is_relative_to(data_dir) or not blob.is_file():
+                    return None
+                return blob.stat().st_size
+            return None
+        if isinstance(p, Path):
+            return p.stat().st_size
+        if hasattr(p, "getbuffer"):
+            return p.getbuffer().nbytes
+    except OSError, ValueError, IndexError, pxiproject_io.PxiProjectError:
+        return None
+    return None
 
 
 def _compute_stats(

@@ -1,4 +1,4 @@
--- NightCrate version: 0.49.0
+-- NightCrate version: 0.50.0
 -- NightCrate Database Schema
 -- SQLite DDL for the full current schema. Originally authored at v0.8.0;
 -- extended through v0.15.0 (rig builder, My Equipment flag, location seeing,
@@ -1918,6 +1918,18 @@ CREATE TABLE ingestion_run (
     finished_at       TEXT
 );
 CREATE INDEX idx_ingestion_run_project ON ingestion_run(project_id);
+
+CREATE TABLE uncataloged_file (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    project_id  INTEGER NOT NULL REFERENCES project(id) ON DELETE CASCADE,
+    path        TEXT    NOT NULL,
+    reason      TEXT    NOT NULL
+                CHECK (reason IN ('damaged', 'unsupported', 'unreadable')),
+    message     TEXT    NOT NULL,
+    run_id      INTEGER REFERENCES ingestion_run(id) ON DELETE SET NULL,
+    detected_at TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    UNIQUE (project_id, path)
+);
 
 -- Sessions (§5) — auto/ingest rig-night grouping of sub frames.
 CREATE TABLE session (

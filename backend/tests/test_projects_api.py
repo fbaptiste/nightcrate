@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import hashlib
 import io
 import sqlite3
+import zipfile
 from pathlib import Path
 from unittest.mock import patch
 
@@ -265,6 +267,93 @@ class TestUpdateMetadata:
 
 
 class TestImages:
+    async def test_missing_xisf_path_keeps_prior_insert_behavior(self, client, tmp_path):
+        missing = tmp_path / "missing.xisf"
+        project = await client.post("/api/projects", json={"name": "Missing XISF"})
+
+        response = await client.post(
+            f"/api/projects/{project.json()['id']}/images",
+            json={"file_paths": [str(missing)]},
+        )
+
+        assert response.status_code == 201
+        assert [row["file_path"] for row in response.json()] == [str(missing)]
+
+    async def test_bad_pxiproject_index_keeps_prior_insert_behavior(self, client, tmp_path):
+        from tests.test_pxiproject_io import _make_project
+
+        good = _png(tmp_path / "good.png")
+        bundle = _make_project(
+            tmp_path,
+            [{"name": "Only", "file_path": good, "data_src": "unused"}],
+        )
+        bad_virtual = f"{bundle}::99"
+        project = await client.post("/api/projects", json={"name": "Bad virtual index"})
+
+        response = await client.post(
+            f"/api/projects/{project.json()['id']}/images",
+            json={"file_paths": [good, bad_virtual]},
+        )
+
+        assert response.status_code == 201
+        assert [row["file_path"] for row in response.json()] == [good, bad_virtual]
+
+    async def test_damaged_xisf_rejects_mixed_request_before_inserting(self, client, tmp_path):
+        from tests.test_xisf_io import _make_xisf
+
+        raw = bytes(range(32))
+        checksum = f"sha256:{hashlib.sha256(raw).hexdigest()}"
+        good_bytes = _make_xisf(4, 4, 1, "UInt16", raw, checksum=checksum)
+        good = tmp_path / "good.xisf"
+        bad = tmp_path / "damaged.xisf"
+        good.write_bytes(good_bytes)
+        damaged = bytearray(good_bytes)
+        damaged[-1] ^= 1
+        bad.write_bytes(damaged)
+        project = await client.post("/api/projects", json={"name": "Verify XISF"})
+        pid = project.json()["id"]
+
+        response = await client.post(
+            f"/api/projects/{pid}/images", json={"file_paths": [str(good), str(bad)]}
+        )
+
+        assert response.status_code == 422
+        assert response.json()["detail"].startswith("damaged.xisf: This XISF file is damaged.")
+        assert (await client.get(f"/api/projects/{pid}")).json()["images"] == []
+
+    @pytest.mark.parametrize("source_kind", ["archive", "pxiproject"])
+    async def test_damaged_xisf_behind_virtual_path_is_rejected(
+        self, client, tmp_path, source_kind
+    ):
+        from tests.test_pxiproject_io import _make_project
+        from tests.test_xisf_io import _make_xisf
+
+        raw = bytes(range(32))
+        checksum = f"sha256:{hashlib.sha256(raw).hexdigest()}"
+        damaged = bytearray(_make_xisf(4, 4, 1, "UInt16", raw, checksum=checksum))
+        damaged[-1] ^= 1
+        if source_kind == "archive":
+            source = tmp_path / "images.zip"
+            with zipfile.ZipFile(source, "w") as archive:
+                archive.writestr("damaged.xisf", damaged)
+        else:
+            referenced = tmp_path / "referenced.xisf"
+            referenced.write_bytes(damaged)
+            source = _make_project(
+                tmp_path,
+                [{"name": "Damaged", "file_path": str(referenced), "data_src": "unused"}],
+            )
+        project = await client.post("/api/projects", json={"name": source_kind})
+        pid = project.json()["id"]
+
+        response = await client.post(
+            f"/api/projects/{pid}/images", json={"file_paths": [str(source)]}
+        )
+
+        assert response.status_code == 422
+        assert "This XISF file is damaged." in response.json()["detail"]
+        assert (await client.get(f"/api/projects/{pid}")).json()["images"] == []
+
     async def test_add_single_image_is_main(self, client: AsyncClient, tmp_fits_mono: Path):
         r = await client.post("/api/projects", json={"name": "Add One"})
         pid = r.json()["id"]
@@ -301,6 +390,7 @@ class TestImages:
         with (
             patch("nightcrate.api.projects.archive_io.list_contents", return_value=mock_contents),
             patch("nightcrate.api.projects.archive_io.is_archive", return_value=True),
+            patch("nightcrate.api.projects._verify_project_image"),
             patch("nightcrate.api.projects.generate_rendered_images"),
         ):
             resp = await client.post(

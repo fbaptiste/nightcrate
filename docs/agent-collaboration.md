@@ -282,6 +282,12 @@ Canaried on 2026-09-22 (tool inventories are as reported by the model):
   Fred's screen. Handoffs therefore name the test modules Codex runs, and never
   include the whole suite or GPU tests. Claude runs the full suite outside the
   sandbox.
+- 2026-11-11 (v0.50.0): `tests/test_projects_api.py` isn't a GPU test, but its
+  image-rendering path initialised MLX inside the sandbox and aborted the
+  interpreter. Handoffs leave that module to Claude. Codex can run other
+  modules in-process with the GPU off: `uv run python -c 'from
+  nightcrate.core.compute import set_gpu_enabled; set_gpu_enabled(False);
+  import pytest; raise SystemExit(pytest.main([...]))'`.
 
 The `codex` skill records how to re-run these checks.
 

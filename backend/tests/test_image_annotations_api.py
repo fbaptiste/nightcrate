@@ -8,7 +8,7 @@ from astropy.io import fits
 from httpx import ASGITransport, AsyncClient
 
 from nightcrate.main import app
-from nightcrate.services.image_annotation_models import WcsParams
+from nightcrate.services.image_annotation_models import FileSolution, WcsParams
 
 
 @pytest.fixture
@@ -51,7 +51,87 @@ def fits_no_wcs(tmp_path: Path) -> Path:
     return path
 
 
+@pytest.mark.anyio
+@pytest.mark.parametrize("endpoint", ["detect-wcs", "annotate"])
+async def test_truncated_xisf_reader_error_returns_plain_422(client, tmp_path, endpoint):
+    path = tmp_path / "truncated.xisf"
+    path.write_bytes(b"XISF0100")
+
+    response = await client.get(f"/api/plate-solve/{endpoint}", params={"path": str(path)})
+
+    assert response.status_code == 422
+    assert response.json() == {"detail": "This XISF file has an invalid header."}
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("endpoint", ["detect-wcs", "annotate"])
+async def test_unexpected_reader_failure_is_logged_500(
+    client, fits_no_wcs, endpoint, monkeypatch, caplog
+):
+    """A failure that isn't a reader error stays a logged, generic 500."""
+    from nightcrate.api import plate_solve as plate_solve_api
+
+    def boom(*_args):
+        raise RuntimeError("disk vanished")
+
+    monkeypatch.setattr(plate_solve_api, "read_file_solution", boom)
+    with caplog.at_level("ERROR"):
+        response = await client.get(
+            f"/api/plate-solve/{endpoint}", params={"path": str(fits_no_wcs)}
+        )
+
+    assert response.status_code == 500
+    assert response.json() == {"detail": "Internal processing error"}
+    assert "image read failed" in caplog.text
+
+
 class TestDetectWcs:
+    @pytest.mark.anyio
+    async def test_xisf_solution_keeps_reason_and_half_pixel_conversion(self, client, tmp_path):
+        from tests.test_xisf_io import TestAstrometricWcs, _make_xisf
+
+        pixels = np.zeros((8, 10), dtype=np.uint16)
+        xml = TestAstrometricWcs._astro_xml(
+            [300.0, 35.0],
+            [4.0, 3.0],
+            [1e-5, -3e-4, 3e-4, 1e-5],
+            prefix="AstrometricSolution:",
+            version="1.0",
+        )
+        path = tmp_path / "solution.xisf"
+        path.write_bytes(_make_xisf(10, 8, 1, "UInt16", pixels.tobytes(), extra_xml=xml))
+
+        response = await client.get("/api/plate-solve/detect-wcs", params={"path": str(path)})
+
+        assert response.status_code == 200
+        assert response.json()["wcs"]["crpix1"] == 4.5
+        assert response.json()["unavailable_reason"] is None
+
+    @pytest.mark.anyio
+    async def test_xisf_unsupported_projection_flows_to_annotate(self, client, tmp_path):
+        from tests.test_xisf_io import TestAstrometricWcs, _make_xisf
+
+        pixels = np.zeros((8, 10), dtype=np.uint16)
+        xml = TestAstrometricWcs._astro_xml(
+            [300.0, 35.0],
+            [4.0, 3.0],
+            [1e-5, -3e-4, 3e-4, 1e-5],
+            "Stereographic",
+            prefix="AstrometricSolution:",
+            version="1.0",
+        )
+        path = tmp_path / "stereographic.xisf"
+        path.write_bytes(_make_xisf(10, 8, 1, "UInt16", pixels.tobytes(), extra_xml=xml))
+
+        detected = await client.get("/api/plate-solve/detect-wcs", params={"path": str(path)})
+        annotated = await client.get("/api/plate-solve/annotate", params={"path": str(path)})
+
+        reason = detected.json()["unavailable_reason"]
+        assert detected.json()["wcs"] is None
+        assert "Stereographic" in reason
+        assert annotated.status_code == 422
+        assert annotated.json()["detail"] == reason
+
     @pytest.mark.anyio
     async def test_with_wcs_headers(self, client, fits_with_wcs):
         resp = await client.get(
@@ -60,9 +140,9 @@ class TestDetectWcs:
         )
         assert resp.status_code == 200
         data = resp.json()
-        assert data is not None
-        assert data["crval1"] == pytest.approx(83.633)
-        assert data["naxis1"] == 1200
+        assert data["wcs"]["crval1"] == pytest.approx(83.633)
+        assert data["wcs"]["naxis1"] == 1200
+        assert data["unavailable_reason"] is None
 
     @pytest.mark.anyio
     async def test_without_wcs_headers(self, client, fits_no_wcs):
@@ -71,7 +151,7 @@ class TestDetectWcs:
             params={"path": str(fits_no_wcs)},
         )
         assert resp.status_code == 200
-        assert resp.json() is None
+        assert resp.json() == {"wcs": None, "unavailable_reason": None}
 
     @pytest.mark.anyio
     async def test_uses_format_specific_wcs_reader(self, client, monkeypatch):
@@ -92,8 +172,8 @@ class TestDetectWcs:
             lambda _path: (Path("test.xisf"), "xisf", 0, None),
         )
         monkeypatch.setattr(
-            "nightcrate.api.plate_solve.read_wcs_params",
-            lambda *_args: expected,
+            "nightcrate.api.plate_solve.read_file_solution",
+            lambda *_args: FileSolution(wcs=expected),
         )
 
         resp = await client.get(
@@ -102,7 +182,7 @@ class TestDetectWcs:
         )
 
         assert resp.status_code == 200
-        assert resp.json() == expected.model_dump()
+        assert resp.json() == {"wcs": expected.model_dump(), "unavailable_reason": None}
 
 
 class TestAnnotate:

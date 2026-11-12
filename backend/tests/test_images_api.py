@@ -1,5 +1,8 @@
 """Tests for the image viewer API endpoints."""
 
+import hashlib
+
+import numpy as np
 import pytest
 from httpx import ASGITransport, AsyncClient
 
@@ -138,6 +141,24 @@ async def test_render_color_fits(client, tmp_fits_color):
     assert resp.status_code == 200
     assert resp.headers["content-type"] == "image/png"
     assert resp.content[:4] == b"\x89PNG"
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("endpoint", ["image", "stats-histogram", "preview"])
+async def test_damaged_xisf_message_reaches_pixel_endpoints(client, tmp_path, endpoint):
+    from tests.test_xisf_io import _make_xisf
+
+    raw = np.arange(16, dtype=np.uint16).tobytes()
+    checksum = f"sha256:{hashlib.sha256(raw).hexdigest()}"
+    damaged = bytearray(_make_xisf(4, 4, 1, "UInt16", raw, checksum=checksum))
+    damaged[-1] ^= 1
+    path = tmp_path / "damaged.xisf"
+    path.write_bytes(damaged)
+
+    response = await client.get(f"/api/images/{endpoint}", params={"path": str(path)})
+
+    assert response.status_code == 422
+    assert response.json()["detail"].startswith("This XISF file is damaged.")
 
 
 @pytest.mark.anyio
@@ -665,6 +686,30 @@ async def test_render_standard_image(client, tmp_path):
     assert resp.headers["content-type"] == "image/png"
 
 
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    "failure_kind",
+    ["truncated-attachment", "truncated-preamble", "malformed-zstd"],
+)
+async def test_render_malformed_xisf_returns_422(client, tmp_path, failure_kind):
+    from tests.test_xisf_io import _make_xisf
+
+    raw = np.arange(16, dtype=np.uint16).tobytes()
+    if failure_kind == "truncated-attachment":
+        payload = _make_xisf(4, 4, 1, "UInt16", raw)[:-1]
+    elif failure_kind == "truncated-preamble":
+        payload = b"XISF0100"
+    else:
+        payload = _make_xisf(4, 4, 1, "UInt16", b"not-zstd", compression="zstd:32")
+    path = tmp_path / f"{failure_kind}.xisf"
+    path.write_bytes(payload)
+
+    response = await client.get("/api/images/image", params={"path": str(path)})
+
+    assert response.status_code == 422
+    assert response.status_code != 500
+
+
 # ---------------------------------------------------------------------------
 # GET /api/images/metadata
 # ---------------------------------------------------------------------------
@@ -687,6 +732,75 @@ async def test_metadata_endpoint(client, tmp_fits_mono):
     assert "exposure_time" in canonical
     assert canonical["exposure_time"] == "300.0"
     assert canonical["filter_name"] == "Ha"
+
+
+@pytest.mark.anyio
+async def test_metadata_reports_file_size(client, tmp_fits_mono):
+    """The analyzer's size pill reads the stored file's size from /metadata."""
+    resp = await client.get("/api/images/metadata", params={"path": str(tmp_fits_mono)})
+    assert resp.status_code == 200
+    assert resp.json()["file_size_bytes"] == tmp_fits_mono.stat().st_size
+
+
+@pytest.mark.anyio
+async def test_metadata_file_size_for_archive_entry(client, tmp_path, tmp_fits_mono):
+    """An archive entry reports its own (extracted) size, not the archive's."""
+    import zipfile
+
+    entry_bytes = tmp_fits_mono.read_bytes()
+    archive = tmp_path / "night.zip"
+    with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("lights/frame.fits", entry_bytes)
+    resp = await client.get(
+        "/api/images/metadata", params={"path": f"{archive}::lights/frame.fits"}
+    )
+    assert resp.status_code == 200
+    assert resp.json()["file_size_bytes"] == len(entry_bytes)
+
+
+@pytest.mark.anyio
+async def test_metadata_file_size_for_project_reference(client, tmp_path):
+    """A .pxiproject image that references an XISF reports that file's size."""
+    from tests.test_pxiproject_io import _make_project
+    from tests.test_xisf_io import _make_xisf
+
+    xisf = tmp_path / "referenced.xisf"
+    xisf.write_bytes(_make_xisf(4, 3, 1, "UInt16", np.arange(12, dtype=np.uint16).tobytes()))
+    project = _make_project(tmp_path, [{"name": "Ref", "file_path": str(xisf)}])
+    resp = await client.get("/api/images/metadata", params={"path": f"{project}::0"})
+    assert resp.status_code == 200
+    assert resp.json()["file_size_bytes"] == xisf.stat().st_size
+
+
+@pytest.mark.anyio
+async def test_metadata_file_size_unknown_for_missing_project_reference(client, tmp_path):
+    """A project image whose referenced file can't be read has no size, not an error."""
+    from tests.test_pxiproject_io import _make_project
+
+    project = _make_project(tmp_path, [{"name": "Gone", "file_path": str(tmp_path / "gone.xisf")}])
+    from nightcrate.api.images import _file_size_bytes
+
+    assert _file_size_bytes(project, "pxiproject", 0) is None
+    assert _file_size_bytes(project, "pxiproject", 5) is None
+
+
+def test_file_size_for_embedded_project_blob_and_traversal(tmp_path):
+    """An embedded project image reports its blob's size; a path that escapes
+    project.data reports none (the loader's containment rule)."""
+    from nightcrate.api.images import _file_size_bytes
+    from tests.test_pxiproject_io import _make_project
+
+    (tmp_path / "outside.bin").write_bytes(b"x" * 999)
+    project = _make_project(
+        tmp_path,
+        [
+            {"name": "Inside", "data_src": "blob_0.bin"},
+            {"name": "Escapes", "data_src": "../../outside.bin"},
+        ],
+        blobs={"blob_0.bin": b"y" * 1234},
+    )
+    assert _file_size_bytes(project, "pxiproject", 0) == 1234
+    assert _file_size_bytes(project, "pxiproject", 1) is None
 
 
 @pytest.mark.anyio
