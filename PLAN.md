@@ -60,7 +60,8 @@ chart would be the next version. Started on 2026-11-13 from `main` at
   then "yes, option 1"). Stars move to HYG v4.4 and boundaries to
   Stellarium's modern sky culture (both CC BY-SA 4.0), with ESA credited for
   Hipparcos (spec section 12). No list of bright-star positions is open at
-  its origin: ESA licenses Hipparcos CC BY-NC 3.0 IGO.
+  its origin: ESA licenses Hipparcos CC BY-NC 3.0 IGO, and the older Yale
+  Bright Star Catalogue is copyrighted.
 - [x] **Added 2026-11-14 (Fred: "yes, add it to v0.52.0 with that rule"):**
   IAU star names on the opened chart, and the licensed data sources (plan
   Phase E).

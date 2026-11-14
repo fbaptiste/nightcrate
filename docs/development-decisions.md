@@ -760,10 +760,13 @@ Design: [v0.46.0 spec](superpowers/specs/2026-11-04-v0.46.0-design.md) and its
     - the IAU Catalog of Star Names for the names;
     - d3-celestial 0.7.35 for the figures and name positions.
 
-    Only data with an explicit open licence ships (Fred, 2026-11-14). Every
-    bright-star list derives from ESA's Hipparcos, which ESA licenses
-    CC BY-NC, so `SOURCES.md` credits ESA. Don't switch back to
-    VizieR-hosted catalogues for bundled data.
+    Only data with an explicit open licence ships (Fred, 2026-11-14).
+    Modern bright-star lists derive from ESA's Hipparcos, which ESA
+    licenses CC BY-NC, and the older Yale Bright Star Catalogue is
+    copyrighted. Most of HYG's positions are Hipparcos's; 27 of the shipped
+    stars are double-star components from the Yale and Gliese catalogues.
+    `SOURCES.md` therefore credits ESA. Don't switch back to VizieR-hosted
+    catalogues for bundled data.
     - **Stars:** every HYG row to magnitude 6, with identical positions
       merged. A figure vertex snaps to a kept star within 0.01°, and only
       if there's none is the nearest fainter star added (only Mira today).

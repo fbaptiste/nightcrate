@@ -49,5 +49,7 @@ The script checks each input against the SHA-256 it pins:
   [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). Olaf Frohn
   modified the lines; NightCrate converts and joins them to its star list.
 
-Star positions and magnitudes originate from ESA's Hipparcos mission.
+Most star positions and magnitudes originate from ESA's Hipparcos mission.
 Credit: ESA (ESA 1997, *The Hipparcos and Tycho Catalogues*, ESA SP-1200).
+HYG takes a few double-star components from the Yale Bright Star and Gliese
+catalogues instead.
