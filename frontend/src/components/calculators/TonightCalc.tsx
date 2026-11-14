@@ -233,57 +233,54 @@ export default function TonightCalc() {
           </Paper>
         )}
 
-        <Paper variant="outlined" sx={{ p: 2.5, minHeight: CARD_HEIGHT, display: "flex", flexDirection: "column", justifyContent: "center" }}>
-          <Stack
-            direction={{ xs: "column", sm: "row" }}
-            spacing={4}
-            alignItems="flex-start"
-            divider={
-              <Box
-                sx={{
-                  display: { xs: "none", sm: "block" },
-                  width: "1px",
-                  alignSelf: "stretch",
-                  bgcolor: "divider",
-                }}
-              />
-            }
-          >
-            <Box>
-              <Typography
-                variant="caption"
-                color="text.secondary"
-                sx={{ textTransform: "uppercase", letterSpacing: 0.5 }}
-              >
-                {darkness.title}
-              </Typography>
-              <Typography variant="h4" sx={{ fontFamily: "monospace", mt: 0.5 }}>
-                {headlines.astronomical}
-              </Typography>
-              <Typography
-                variant="caption"
-                color="text.secondary"
-                // Capped so the caption wraps to a second line instead of
-                // stretching the card: the high-latitude wording is much longer
-                // than the plain "Sun > 18°" it replaces on most nights.
-                sx={{ display: "block", mt: 0.5, maxWidth: 260 }}
-              >
-                {darkness.caption}
-              </Typography>
-            </Box>
-            <Box>
-              <Typography
-                variant="caption"
-                color="text.secondary"
-                sx={{ textTransform: "uppercase", letterSpacing: 0.5 }}
-              >
-                Dark with moon down
-              </Typography>
-              <Typography variant="h4" sx={{ fontFamily: "monospace", mt: 0.5 }}>
-                {headlines.moonless}
-              </Typography>
-            </Box>
-          </Stack>
+        <Paper variant="outlined" sx={{ p: 2.5, minHeight: CARD_HEIGHT, display: "flex", flexDirection: "column" }}>
+          <Typography variant="subtitle1" fontWeight={600} sx={{ mb: 2 }}>
+            Darkness
+          </Typography>
+          <Box sx={{ flex: 1, display: "flex", alignItems: "center", mb: 2 }}>
+            <Stack
+              direction={{ xs: "column", sm: "row" }}
+              spacing={4}
+              alignItems="flex-start"
+              divider={
+                <Box
+                  sx={{
+                    display: { xs: "none", sm: "block" },
+                    width: "1px",
+                    alignSelf: "stretch",
+                    bgcolor: "divider",
+                  }}
+                />
+              }
+            >
+              <Box>
+                <Typography variant="caption" color="text.secondary">
+                  {darkness.title}
+                </Typography>
+                <Typography variant="h4" sx={{ fontFamily: "monospace", mt: 0.5 }}>
+                  {headlines.astronomical}
+                </Typography>
+                <Typography
+                  variant="caption"
+                  color="text.secondary"
+                  // Capped so the caption wraps to a second line instead of
+                  // stretching the card: the high-latitude wording is much longer
+                  // than the plain "Sun > 18°" it replaces on most nights.
+                  sx={{ display: "block", mt: 0.5, maxWidth: 260 }}
+                >
+                  {darkness.caption}
+                </Typography>
+              </Box>
+              <Box>
+                <Typography variant="caption" color="text.secondary">
+                  Dark with moon down
+                </Typography>
+                <Typography variant="h4" sx={{ fontFamily: "monospace", mt: 0.5 }}>
+                  {headlines.moonless}
+                </Typography>
+              </Box>
+            </Stack>
+          </Box>
         </Paper>
 
         <Paper variant="outlined" sx={{ p: 2.5, minHeight: CARD_HEIGHT, display: "flex", flexDirection: "column" }}>

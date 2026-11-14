@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
+
 import pytest
 from httpx import ASGITransport, AsyncClient
 
 from nightcrate.db.session import get_db
 from nightcrate.main import app
+from nightcrate.services.astronomy import midnight_meridian_date
 from tests.gallery_library import make_library_dsos
 from tests.test_gallery_api import _project, _solve, _target
 
@@ -22,7 +25,7 @@ async def client():
         yield value
 
 
-async def test_info_solved_project(client: AsyncClient):
+async def test_info_solved_project_has_wcs_and_date(client: AsyncClient):
     async with get_db() as conn:
         dsos = await make_library_dsos(conn)
         project_id = await _project(conn, "Cygnus field")
@@ -39,11 +42,23 @@ async def test_info_solved_project(client: AsyncClient):
             UPDATE project_solve
             SET ra_hms = '21:00:26', dec_dms = '+43:36:36',
                 fov_width_arcmin = 125.4, fov_height_arcmin = 63.0,
-                rotation_deg = 17.5
+                rotation_deg = 17.5,
+                image_width = 6016, image_height = 4016,
+                cd1_1 = -0.00021, cd1_2 = 0.00003,
+                cd2_1 = 0.00004, cd2_2 = 0.00022,
+                crpix1 = 3008.5, crpix2 = 2008.5
             WHERE project_id = ?
             """,
             (project_id,),
         )
+        solve = await (
+            await conn.execute(
+                "SELECT id FROM project_solve WHERE project_id = ?",
+                (project_id,),
+            )
+        ).fetchone()
+        assert solve is not None
+        solve_id = int(solve["id"])
         await conn.execute(
             "UPDATE dso SET distance_pc = 10000000, distance_method = 'curated' WHERE id = ?",
             (dsos.ids["m32"],),
@@ -57,6 +72,22 @@ async def test_info_solved_project(client: AsyncClient):
     assert body["solved"] is True
     assert body["field"]["constellation"] == "Cyg"
     assert body["field"]["fov_width_deg"] == pytest.approx(125.4 / 60)
+    assert body["field"]["solve_id"] == solve_id
+    assert body["field"]["wcs"] == {
+        "crval1": 315.11,
+        "crval2": 43.61,
+        "crpix1": 3008.5,
+        "crpix2": 2008.5,
+        "cd1_1": -0.00021,
+        "cd1_2": 0.00003,
+        "cd2_1": 0.00004,
+        "cd2_2": 0.00022,
+        "width": 6016,
+        "height": 4016,
+    }
+    midnight_month, midnight_day = midnight_meridian_date(315.11, datetime.now(UTC).year)
+    assert body["field"]["midnight_meridian_month"] == midnight_month
+    assert body["field"]["midnight_meridian_day"] == midnight_day
     assert [item["designation"] for item in body["other_objects"]] == ["M 32", "M 42"]
 
 

@@ -5,9 +5,11 @@ Pure computation module using astropy. No DB, no HTTP, no FastAPI imports.
 
 from __future__ import annotations
 
+import math
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
+from functools import lru_cache
 from typing import Literal
 from zoneinfo import ZoneInfo
 
@@ -88,6 +90,27 @@ class HourlyAstro:
     moon_altitude_deg: float
     moon_illumination_pct: float
     darkness_category: str
+
+
+@lru_cache(maxsize=4)
+def _sun_ra_by_day(year: int) -> tuple[float, ...]:
+    """Return the Sun's GCRS RA at 12:00 UTC on every day of a year."""
+    start = datetime(year, 1, 1, 12, tzinfo=UTC)
+    day_count = (date(year + 1, 1, 1) - date(year, 1, 1)).days
+    times = Time(start) + np.arange(day_count) * u.day
+    return tuple(float(value) for value in get_body("sun", times).ra.to_value(u.deg))
+
+
+def midnight_meridian_date(ra_deg: float, year: int) -> tuple[int, int]:
+    """Return when a right ascension is nearest the midnight meridian."""
+    if not math.isfinite(ra_deg):
+        raise ValueError("ra_deg must be finite")
+
+    target_ra = (ra_deg + 180.0) % 360.0
+    sun_ra = np.asarray(_sun_ra_by_day(year))
+    circular_distance = np.abs((sun_ra - target_ra + 180.0) % 360.0 - 180.0)
+    result = date(year, 1, 1) + timedelta(days=int(np.argmin(circular_distance)))
+    return result.month, result.day
 
 
 @dataclass(frozen=True)

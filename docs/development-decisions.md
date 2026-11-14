@@ -749,6 +749,119 @@ Design: [v0.46.0 spec](superpowers/specs/2026-11-04-v0.46.0-design.md) and its
     - Its query has `staleTime: 0`, and every place that invalidates
       `project-solve` also invalidates the project's info. Sessions edits do
       too, because the imaging summary changes.
+    - Removing a source folder invalidates everything a scan or rig change
+      does (`invalidateRigDependent`), including the info.
+- **The sky chart** (v0.52.0) sits in the Info tab's right column, with a
+  full-screen dialog for panning and zooming.
+  - **Data:** `frontend/src/data/sky/sky.json` (CC BY-SA 4.0), built by
+    `backend/scripts/build_sky_data.py` from five pinned inputs:
+    - HYG v4.4 for the stars;
+    - Stellarium's modern sky culture for the boundaries;
+    - the IAU Catalog of Star Names for the names;
+    - d3-celestial 0.7.35 for the figures and name positions.
+
+    Only data with an explicit open licence ships (Fred, 2026-11-14).
+    Modern bright-star lists derive from ESA's Hipparcos, which ESA
+    licenses CC BY-NC, and the older Yale Bright Star Catalogue is
+    copyrighted. Most of HYG's positions are Hipparcos's; 27 of the shipped
+    stars are double-star components from the Yale and Gliese catalogues.
+    `SOURCES.md` therefore credits ESA. Don't switch back to VizieR-hosted
+    catalogues for bundled data.
+    - **Stars:** every HYG row to magnitude 6, with identical positions
+      merged. A figure vertex snaps to a kept star within 0.01°, and only
+      if there's none is the nearest fainter star added (only Mira today).
+      HYG has no HIP number for some double stars, such as ξ UMa, so the
+      selection can't filter on HIP.
+    - **Boundaries:** the B1875 edges are precessed with astropy and sampled
+      adaptively against the frontend's linear RA/Dec fill-in. Each shared
+      edge is built once and reversed for its other constellation. The
+      error budget is 6″ (measured: 3.25″). The previous sparse VI/49
+      vertices drew polar boundaries up to 0.44° off, because linear
+      fill-in between them doesn't follow a precessed parallel near the
+      pole.
+    - **Names:** IAU names joined by HIP number, to magnitude 3.5.
+      d3-celestial's own name list has non-IAU and wrong names.
+    - Serpens keeps two named parts under `Ser`.
+    - The file is fetched as an asset (`?url` and `fetch`), not imported as
+      JSON, which keeps TypeScript from inferring a type for 213 KB.
+  - **Star names** appear on the opened chart only. The magnitude limit is
+    3.5 up to a 90° span and 1.5 from 150°, ramping in between: a step
+    took a view from 10 names to 98 in one zoom. Names are placed right,
+    left, above or below the star. They yield to the picture's reserved
+    area (the outline's bounding box, or the whole reticle), its label,
+    constellation names, and the dialog's buttons and scale bar
+    (`SkyScene.reserved`).
+  - **Projection:** stereographic, with north up and east left
+    (`rotate([-ra, -dec]).reflectX(true)`). The scale is
+    `m / (2 tan(S/4))` for a span S across the shorter side m, with S from
+    0.1° to 180°.
+  - **Pan and zoom re-centre the projection.** `anchorView` puts the grabbed
+    sky point under the pointer exactly wherever geometry allows. It
+    searches the circle at the right angular distance for the right
+    bearing, then refines locally.
+    - Near the poles, some anchors can't be reached while north stays up.
+      It then returns the best view, never NaN.
+    - A translate-only pan stretches the sky away from the opening view,
+      and fixed-pass re-centring fails for points grabbed far from the
+      centre. Don't go back to either.
+  - **The picture in place:**
+    - The Info endpoint sends the stored WCS. The frontend's
+      `tanPixelToSky` mirrors `services/object_search.py:_tan_pixel_to_sky`
+      (zero-based pixel centres, so the raster's edges are −0.5 and
+      W − 0.5).
+    - The solve image is drawn through an adaptive mesh.
+      - It starts as one cell over the whole picture.
+      - A cell splits when any of seven sample points is more than 0.25 px
+        off (1 px for cells more than 90° from the view's centre), or when
+        its longer edge spans more than 8° on the sky. Splitting stops at
+        depth 10 or 1,024 triangles, worst cell first.
+      - Without that budget, a wide picture at the edge of a whole-sky view
+        grew to 2,791 triangles and about 100 ms per redraw.
+      - Splitting happens before culling, and a cell is culled only when
+        it is certainly invisible.
+      - A small picture is two triangles. Starting from 8 × 8 cells cost
+        20–45 ms per redraw at deep zoom.
+    - Each triangle is clipped to its edges pushed out 0.6 px. It draws
+      only its inverse-mapped source rectangle with
+      `drawImage(img, sx, sy, sw, sh, sx, sy, sw, sh)` under
+      `dpr × affine`.
+    - A single transform through three corners, or a fixed mesh,
+      misregisters wide fields: 10 px off-centre, and 80 px at deep zoom.
+  - **Boundaries** are stroked as LineStrings, never as Polygons: a
+    reversed winding fills the sphere and strokes the clip circle. They are
+    filled in at 0.25° in RA and Dec before drawing, so edges that follow
+    constant declination don't sag into great circles.
+  - **Grid meridians** stop where they would come within 14 px of each
+    other; the ones at multiples of 90° reach the pole. Without that,
+    polar views show a starburst.
+  - **Only what can be seen is generated:**
+    - grid lines within the visible radius;
+    - boundary segments that can reach the screen (culled before `geoPath`,
+      whose adaptive resampling otherwise runs on off-screen arcs at deep
+      zoom);
+    - figure segments whose projected line crosses the canvas (not just
+      those with a star on screen).
+
+    Generating the whole-sphere grid at 0.25° steps cost about 170 ms per
+    redraw.
+  - **Taps:** a touch release counts as a tap only if the finger stayed
+    within 10 px for at most 300 ms with no second finger. Otherwise a drag
+    followed by a tap would zoom.
+  - **The dialog's elements arrive through MUI's portal** after its first
+    commit. Effects that attach listeners or observers must depend on the
+    elements (callback refs), not on ref objects, or they never run.
+  - **Touch:** default prevention goes on the canvas only. Preventing
+    `touchstart` on the container stops iOS Safari from turning taps on the
+    tool buttons into clicks.
+  - **Lazy loading:** each lazy chunk sits inside `SkyChartBoundary`.
+    `React.lazy` keeps a failed import's error, so the copy says "Reload
+    the page to try again".
+  - **"On the meridian at midnight around …"** is the day on which the
+    Sun's GCRS RA is opposite the picture's centre
+    (`services/astronomy.py:midnight_meridian_date`), sampled at 12:00 UTC
+    each day of the current year. It is the same everywhere.
+  - **Checks:** `npm run check:sky` runs the geometry assertions, which
+    cover the anchors, the mesh registration cases and the drawing rules.
 - **Line fitting** (`components/gallery/LineFitList.tsx`) shows as many items
   as fit in two lines, then a "+N" pill: first items for targets, latest
   runs ("+N earlier") for dates.
