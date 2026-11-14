@@ -18,7 +18,24 @@ export interface OtherObject {
   wikipedia_url: string | null;
 }
 
+export interface SolveWcs {
+  crval1: number;
+  crval2: number;
+  crpix1: number;
+  crpix2: number;
+  cd1_1: number;
+  cd1_2: number;
+  cd2_1: number;
+  cd2_2: number;
+  width: number;
+  height: number;
+}
+
 export interface SolveField {
+  solve_id: number;
+  wcs: SolveWcs;
+  midnight_meridian_month: number;
+  midnight_meridian_day: number;
   constellation: string;
   centre_ra_hms: string | null;
   centre_dec_dms: string | null;

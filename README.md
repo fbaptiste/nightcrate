@@ -24,7 +24,12 @@ forecasts and survey imagery are fetched from external services when needed.
   Plate Solve tab. A plate-solved project's Info tab lists its targets with
   their catalog numbers, constellation, distance and Wikipedia links, every
   other catalogued object in the picture, nearest first, and the
-  constellation at the picture's centre.
+  constellation at the picture's centre. A sky chart shows that
+  constellation's stars and stick figures, with the picture marked, and the
+  date the picture's centre is on the meridian at midnight. Opened full
+  screen, it pans and zooms, from the whole sky in to your own picture
+  drawn in place at its plate-solved size and rotation, and names the
+  brighter stars (the IAU names, more of them as you zoom in).
   - The plate-solve result estimates the focal length from the solved scale
     and the pixel size of each rig's camera, beside the rig's own value.
   - **Thumbnails:** frame each picture as you want it shown, separately for
@@ -287,6 +292,11 @@ Invoked across a process boundary; their licenses do not propagate to NightCrate
 | Melotte | GPL-3.0-or-later (NightCrate's own list) | Melotte 1915, MmRAS 60, 175 (A Catalogue of Star Clusters shown on Franklin-Adams Chart Plates), transcribed and checked by NightCrate. Positions and sizes of clusters without an NGC or IC number: Hunt & Reffert 2023, A&A 673, A114, or SIMBAD. Ships with the app (`melotte.csv`). |
 | NightCrate editorial data | GPL-3.0-or-later | NightCrate's own reviewed lists ship with the app in `backend/src/nightcrate/data/catalogs/nightcrate/`: common names (each checked against two independent sources, among them SIMBAD, NED, Wikidata or Wikipedia, and NASA, ESA, ESO, NOIRLab and RASC publications), distances and surface brightness, Sharpless cross-references, external-reference overrides, the Melotte list, reviewed Arp members, the "part of" list and match overrides. |
 | Star cluster and planetary nebula distances | Published facts, cited per row | Distances in NightCrate's `dso_augment.csv` for Messier and Caldwell objects: Baumgardt, H. & Vasiliev, E. 2021, MNRAS 505, 5957 (globular clusters, Gaia EDR3); Hunt, E.L. & Reffert, S. 2023, A&A 673, A114 (open clusters, Gaia DR3; VizieR J/A+A/673/A114); González-Santamaría, I. et al. 2021, A&A 656, A51, and Chornay, N. & Walton, N.A. 2021, A&A 656, A110 (planetary nebulae, Gaia EDR3). A few objects cite their own papers in the file's notes. Compiled into NightCrate's file; nothing is fetched. |
+| [d3-celestial](https://github.com/ofrohn/d3-celestial) sky data | BSD-3-Clause | Copyright (c) 2015, Olaf Frohn. The sky chart's constellation stick figures and name positions, from d3-celestial 0.7.35's data files. The sky chart's data is converted by `backend/scripts/build_sky_data.py` and ships with the app in `frontend/src/data/sky/`, with `LICENSE-d3-celestial.txt` and `SOURCES.md`. The converted `sky.json` is CC BY-SA 4.0, because it adapts the HYG and Stellarium data below. |
+| [HYG database](https://codeberg.org/astronexus/hyg) v4.4 | CC BY-SA 4.0 ([licence](https://creativecommons.org/licenses/by-sa/4.0/)) | David Nash, [The Astronomy Nexus](https://www.astronexus.com/hyg). The sky chart's star positions and magnitudes, to magnitude 6, plus Mira for the Cetus figure; rounded, with stars at the same position merged. HYG's positions come from ESA's Hipparcos mission. Credit: ESA (ESA 1997, *The Hipparcos and Tycho Catalogues*, ESA SP-1200). |
+| Constellation boundaries ([Stellarium](https://github.com/Stellarium/stellarium) modern sky culture) | CC BY-SA 4.0 ([licence](https://creativecommons.org/licenses/by-sa/4.0/)) | Stellarium contributors. The IAU constellation boundaries in B1875 coordinates, from Patrick Barbier's `edges_18`. Precessed to J2000 for the sky chart, then sampled and simplified so the drawn lines stay within 6″ of the true boundaries. |
+| [IAU Catalog of Star Names](https://exopla.net/star-names/modern-iau-star-names/) | Names in the public domain (IAU WGSN); the catalogue file is released under Creative Commons Attribution | IAU Working Group on Star Names. The sky chart's star names, for named stars to magnitude 3.5, matched by Hipparcos number. |
+| IAU constellation figures | CC BY 4.0 ([licence](https://creativecommons.org/licenses/by/4.0/)) | IAU and Sky & Telescope magazine (Roger Sinnott & Rick Fienberg), with patterns by Alan MacRobert. The sky chart's stick figures, through d3-celestial, with line modifications by Olaf Frohn and converted for NightCrate (rounded, joined to stars). |
 | [50 MGC](https://github.com/davidohlson/50MGC) | CDS public | Ohlson, D. et al. 2024, AJ 167, 31 (J/AJ/167/31). Galaxy distance augmenter, fetched at runtime from the author's GitHub mirror. |
 | [Wikidata](https://www.wikidata.org/) | CC0-1.0 | External reference IDs (Wikipedia, SIMBAD) via SPARQL, fetched at runtime. |
 | [Open-Meteo](https://open-meteo.com/) | Attribution required — see [their license](https://open-meteo.com/en/license) | Weather, ECMWF and air-quality forecast data, queried at runtime. |

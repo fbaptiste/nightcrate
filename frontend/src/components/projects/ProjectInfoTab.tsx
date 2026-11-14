@@ -1,16 +1,26 @@
-import { useState } from "react";
+import { lazy, Suspense, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
 import CircularProgress from "@mui/material/CircularProgress";
+import Dialog from "@mui/material/Dialog";
+import DialogActions from "@mui/material/DialogActions";
+import DialogContent from "@mui/material/DialogContent";
 import Link from "@mui/material/Link";
 import Typography from "@mui/material/Typography";
+import OpenInFullIcon from "@mui/icons-material/OpenInFull";
 import OpenInNewIcon from "@mui/icons-material/OpenInNew";
 import { fetchProjectInfo, projectInfoKey } from "@/api/projectInfo";
 import DistanceRuler from "@/components/objects/DistanceRuler";
 import WikipediaBadge from "@/components/objects/WikipediaBadge";
+import SkyChartBoundary from "@/components/sky/SkyChartBoundary";
 import { displayConstellation } from "@/lib/constellations";
 import { formatDistance, targetLabel, typeLine, typeName } from "@/lib/objectFacts";
+import { SKY_PALETTES } from "@/lib/skyChart/palette";
+import { formatMonthDay } from "@/lib/skyChart/text";
+
+const SkyChartCompact = lazy(() => import("@/components/sky/SkyChartCompact"));
+const SkyChartDialog = lazy(() => import("@/components/sky/SkyChartDialog"));
 
 interface Props {
   projectId: number;
@@ -20,6 +30,7 @@ interface Props {
 export default function ProjectInfoTab({ projectId, onPlateSolve }: Props) {
   const [showAll, setShowAll] = useState(false);
   const [highlightKey, setHighlightKey] = useState<string | null>(null);
+  const [skyChartOpen, setSkyChartOpen] = useState(false);
   const query = useQuery({
     queryKey: projectInfoKey(projectId),
     queryFn: () => fetchProjectInfo(projectId),
@@ -49,6 +60,13 @@ export default function ProjectInfoTab({ projectId, onPlateSolve }: Props) {
   const objects = showAll ? info.other_objects : info.other_objects.slice(0, 10);
   const field = info.field;
   const sectionTitleSx = { fontSize: 15, lineHeight: 1.4, fontWeight: 600, mb: "10px" } as const;
+  const skyBoxSx = {
+    width: "100%",
+    "@media (max-width: 1099.95px)": { maxWidth: 480 },
+    aspectRatio: "4 / 3",
+    mt: "14px",
+    bgcolor: (theme: { palette: { mode: "light" | "dark" } }) => theme.palette.mode === "dark" ? SKY_PALETTES.night.sky : SKY_PALETTES.paper.sky,
+  } as const;
 
   return (
     <Box sx={{ maxWidth: 1280, display: "grid", gridTemplateColumns: "minmax(0, 1fr) 340px", gap: "40px", alignItems: "start", "@media (max-width: 1099.95px)": { gridTemplateColumns: "minmax(0, 1fr)" } }}>
@@ -135,12 +153,46 @@ export default function ProjectInfoTab({ projectId, onPlateSolve }: Props) {
       <Box component="aside" sx={{ borderLeft: 1, borderColor: "divider", pl: "28px", "@media (max-width: 1099.95px)": { borderLeft: 0, pl: 0, borderTop: 1, pt: "20px" } }}>
         <Typography sx={{ fontSize: 26, lineHeight: 1.15, fontWeight: 600, letterSpacing: "-0.015em" }}>{displayConstellation(field.constellation)}</Typography>
         <Typography sx={{ color: "text.secondary", fontSize: 13, mt: "2px" }}>The constellation at the centre of the picture</Typography>
+        <SkyChartBoundary fallback={(
+          <Box sx={{ ...skyBoxSx, display: "grid", placeItems: "center", px: 2 }}>
+            <Typography sx={{ color: "text.secondary", fontSize: 13, textAlign: "center" }}>The sky chart couldn&apos;t load. Reload the page to try again.</Typography>
+          </Box>
+        )}>
+          <Suspense fallback={<Box sx={skyBoxSx} />}>
+            <SkyChartCompact field={field} projectId={projectId} projectName={info.name} onOpen={() => setSkyChartOpen(true)} />
+          </Suspense>
+        </SkyChartBoundary>
+        <Typography sx={{ fontSize: 14, lineHeight: 1.5, mt: "14px" }}>
+          On the meridian at midnight around{" "}
+          <Box component="span" sx={{ fontWeight: 600 }}>{formatMonthDay(field.midnight_meridian_month, field.midnight_meridian_day)}</Box>
+        </Typography>
         <Box component="dl" sx={{ m: 0, mt: "16px", display: "grid", gridTemplateColumns: "auto 1fr", gap: "6px 16px", fontSize: 14, "& dt": { color: "text.secondary" }, "& dd": { m: 0, fontVariantNumeric: "tabular-nums" } }}>
           <dt>Centre</dt><dd>{field.centre_ra_hms && field.centre_dec_dms ? `${field.centre_ra_hms}, ${field.centre_dec_dms}` : "—"}</dd>
           <dt>Field</dt><dd>{field.fov_width_deg != null && field.fov_height_deg != null ? `${field.fov_width_deg.toFixed(2)}° × ${field.fov_height_deg.toFixed(2)}°` : "—"}</dd>
           <dt>Rotation</dt><dd>{field.rotation_deg == null ? "—" : `${field.rotation_deg.toFixed(1)}°`}</dd>
         </Box>
+        <Button variant="outlined" startIcon={<OpenInFullIcon />} onClick={() => setSkyChartOpen(true)} sx={{ mt: "18px" }}>
+          Open the sky chart
+        </Button>
       </Box>
+      {skyChartOpen && (
+        <SkyChartBoundary fallback={(
+          <Dialog open fullScreen onClose={() => setSkyChartOpen(false)}>
+            <DialogContent sx={{ display: "grid", placeItems: "center" }}>
+              <Typography>The sky chart couldn&apos;t load. Reload the page to try again.</Typography>
+            </DialogContent>
+            <DialogActions><Button onClick={() => setSkyChartOpen(false)}>Close</Button></DialogActions>
+          </Dialog>
+        )}>
+          <Suspense fallback={(
+            <Dialog open fullScreen onClose={() => setSkyChartOpen(false)}>
+              <Box sx={{ flex: 1, bgcolor: (theme) => theme.palette.mode === "dark" ? SKY_PALETTES.night.sky : SKY_PALETTES.paper.sky }} />
+            </Dialog>
+          )}>
+            <SkyChartDialog open onClose={() => setSkyChartOpen(false)} info={info} />
+          </Suspense>
+        </SkyChartBoundary>
+      )}
     </Box>
   );
 }

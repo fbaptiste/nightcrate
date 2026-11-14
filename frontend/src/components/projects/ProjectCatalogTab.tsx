@@ -490,7 +490,7 @@ export default function ProjectCatalogTab({ projectId }: Props) {
     mutationFn: (id: number) => removeFolder(projectId, id),
     onSuccess: () => {
       invalidateFolders();
-      invalidateCatalog(); // its cataloged items are gone — refresh lists + counts
+      invalidateRigDependent();
       setSnack("Folder removed");
     },
     onError: (e: Error) => setSnack(e.message),

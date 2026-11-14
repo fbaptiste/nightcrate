@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
+    "check:sky": "node scripts/check-sky-chart.mjs",
     "lint": "eslint .",
     "preview": "vite preview"
   },

@@ -1,17 +1,178 @@
 # NightCrate — active plan
 
-**Version:** v0.51.0 — Cleanup before Distribution, and object details
+**Version:** v0.52.0 — Sky chart on the project Info tab
 
-**Branch:** `v0.51.0/cleanup`
+**Branch:** `v0.52.0/sky-chart`
 
-**Status:** Complete — awaiting merge (Fred accepted on 2026-11-13: "everything
-looks good, please finalize")
+**Status:** Complete — awaiting merge
 
-**Next versions** (Fred, 2026-11-13): v0.52.0 adds a sky chart to the project
-Info tab (a planisphere with the constellations and where the picture sits);
-Distribution moves to v0.53.0.
+**Next version** (Fred, 2026-11-13): the Home page as v0.53.0 ("let's plan on
+doing this in the next version"), then Distribution (installers and one-click
+updates) as v0.54.0.
+
+**Tablet and phone review** (Fred, 2026-11-14): "I will do a specific
+targeted review on ipad functionality at a later stage (there's a whole lot
+that will need improving and fixing, so for now, let's just focus on
+desktop". Until then, versions are checked on desktop only, and code stays
+written to work on a tablet. That review collects the checks deferred so
+far:
+- the v0.52.0 sky chart in Safari:
+  - pinch, then one finger;
+  - lifting one of two fingers;
+  - a double-tap;
+  - tapping the chart's buttons;
+  - rotation while the chart is open;
+  - closing it during a gesture;
+- the v0.51.0 slideshow on a phone, and turning the viewer over on iOS
+  Safari with VoiceOver;
+- v0.46.0's framing dialog: dragging the frame, and the long-press tooltip;
+- Safari, Firefox and touch devices on v0.48.0's Messier page.
+
+## v0.52.0 — Sky chart on the project Info tab
+
+Fred decided on 2026-11-13, while shaping v0.51.0's Info tab, that the sky
+chart would be the next version. Started on 2026-11-13 from `main` at
+`9ca4f66`, after v0.51.0 merged.
+
+- [x] Start from updated `main` on `v0.52.0/sky-chart`.
+- [x] Spec, decided with Fred:
+  [2026-11-13-v0.52.0-sky-chart-design.md](docs/superpowers/specs/2026-11-13-v0.52.0-sky-chart-design.md).
+  Builder-checked; approved by Fred on 2026-11-13 ("ok, approved. please go
+  ahead and get everything done"). He asked for unattended work, with the
+  decisions confirmed at the end.
+- [x] Plan, with Codex's review:
+  [2026-11-13-v0.52.0-sky-chart.md](docs/superpowers/plans/2026-11-13-v0.52.0-sky-chart.md).
+  It converged in four rounds. Fred's instruction to work unattended
+  covered approval of the plan; the review notes are in the plan.
+- [x] Implementation (Codex, in `.superpowers/wt-v0.52.0`) and reviews:
+  - a fresh independent review of the backend and data;
+  - Claude's review of each phase, in three cycles;
+  - a fresh independent review of the frontend and of Claude's own changes;
+  - all findings fixed.
+- [x] Rendered checks, docs, and the candidate (2026-11-14).
+- [x] **Fred's acceptance test** on desktop (2026-11-14: "this looks good
+  … I'm happy with the version now, go ahead and finalize please"). He
+  confirmed Claude's calls with it. The iPad checks move to his later
+  tablet and phone review (top of this plan).
+- [x] **Data licence decision (v0.52.0-L1), resolved 2026-11-14.** Fred
+  chose to ship only data whose publisher gives it an explicit open licence
+  ("do the separate license thing for the included data - just to be safe",
+  then "yes, option 1"). Stars move to HYG v4.4 and boundaries to
+  Stellarium's modern sky culture (both CC BY-SA 4.0), with ESA credited for
+  Hipparcos (spec section 12). No list of bright-star positions is open at
+  its origin: ESA licenses Hipparcos CC BY-NC 3.0 IGO.
+- [x] **Added 2026-11-14 (Fred: "yes, add it to v0.52.0 with that rule"):**
+  IAU star names on the opened chart, and the licensed data sources (plan
+  Phase E).
+  - Codex's plan review converged in two rounds. Codex built it, and a fresh
+    independent review found one major and one minor issue, both fixed and
+    confirmed.
+  - **Star names:** magnitude ≤ 3.5 up to a 90° view (every constellation
+    view), and ≤ 1.5 from 150° (the whole sky), ramping in between, from
+    the IAU Catalog of Star Names (spec section 11). The ramp is Claude's
+    call, from the rendered checks.
+  - **The swap also fixes polar boundaries.** The previous data drew them up
+    to 0.44° off near the poles; they are now within 3.25″ everywhere.
+
+### Candidate verification (Claude, 2026-11-14)
+
+- **Full backend suite** on the final backend code (in the worktree,
+  identical files): 4,131 passed, 10 skipped, 0 failed (v0.51.0: 4,113).
+  Phase E changed no application code, only the generator script and its
+  tests.
+  - **Targeted re-run in the main checkout after Phase E:** 36 passed
+    (generator, Info API, midnight date).
+  - **Clean:** ruff, format, and bandit (0 issues at any severity).
+  - **Coverage:** `project_info.py` and its models 100%; the new astronomy
+    functions fully covered; the generator 92% (its CLI is exercised by the
+    regeneration runs).
+- **Sky data (Phase E),** checked by Claude independently of Codex:
+  - the stars and names, recomputed from the raw inputs, are identical to
+    the committed file;
+  - the boundaries lie within 3.25″ of the true precessed boundaries,
+    measured point-to-segment both ways for all 88 constellations;
+  - regeneration with pinning on is byte-identical.
+- **Frontend:**
+  - `npm run check:sky` passes (anchors, mesh registration, culling, grid,
+    taps and drawing rules);
+  - the production build passes, and ESLint is clean on the changed files.
+- **Rendered checks** (private servers, headless Chromium, a copy of real
+  data plus seeded fixtures with known WCS):
+  - registration: every magnitude ≤ 4.5 star inside the north-up,
+    rotated-37° and mirrored fixtures lands on its drawn dot (within 3 px);
+  - no seams in a white picture at DPR 1, 2 and 3;
+  - the opening fit, focus, wheel, drag, Home, resize and arrow keys;
+  - with CDP touch: drag, pinch, double-tap (and no false double-tap after
+    a drag or a pinch), and a tap on a tool button;
+  - the missing image, RA 0, the pole, Serpens, both themes, and the phone
+    and iPad layouts;
+  - blocked data and blocked chunks;
+  - lazy loading: about 2.6 kB more at startup, and the chart's 41 kB plus
+    the 213 kB sky data (80 kB compressed) only on the Info tab;
+  - **star names (Phase E):**
+    - the whole sky, S = 150/149.9 near M 101 and Orion, constellation
+      views (Ursa Major, Orion, Hydra and others), a rotated picture, and
+      the compact chart (no names);
+    - both themes, at 1440×796 and 1024×768;
+    - names never cover the picture, its label, constellation names, or
+      the dialog's buttons and scale bar.
+- **Redraw times,** 1440×796 at DPR 2, on an M4 Max (Metal). Spotlight was
+  indexing during the final run, which inflates the figures:
+  - telescope fields: 7–18 ms, from 0.1° to the whole sky;
+  - near the pole: 13 ms;
+  - with star names (Phase E, quiet machine): 4.7–18.5 ms, including
+    S = 149.9 at 15 ms;
+  - **known limit:** a 40° camera-lens picture drawn large takes 40–60 ms
+    (about 20 frames a second). The picture's mesh is the cost.
+- **The Darkness card** on Tonight at a Glance, and folder removal
+  refreshing everything it affects.
+
+### Scope (Fred, 2026-11-13)
+
+1. **A sky chart in the Info tab's right column.** Fred asked for "a
+   planisphere of the night sky with the constellations, and an indicator of
+   where in the night sky the project image is located".
+   - **What exists already:**
+     - the plate solve stores each picture's centre, size and rotation
+       (`project_solve`);
+     - D3 is a dependency;
+     - the Info tab leaves room for the chart in its right column.
+   - **What's new:**
+     - bundled sky data: constellation boundaries (IAU), stick figures and
+       bright stars, with a licence check before anything is added;
+     - the drawing itself;
+     - a close-up of the area around the target, because a typical picture
+       is a dot on a whole-sky chart;
+     - the southern hemisphere;
+     - label placement.
+2. **Follow-ups from v0.51.0's pre-publication review** (minor, recorded in
+   PR #30):
+   - Removing a source folder doesn't refresh rig-dependent views or a
+     project's cached info (`ProjectCatalogTab.tsx`, folder removal). This
+     version fixes it, under the rule that known bugs are fixed in the next
+     version.
+   - `test_dso_augment_csv.py` checks the file's shape only. Designations
+     stay covered by the release-time load into a database copy.
+3. **Tonight at a Glance: a title on the darkness card** (Fred, 2026-11-13:
+   "give it a title so it looks consistent with the remaining ones"). The
+   card is titled "Darkness", like Moon, Evening and Morning, and its two
+   labels drop the all-caps style for the other cards' sentence case. Done
+   by Claude in `TonightCalc.tsx`; it goes into the batched review.
+- **Owed checks from v0.51.0:** the phone and VoiceOver checks move to
+  Fred's later tablet and phone review (top of this plan).
+- **From the start sweep (2026-11-13):**
+  - v0.50.0-D1: no new evidence. Fred's database still has no uncataloged
+    files (read-only count: 0).
+  - v0.50.0-R1: no new evidence. This version doesn't change ingest's
+    transactions.
+  - v0.47.0-R1 and R2 stay parked, as Fred asked on 2026-11-12 ("you can
+    skip those things for now").
+  - v0.46.0-R1 stays with Distribution's design, now v0.54.0.
 
 ## v0.51.0 — Cleanup before Distribution, and object details
+
+Merged in [PR #30](https://github.com/fbaptiste/nightcrate/pull/30) on
+2026-11-13.
 
 Fred started this version on 2026-11-12, after merging v0.50.0, and chose its
 number. Asked what was next, he chose a short version of promised and
@@ -2881,6 +3042,11 @@ GPL still permits selling copies, but only with source.
   - Installers must ship the GPL text, the exact Corresponding Source for the
     shipped version (including build scripts), and a generated third-party
     notice bundle with the LGPL/MPL source obligations.
+  - The sky chart's data notices (v0.52.0) must travel with packaged
+    builds: `frontend/src/data/sky/LICENSE-d3-celestial.txt` (BSD-3-Clause)
+    and `SOURCES.md`. `SOURCES.md` carries `sky.json`'s CC BY-SA 4.0 licence
+    and its link, the HYG, Stellarium, IAU and d3-celestial credits with
+    their modification notes, and ESA's Hipparcos credit.
   - PyInstaller is GPL-2.0-or-later with a Bootloader Exception. That
     exception is what permits its frozen output under any licence.
   - Optional: `SPDX-License-Identifier: GPL-3.0-or-later` headers in
@@ -3473,10 +3639,61 @@ v0.46.0. On 2026-11-07 Fred placed rigs that don't change underneath their
 records as the very next version after the gallery; it became v0.47.0. The
 Messier checklist became v0.48.0 and object search v0.49.0. The updated XISF
 specification became v0.50.0. On 2026-11-12 Fred placed a cleanup version,
-v0.51.0, before Distribution; it is the active version above.
+v0.51.0, before Distribution. On 2026-11-13 he placed the sky chart as
+v0.52.0 (the active version above) and the Home page as v0.53.0, both before
+Distribution, which becomes v0.54.0.
 Version numbers are otherwise assigned when each version starts.
 
-### Distribution
+### Home page (v0.53.0)
+
+Fred chose the design on 2026-11-13 from local mockups
+(`.superpowers/mockups/home/home.html`, option D, which is ignored). Today the
+page shows only a welcome line and the joke wand. Nothing is specified yet:
+the spec starts with the version. What he agreed, in order down the page:
+
+- **Projects:** the heading "Projects", with a count. One bar shows how many
+  projects are at each stage, with a key; each part opens the Projects page
+  filtered to that stage. The stages are:
+  - Not started (active, no light frames);
+  - Capturing (active, below its filter goals);
+  - Ready to process (active, every filter goal met);
+  - Complete;
+  - Paused;
+  - Abandoned.
+
+  He rejected a summary sentence repeating the bar ("that's already shown in
+  the bar graph underneath").
+- **Recent projects:** the three most recently imaged. Each shows its
+  picture or "No picture yet", its stage, hours against goals, and when it
+  was last imaged.
+- **The next two weeks:** one row per location: the default, plus locations
+  used by active projects, up to four.
+  - Each day shows the forecast verdict and that location's moon-free dark
+    hours ("isn't that going to depend on the location? … keep it").
+  - Each row loads on its own, so the rest of the page never waits ("it has
+    to not delay loading the rest of the page").
+- **Latest picture,** large.
+- **The last 12 months:** a rolling window, not the calendar year ("what
+  does this year mean when it's January 10th"). It gives hours, nights, new
+  pictures (by date added), the longest night, and hours per month.
+- **Rigs and Locations panels,** each item linking to its own page, plus
+  "All rigs" and "All locations". Each item shows hours and nights over the
+  last 12 months, when it was last used, and how many active projects use
+  it.
+- **The joke wand** moves to the nav's bottom row, right-aligned beside the
+  theme and log icons. Its joke shows as a toast that stays about 15 s or
+  until closed ("the joke popup is too fast to disappear").
+- **Rejected:** a night time line of when each project is up tonight, which
+  "seems to put NightCrate as first and foremost a planner"; a season
+  ribbon; and a picture-first page.
+- **Open for the spec:**
+  - which forecast call each location row uses, and its caching, since each
+    is an outbound request;
+  - what shows when no default location is set;
+  - how "last imaged" and the 12-month figures are worked out from
+    sessions.
+
+### Distribution (v0.54.0)
 
 Make NightCrate installable without Python or Node, and let it update itself.
 A throwaway feasibility spike starts during the gallery work, in a separate

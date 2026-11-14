@@ -8,7 +8,24 @@ from nightcrate.services.gallery import GalleryRig, GalleryTarget, ImagingRun
 from nightcrate.services.object_facts import OtherObject, OtherObjectDistance
 
 
+class SolveWcs(BaseModel):
+    crval1: float
+    crval2: float
+    crpix1: float
+    crpix2: float
+    cd1_1: float
+    cd1_2: float
+    cd2_1: float
+    cd2_2: float
+    width: int
+    height: int
+
+
 class SolveField(BaseModel):
+    solve_id: int
+    wcs: SolveWcs
+    midnight_meridian_month: int
+    midnight_meridian_day: int
     constellation: str
     centre_ra_hms: str | None
     centre_dec_dms: str | None

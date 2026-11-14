@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
+
 from fastapi import APIRouter, HTTPException
 
 from nightcrate.api.gallery import load_project_records
 from nightcrate.api.object_facts_db import load_other_objects
-from nightcrate.api.project_info_models import ProjectInfo, SolveField
+from nightcrate.api.project_info_models import ProjectInfo, SolveField, SolveWcs
 from nightcrate.db.session import get_db
-from nightcrate.services.astronomy import constellation_for_coords
+from nightcrate.services.astronomy import constellation_for_coords, midnight_meridian_date
 from nightcrate.services.gallery import GalleryQuery, build_gallery
 
 router = APIRouter(prefix="/api/projects", tags=["Projects"])
@@ -28,8 +30,10 @@ async def get_project_info(project_id: int) -> ProjectInfo:
         other_objects = (await load_other_objects(conn, [project_id])).get(project_id, [])
         solve_cursor = await conn.execute(
             """
-            SELECT center_ra_deg, center_dec_deg, ra_hms, dec_dms,
-                   fov_width_arcmin, fov_height_arcmin, rotation_deg
+            SELECT id, center_ra_deg, center_dec_deg, ra_hms, dec_dms,
+                   fov_width_arcmin, fov_height_arcmin, rotation_deg,
+                   image_width, image_height, cd1_1, cd1_2, cd2_1, cd2_2,
+                   crpix1, crpix2
             FROM project_solve
             WHERE project_id = ?
             """,
@@ -47,7 +51,23 @@ async def get_project_info(project_id: int) -> ProjectInfo:
     if solve is not None:
         centre_ra_deg = float(solve["center_ra_deg"])
         centre_dec_deg = float(solve["center_dec_deg"])
+        midnight_month, midnight_day = midnight_meridian_date(centre_ra_deg, datetime.now(UTC).year)
         field = SolveField(
+            solve_id=int(solve["id"]),
+            wcs=SolveWcs(
+                crval1=centre_ra_deg,
+                crval2=centre_dec_deg,
+                crpix1=float(solve["crpix1"]),
+                crpix2=float(solve["crpix2"]),
+                cd1_1=float(solve["cd1_1"]),
+                cd1_2=float(solve["cd1_2"]),
+                cd2_1=float(solve["cd2_1"]),
+                cd2_2=float(solve["cd2_2"]),
+                width=int(solve["image_width"]),
+                height=int(solve["image_height"]),
+            ),
+            midnight_meridian_month=midnight_month,
+            midnight_meridian_day=midnight_day,
             constellation=constellation_for_coords(centre_ra_deg, centre_dec_deg),
             centre_ra_hms=solve["ra_hms"],
             centre_dec_dms=solve["dec_dms"],
