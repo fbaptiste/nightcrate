@@ -20,6 +20,7 @@ import SoftwareVersionsField, {
 } from "@/components/equipment/SoftwareVersionsField";
 import { formatSnakeCase } from "@/lib/formUtils";
 import { ApiError } from "@/api/client";
+import { invalidateProjectInfo } from "@/api/projectInfo";
 import {
   createSoftware,
   updateSoftware,
@@ -150,6 +151,7 @@ export default function SoftwareFormDialog({
         queryClient.invalidateQueries({ queryKey: ["project-integration"] }),
         queryClient.invalidateQueries({ queryKey: ["project-solve"] }),
         queryClient.invalidateQueries({ queryKey: ["equipment-usage"] }),
+        invalidateProjectInfo(queryClient),
       ]);
       onSaved();
       onClose();

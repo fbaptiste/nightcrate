@@ -73,6 +73,7 @@ META_DOMAINS = {
     "gfs_seamless": "ncep_gfs013",
     "icon_seamless": "dwd_icon",
 }
+OPEN_METEO_CONNECT_TIMEOUT_S: float = 10.0
 
 _CLOUD_HOURLY = [
     "cloud_cover",
@@ -375,7 +376,12 @@ async def fetch_cloud_models(
         "past_days": 1,
         "models": ",".join(CLOUD_REQUEST_MODELS),
     }
-    response = await http_get(_FORECAST_URL, params=params, label="weather[cloud_models]")
+    response = await http_get(
+        _FORECAST_URL,
+        params=params,
+        label="weather[cloud_models]",
+        connect_timeout=OPEN_METEO_CONNECT_TIMEOUT_S,
+    )
     response.raise_for_status()
     data = response.json()
     return CloudModelData(
@@ -393,7 +399,11 @@ async def fetch_model_meta() -> str:
 
     async def fetch_domain(domain: str) -> dict:
         url = f"https://api.open-meteo.com/data/{domain}/static/meta.json"
-        response = await http_get(url, label=f"weather[model_meta:{domain}]")
+        response = await http_get(
+            url,
+            label=f"weather[model_meta:{domain}]",
+            connect_timeout=OPEN_METEO_CONNECT_TIMEOUT_S,
+        )
         response.raise_for_status()
         return response.json()
 
@@ -453,7 +463,12 @@ async def fetch_weather(
         params["start_date"] = start_date
         params["end_date"] = end_date
 
-    response = await http_get(url, params=params, label=f"weather[{source}]")
+    response = await http_get(
+        url,
+        params=params,
+        label=f"weather[{source}]",
+        connect_timeout=OPEN_METEO_CONNECT_TIMEOUT_S,
+    )
     response.raise_for_status()
     data = response.json()
 
@@ -487,7 +502,12 @@ async def fetch_pwv(
         "forecast_days": FORECAST_DAYS,
     }
 
-    response = await http_get(_ECMWF_URL, params=params, label="ecmwf_pwv")
+    response = await http_get(
+        _ECMWF_URL,
+        params=params,
+        label="ecmwf_pwv",
+        connect_timeout=OPEN_METEO_CONNECT_TIMEOUT_S,
+    )
     response.raise_for_status()
     data = response.json()
 
@@ -523,7 +543,12 @@ async def fetch_air_quality(
         "forecast_days": 7,
     }
 
-    response = await http_get(_AIR_QUALITY_URL, params=params, label="air_quality_aod")
+    response = await http_get(
+        _AIR_QUALITY_URL,
+        params=params,
+        label="air_quality_aod",
+        connect_timeout=OPEN_METEO_CONNECT_TIMEOUT_S,
+    )
     response.raise_for_status()
     data = response.json()
 

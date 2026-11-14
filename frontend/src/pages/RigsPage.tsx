@@ -33,6 +33,7 @@ import RigFormDialog from "@/components/rigs/RigFormDialog";
 import NewRigDialog from "@/components/rigs/NewRigDialog";
 import RigDetailPanel from "@/components/rigs/RigDetailPanel";
 import { setActivity } from "@/api/client";
+import { invalidateProjectInfo } from "@/api/projectInfo";
 import {
   fetchRigs,
   setRigMine,
@@ -74,6 +75,7 @@ export default function RigsPage() {
     queryClient.invalidateQueries({ queryKey: ["catalog-frame"] });
     queryClient.invalidateQueries({ queryKey: ["project-sessions"] });
     queryClient.invalidateQueries({ queryKey: ["project-integration"] });
+    void invalidateProjectInfo(queryClient);
     queryClient.invalidateQueries({ queryKey: ["equipment-usage"] });
   };
 

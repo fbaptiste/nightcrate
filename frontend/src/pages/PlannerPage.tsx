@@ -1,8 +1,8 @@
 /**
  * Target Planner.
  *
- * Two modes: "Tonight from {location}" (location-aware, visibility +
- * moon context) and "Browse the full catalog" (no location / no
+ * Two modes: "Plan a Night" (location-aware, visibility +
+ * moon context) and "Full Catalog" (no location / no
  * visibility, acts as a DSO catalog browser). Optional rig selection
  * adds a rig-framed thumbnail on each card plus a coverage-range
  * filter ("Size in frame"). Row click opens ``PlannerDetailPanel``.
@@ -1090,7 +1090,7 @@ export default function PlannerPage() {
               {restrictTonight && (
                 <Typography variant="caption" color="text.secondary">
                   Try relaxing Min hours / Magnitude, or switch to
-                  &ldquo;Browse the full catalog&rdquo; mode.
+                  &ldquo;Full Catalog&rdquo; mode.
                 </Typography>
               )}
             </Stack>

@@ -1052,12 +1052,17 @@ async def catalog_frames(
     offset: int = Query(default=0, ge=0),
     frame_type: str | None = Query(default=None, description="Filter by frame_type"),
     filter_name: str | None = Query(default=None, description="Filter by filter name (pill)"),
+    filter_missing: bool = Query(default=False, description="Filter to frames with no filter name"),
     sort: str | None = Query(default=None, description=f"One of {sorted(_FRAME_SORTS)}"),
 ) -> CatalogFramesPage:
     # Optional frame_type filter (drives the count-pill filtering in the UI) and
     # filter-name scope (clicking a Lights/Flats filter pill, matching the same
     # filter_name_hint the pills are grouped by).
-    scope, scope_params = _frame_scope(frame_type, filter_name)
+    if filter_name is not None and filter_missing:
+        raise HTTPException(
+            status_code=422, detail="Choose filter_name or filter_missing, not both."
+        )
+    scope, scope_params = _frame_scope(frame_type, filter_name, filter_missing)
     # An explicit sort wins; otherwise keep the per-tab default. Flats are
     # organised per-filter (you match flats to lights by filter), so sort by filter
     # first. Lights/calibration sort by path so raw vs per-stage outputs bunch
@@ -1184,7 +1189,11 @@ async def catalog_delete(project_id: int, body: CatalogDeleteRequest) -> Catalog
 # "all work is request-driven, no background tasks" property.
 
 
-def _frame_scope(frame_type: str | None, filter_name: str | None) -> tuple[str, tuple]:
+def _frame_scope(
+    frame_type: str | None,
+    filter_name: str | None,
+    filter_missing: bool = False,
+) -> tuple[str, tuple]:
     """Build the WHERE fragment + params selecting the frames in scope.
 
     Shared by the listing, the quality-pending count and the quality summary so
@@ -1200,6 +1209,8 @@ def _frame_scope(frame_type: str | None, filter_name: str | None) -> tuple[str, 
     if filter_name:
         clause += " AND sf.filter_name_hint = ?"
         params += (filter_name,)
+    if filter_missing:
+        clause += " AND sf.filter_name_hint IS NULL"
     return clause, params
 
 
@@ -1208,6 +1219,7 @@ async def catalog_analyze_pending(
     project_id: int,
     frame_type: str | None = Query(default=None, description="Scope to one frame_type"),
     filter_name: str | None = Query(default=None, description="Scope to one filter pill"),
+    filter_missing: bool = Query(default=False, description="Scope to missing filter names"),
     force: bool = Query(default=False, description="Include already-analyzed frames"),
 ) -> QualityPending:
     """The frames awaiting quality analysis, as one ordered id list.
@@ -1216,7 +1228,11 @@ async def catalog_analyze_pending(
     progress is exact and there is no re-querying a target that moves as rows are
     analyzed underneath it.
     """
-    scope, scope_params = _frame_scope(frame_type, filter_name)
+    if filter_name is not None and filter_missing:
+        raise HTTPException(
+            status_code=422, detail="Choose filter_name or filter_missing, not both."
+        )
+    scope, scope_params = _frame_scope(frame_type, filter_name, filter_missing)
     pending_clause = "" if force else " AND sf.quality_analyzed_at IS NULL"
     async with get_db() as conn:
         await get_or_404(conn, "project", project_id, "Project")
@@ -1243,6 +1259,7 @@ async def catalog_analyze_summary(
     project_id: int,
     frame_type: str | None = Query(default=None, description="Scope to one frame_type"),
     filter_name: str | None = Query(default=None, description="Scope to one filter pill"),
+    filter_missing: bool = Query(default=False, description="Scope to missing filter names"),
 ) -> QualityCounts:
     """How much of this scope has been analyzed, for the Analyze button's label.
 
@@ -1251,7 +1268,11 @@ async def catalog_analyze_summary(
     the full pending id list on every tab switch just to length it would ship
     ~20 KB of ints for a number.
     """
-    scope, scope_params = _frame_scope(frame_type, filter_name)
+    if filter_name is not None and filter_missing:
+        raise HTTPException(
+            status_code=422, detail="Choose filter_name or filter_missing, not both."
+        )
+    scope, scope_params = _frame_scope(frame_type, filter_name, filter_missing)
     async with get_db() as conn:
         await get_or_404(conn, "project", project_id, "Project")
         cursor = await conn.execute(

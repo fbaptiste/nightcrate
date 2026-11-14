@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import io
+import os
 import sqlite3
 import zipfile
 from pathlib import Path
@@ -352,6 +353,45 @@ class TestImages:
 
         assert response.status_code == 422
         assert "This XISF file is damaged." in response.json()["detail"]
+        assert (await client.get(f"/api/projects/{pid}")).json()["images"] == []
+
+    @pytest.mark.parametrize("reference", ["missing", "relative", "windows"])
+    async def test_unusable_pxiproject_reference_is_refused(self, client, tmp_path, reference):
+        """v0.51.0: a referenced image that is missing, relative, or a Windows
+        path on another system is refused with a plain message, not a 500."""
+        from tests.test_pxiproject_io import _make_project
+
+        if reference == "windows" and os.name == "nt":
+            pytest.skip("a Windows path is usable on Windows")
+        file_path = {
+            "missing": str(tmp_path / "gone" / "m31.xisf"),
+            "relative": "images/m31.xisf",
+            "windows": "C:/Astro/m31.xisf",
+        }[reference]
+        source = _make_project(
+            tmp_path, [{"name": "Ref", "file_path": file_path, "data_src": "unused"}]
+        )
+        project = await client.post("/api/projects", json={"name": f"ref {reference}"})
+        pid = project.json()["id"]
+
+        response = await client.post(
+            f"/api/projects/{pid}/images", json={"file_paths": [str(source)]}
+        )
+
+        assert response.status_code == 422
+        detail = response.json()["detail"]
+        expected = {
+            "missing": f"The image this PixInsight project points to isn't there: {file_path}",
+            "relative": (
+                "This PixInsight project gives the image's location as a relative "
+                "path, so NightCrate can't find it."
+            ),
+            "windows": (
+                "This PixInsight project was saved on Windows and points to its image "
+                f"at {file_path}, which this computer can't open."
+            ),
+        }[reference]
+        assert detail.endswith(expected)
         assert (await client.get(f"/api/projects/{pid}")).json()["images"] == []
 
     async def test_add_single_image_is_main(self, client: AsyncClient, tmp_fits_mono: Path):

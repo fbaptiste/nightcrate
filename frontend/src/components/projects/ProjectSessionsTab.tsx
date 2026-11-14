@@ -33,8 +33,14 @@ import { formatHoursMinutes } from "./IntegrationBars";
 import NightNoteDialog from "./NightNoteDialog";
 import SessionFormDialog from "./SessionFormDialog";
 import SessionNightBlock, { type SessionRigGroup } from "./SessionNightBlock";
-import { compareFilters, resolveFilter, summarizeSessionFilters } from "./filterColors";
+import {
+  compareFilters,
+  notRecordedFilter,
+  resolveFilter,
+  summarizeSessionFilters,
+} from "./filterColors";
 import { invalidateProjectLinks } from "@/api/projectTargetLinks";
+import { invalidateProjectInfo } from "@/api/projectInfo";
 
 interface Props {
   projectId: number;
@@ -96,8 +102,8 @@ export default function ProjectSessionsTab({ projectId, focusNight }: Props) {
     queryFn: () => fetchRigs(false),
   });
   const { data: filters = [] } = useQuery({
-    queryKey: ["filters"],
-    queryFn: () => fetchFilters(false, false),
+    queryKey: ["filters", "with-retired"],
+    queryFn: () => fetchFilters(true, false),
   });
   const { data: project } = useQuery({
     queryKey: ["project", projectId],
@@ -203,10 +209,18 @@ export default function ProjectSessionsTab({ projectId, focusNight }: Props) {
     return [...(integration?.exposures ?? [])]
       .map((line) => ({
         line,
-        resolved: resolveFilter({
-          label: line.label,
-          equipmentFilter: filtersByName.get(line.label) ?? null,
-        }),
+        resolved: line.not_recorded
+          ? notRecordedFilter()
+          : line.filter_id != null
+            ? resolveFilter({
+                label: filtersById.get(line.filter_id)?.model_name ?? line.label,
+                equipmentFilter: filtersById.get(line.filter_id) ?? null,
+                linked: true,
+              })
+            : resolveFilter({
+                label: line.label,
+                equipmentFilter: filtersByName.get(line.label) ?? null,
+              }),
       }))
       .sort(
         (a, b) =>
@@ -215,7 +229,7 @@ export default function ProjectSessionsTab({ projectId, focusNight }: Props) {
           a.line.exposure_seconds - b.line.exposure_seconds,
       )
       .map(({ line }) => line);
-  }, [filters, integration]);
+  }, [filters, filtersById, integration]);
 
   const refresh = () => {
     queryClient.invalidateQueries({ queryKey: ["rigs"] });
@@ -226,6 +240,7 @@ export default function ProjectSessionsTab({ projectId, focusNight }: Props) {
     queryClient.invalidateQueries({ queryKey: ["project-sessions", projectId] });
     queryClient.invalidateQueries({ queryKey: ["project-integration", projectId] });
     queryClient.invalidateQueries({ queryKey: ["project-solve", projectId] });
+    void invalidateProjectInfo(queryClient, projectId);
     queryClient.invalidateQueries({ queryKey: ["equipment-usage"] });
     void invalidateProjectLinks(queryClient);
   };
@@ -389,7 +404,7 @@ export default function ProjectSessionsTab({ projectId, focusNight }: Props) {
           onClose={() => setFormOpen(false)}
           session={editing}
           rigs={rigs}
-          filters={filters}
+          filters={filters.filter((filter) => filter.active)}
           projectRigs={projectRigs}
           projectRigSetups={projectRigSetups}
           onSubmit={handleSubmit}

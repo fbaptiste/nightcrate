@@ -19,6 +19,7 @@ import MenuItem from "@mui/material/MenuItem";
 import TextField from "@mui/material/TextField";
 import CircularProgress from "@mui/material/CircularProgress";
 import { fetchRigs } from "@/api/rigs";
+import { invalidateProjectInfo } from "@/api/projectInfo";
 import { fetchProject, fetchProjectRigSetups } from "@/api/projects";
 import { listProjectTargets } from "@/api/projectTargets";
 import Snackbar from "@mui/material/Snackbar";
@@ -71,6 +72,7 @@ import {
   setFolderTarget,
   startIngest,
   type CatalogFrame,
+  type FramePill,
   type CatalogItem,
   type CatalogMaster,
   type CatalogOther,
@@ -78,13 +80,26 @@ import {
 } from "@/api/projectCatalog";
 import { useAnalyzeRun } from "@/lib/useAnalyzeRun";
 import { RIG_BLUE } from "@/lib/rigColors";
-import { compareFilters, resolveFilterLabel } from "./filterColors";
+import {
+  compareFilters,
+  notRecordedFilter,
+  resolveFilterLabel,
+} from "./filterColors";
 
 interface Props {
   projectId: number;
 }
 
 const PAGE_SIZE = 60;
+
+function framePillKey(pill: FramePill | null): string {
+  if (!pill) return "";
+  return pill.kind === "name" ? `name:${pill.name}` : "not-recorded";
+}
+
+function framePillsEqual(left: FramePill | null, right: FramePill | null): boolean {
+  return framePillKey(left) === framePillKey(right);
+}
 
 /** Coarse "time left" for the analyze run — seconds under a minute, else minutes. */
 function formatEta(seconds: number): string {
@@ -107,17 +122,17 @@ type TabKey =
   | "others"
   | "uncataloged";
 
-/** Plural noun per tab, for scope-stating labels ("Analyze 276 Blue lights").
+/** Singular and plural nouns per tab, for scope-stating Analyze labels.
  *  Exhaustive on purpose — adding a TabKey must not silently fall through. */
-const TAB_NOUNS: Record<TabKey, string> = {
-  light: "lights",
-  dark: "darks",
-  flat: "flats",
-  dark_flat: "dark flats",
-  bias: "bias frames",
-  masters: "masters",
-  others: "files",
-  uncataloged: "files not cataloged",
+const TAB_NOUNS: Record<TabKey, { singular: string; plural: string }> = {
+  light: { singular: "light", plural: "lights" },
+  dark: { singular: "dark", plural: "darks" },
+  flat: { singular: "flat", plural: "flats" },
+  dark_flat: { singular: "dark flat", plural: "dark flats" },
+  bias: { singular: "bias frame", plural: "bias frames" },
+  masters: { singular: "master", plural: "masters" },
+  others: { singular: "file", plural: "files" },
+  uncataloged: { singular: "file not cataloged", plural: "files not cataloged" },
 };
 
 interface CatalogPage {
@@ -143,7 +158,7 @@ export default function ProjectCatalogTab({ projectId }: Props) {
   const [tab, setTab] = useState<TabKey>("light");
   const [lightView, setLightView] = useState<"table" | "thumbnails">("table");
   // Active filter-pill scope on the Lights / Flats lists (null = show all).
-  const [filterName, setFilterName] = useState<string | null>(null);
+  const [filterPill, setFilterPill] = useState<FramePill | null>(null);
   // Server-side ordering (null = the per-tab default). Client-side sorting would
   // only order the pages already loaded, which is wrong for "worst first".
   const [sort, setSort] = useState<CatalogSort>("date_desc");
@@ -164,14 +179,14 @@ export default function ProjectCatalogTab({ projectId }: Props) {
 
   const changeTab = (next: TabKey, opts?: { unclassifiedOnly?: boolean }) => {
     setTab(next);
-    setFilterName(null);
+    setFilterPill(null);
     setSort("date_desc");
     setUnclassifiedOnly(opts?.unclassifiedOnly ?? false);
     clearSelection();
   };
 
-  const changeFilterPill = (next: string | null) => {
-    setFilterName(next);
+  const changeFilterPill = (next: FramePill | null) => {
+    setFilterPill(next);
     clearSelection();
   };
 
@@ -240,7 +255,7 @@ export default function ProjectCatalogTab({ projectId }: Props) {
     hasNextPage,
     isFetchingNextPage,
   } = useInfiniteQuery({
-    queryKey: ["project-catalog", projectId, tab, filterName, sort, unclassifiedOnly],
+    queryKey: ["project-catalog", projectId, tab, filterPill, sort, unclassifiedOnly],
     initialPageParam: 0,
     queryFn: async ({ pageParam }): Promise<CatalogPage> => {
       const off = pageParam;
@@ -250,7 +265,7 @@ export default function ProjectCatalogTab({ projectId }: Props) {
       if (tab === "uncataloged") {
         return { rows: [], total: 0, timezone: "UTC" };
       }
-      return fetchCatalogFrames(projectId, PAGE_SIZE, off, tab, filterName, sort);
+      return fetchCatalogFrames(projectId, PAGE_SIZE, off, tab, filterPill, sort);
     },
     getNextPageParam: (_last, allPages) => {
       const loaded = allPages.reduce((n, p) => n + p.rows.length, 0);
@@ -279,9 +294,9 @@ export default function ProjectCatalogTab({ projectId }: Props) {
   const orderedFilterStats = useMemo(
     () =>
       [...filterStats].sort((a, b) => {
-        const aLabel = a.filter_name ?? "";
-        const bLabel = b.filter_name ?? "";
-        return compareFilters(resolveFilterLabel(aLabel), resolveFilterLabel(bLabel));
+        const aFilter = a.filter_name ? resolveFilterLabel(a.filter_name) : notRecordedFilter();
+        const bFilter = b.filter_name ? resolveFilterLabel(b.filter_name) : notRecordedFilter();
+        return compareFilters(aFilter, bFilter);
       }),
     [filterStats],
   );
@@ -321,6 +336,7 @@ export default function ProjectCatalogTab({ projectId }: Props) {
     queryClient.invalidateQueries({ queryKey: ["project-sessions", projectId] });
     queryClient.invalidateQueries({ queryKey: ["project-integration", projectId] });
     queryClient.invalidateQueries({ queryKey: ["project-solve", projectId] });
+    void invalidateProjectInfo(queryClient, projectId);
     queryClient.invalidateQueries({ queryKey: ["equipment-usage"] });
   };
 
@@ -329,7 +345,7 @@ export default function ProjectCatalogTab({ projectId }: Props) {
    *  editing one row after scrolling 20 pages cost 20 round-trips. */
   const patchFrameRow = (updated: CatalogFrame) => {
     queryClient.setQueryData<{ pages: CatalogPage[]; pageParams: unknown[] }>(
-      ["project-catalog", projectId, tab, filterName, sort, unclassifiedOnly],
+      ["project-catalog", projectId, tab, filterPill, sort, unclassifiedOnly],
       (old) =>
         old
           ? {
@@ -372,13 +388,18 @@ export default function ProjectCatalogTab({ projectId }: Props) {
   // pill, so the button label states exactly what it will do.
   const isFrameTab = tab !== "masters" && tab !== "others" && tab !== "uncataloged";
   const { data: qCounts } = useQuery({
-    queryKey: ["quality-counts", projectId, tab, filterName],
-    queryFn: () => fetchQualityCounts(projectId, tab, filterName),
+    queryKey: ["quality-counts", projectId, tab, filterPill],
+    queryFn: () => fetchQualityCounts(projectId, tab, filterPill),
     enabled: isFrameTab,
   });
 
   /** "276 Blue lights" — states the scope so the button needs no explanation. */
-  const scopeNoun = `${filterName ? `${filterName} ` : ""}${TAB_NOUNS[tab]}`;
+  const scopeNoun = (count: number) => {
+    const noun = TAB_NOUNS[tab][count === 1 ? "singular" : "plural"];
+    return filterPill?.kind === "notRecorded"
+      ? `${noun} with no filter recorded`
+      : `${filterPill?.kind === "name" ? `${filterPill.name} ` : ""}${noun}`;
+  };
 
   const onAnalyzeFinished = useCallback(
     (p: { analyzed: number; noStars: number; unreadable: number; errors: string[] }) => {
@@ -870,13 +891,13 @@ export default function ProjectCatalogTab({ projectId }: Props) {
                       analyzeProgress.running ? <CircularProgress size={14} /> : <AutoAwesomeIcon />
                     }
                     disabled={analyzeProgress.running}
-                    onClick={() => startAnalyze({ frameType: tab, filterName })}
+                    onClick={() => startAnalyze({ frameType: tab, pill: filterPill })}
                   >
                     {analyzeProgress.running
                       ? "Analyzing\u2026"
                       : (qCounts?.analyzed ?? 0) > 0
-                        ? `Analyze ${(qCounts?.pending ?? 0).toLocaleString()} new ${scopeNoun}`
-                        : `Analyze ${(qCounts?.total ?? 0).toLocaleString()} ${scopeNoun}`}
+                        ? `Analyze ${(qCounts?.pending ?? 0).toLocaleString()} new ${scopeNoun(qCounts?.pending ?? 0)}`
+                        : `Analyze ${(qCounts?.total ?? 0).toLocaleString()} ${scopeNoun(qCounts?.total ?? 0)}`}
                   </Button>
                 </span>
               </Tooltip>
@@ -893,11 +914,11 @@ export default function ProjectCatalogTab({ projectId }: Props) {
                       analyzeProgress.running ? <CircularProgress size={14} /> : <RefreshIcon />
                     }
                     disabled={analyzeProgress.running}
-                    onClick={() => startAnalyze({ frameType: tab, filterName }, true)}
+                    onClick={() => startAnalyze({ frameType: tab, pill: filterPill }, true)}
                   >
                     {`Re-analyze ${
                       (qCounts?.pending ?? 0) > 0 ? "all " : ""
-                    }${(qCounts?.total ?? 0).toLocaleString()} ${scopeNoun}`}
+                    }${(qCounts?.total ?? 0).toLocaleString()} ${scopeNoun(qCounts?.total ?? 0)}`}
                   </Button>
                 </span>
               </Tooltip>
@@ -981,16 +1002,21 @@ export default function ProjectCatalogTab({ projectId }: Props) {
       {showFilterPills && filterStats.length > 0 && (
         <Stack direction="row" flexWrap="wrap" gap={1} sx={{ mb: 1 }}>
           {orderedFilterStats.map((s) => {
-            const name = s.filter_name ?? "—";
-            const resolvedFilter = resolveFilterLabel(name);
-            const active = filterName === s.filter_name;
+            const name = s.filter_name ?? "Not recorded";
+            const pill: FramePill = s.filter_name
+              ? { kind: "name", name: s.filter_name }
+              : { kind: "notRecorded" };
+            const resolvedFilter = s.filter_name
+              ? resolveFilterLabel(s.filter_name)
+              : notRecordedFilter();
+            const active = framePillsEqual(filterPill, pill);
             const labelText =
               tab === "flat"
                 ? `${name} · ${s.count} · ${formatExposure(s.total_seconds)}`
                 : `${name} · ${s.count}`;
             return (
               <Chip
-                key={name}
+                key={framePillKey(pill)}
                 size="small"
                 clickable
                 variant={active ? "filled" : "outlined"}
@@ -1001,7 +1027,7 @@ export default function ProjectCatalogTab({ projectId }: Props) {
                     {labelText}
                   </Box>
                 }
-                onClick={() => changeFilterPill(active ? null : s.filter_name)}
+                onClick={() => changeFilterPill(active ? null : pill)}
               />
             );
           })}
@@ -1104,7 +1130,7 @@ export default function ProjectCatalogTab({ projectId }: Props) {
         />
       ) : tab === "light" && lightView === "thumbnails" ? (
         <CatalogThumbnailSheet
-          key={`${tab}:${filterName ?? ""}:${sort}`}
+          key={`${tab}:${framePillKey(filterPill)}:${sort}`}
           rows={items as CatalogFrame[]}
           projectId={projectId}
           timezone={tz}
@@ -1117,7 +1143,7 @@ export default function ProjectCatalogTab({ projectId }: Props) {
         />
       ) : (
         <CatalogFrameTable
-          key={`${tab}:${filterName ?? ""}:${sort}`}
+          key={`${tab}:${framePillKey(filterPill)}:${sort}`}
           rows={items as CatalogFrame[]}
           projectId={projectId}
           timezone={tz}

@@ -15,7 +15,7 @@ export interface FormattedDistance {
 }
 
 /** Round to 3 significant figures. Always returns a number. */
-function toThreeSigFigs(value: number): number {
+export function toThreeSigFigs(value: number): number {
   if (value === 0) return 0;
   const sign = Math.sign(value);
   const abs = Math.abs(value);

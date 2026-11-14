@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import io
+import os
 import struct
 import zipfile
 from pathlib import Path
@@ -264,6 +265,44 @@ async def test_archive_members_and_project_images_have_distinct_keys(client, tmp
     second = await client.get("/api/images/preview", params={"path": f"{project}::1"})
     assert first.status_code == second.status_code == 200
     assert first.headers["etag"] != second.headers["etag"]
+
+
+@pytest.mark.anyio
+async def test_preview_relative_reference_unreadable(client, tmp_path, monkeypatch):
+    working = tmp_path / "working"
+    working.mkdir()
+    working.joinpath("relative.xisf").write_bytes(_make_xisf(np.ones((2, 2))))
+    project = tmp_path / "relative.pxiproject"
+    project.mkdir()
+    project.joinpath("project.xosm").write_text(
+        _project_xml([Path("relative.xisf")]), encoding="utf-8"
+    )
+    monkeypatch.chdir(working)
+
+    response = await client.get("/api/images/preview", params={"path": f"{project}::0"})
+
+    assert response.status_code == 422
+    assert response.json()["detail"] == (
+        "This PixInsight project gives the image's location as a relative path, "
+        "so NightCrate can't find it."
+    )
+
+
+@pytest.mark.anyio
+@pytest.mark.skipif(os.name == "nt", reason="Windows paths are native on Windows")
+async def test_preview_windows_reference_unreadable(client, tmp_path):
+    file_path = "C:/Astro/m31.xisf"
+    project = tmp_path / "windows.pxiproject"
+    project.mkdir()
+    project.joinpath("project.xosm").write_text(_project_xml([Path(file_path)]), encoding="utf-8")
+
+    response = await client.get("/api/images/preview", params={"path": f"{project}::0"})
+
+    assert response.status_code == 422
+    assert response.json()["detail"] == (
+        "This PixInsight project was saved on Windows and points to its image at "
+        f"{file_path}, which this computer can't open."
+    )
 
 
 @pytest.mark.anyio

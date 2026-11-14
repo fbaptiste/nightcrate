@@ -39,6 +39,34 @@ async def _make_location(client: AsyncClient, name: str = "Backyard") -> int:
     return r.json()["id"]
 
 
+async def _insert_session(
+    project_id: int,
+    *,
+    source: str,
+    line_name: str,
+    filter_label: str | None = None,
+    filter_id: int | None = None,
+    exposure_seconds: float = 300,
+    num_subs: int = 10,
+) -> None:
+    async with get_db() as conn:
+        await conn.execute(
+            "INSERT INTO project_session "
+            "(project_id, filter_id, line_name, filter_label, exposure_seconds, num_subs, source) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (
+                project_id,
+                filter_id,
+                line_name,
+                filter_label,
+                exposure_seconds,
+                num_subs,
+                source,
+            ),
+        )
+        await conn.commit()
+
+
 async def _make_rig(name: str = "Test Rig") -> int:
     # Rigs are user-created; seed provides camera id=1 and telescope_configuration id=1.
     async with get_db() as conn:
@@ -328,6 +356,102 @@ class TestSessionsCRUD:
 
 
 class TestIntegration:
+    async def test_not_recorded_line_for_frame_built_batch_without_filter(
+        self, client: AsyncClient
+    ):
+        pid = await _make_project(client)
+        await _insert_session(pid, source="auto", line_name="other")
+
+        summary = (await client.get(f"/api/projects/{pid}/integration")).json()
+        assert summary["lines"] == [
+            {
+                "label": "Not recorded",
+                "actual_minutes": 50.0,
+                "session_count": 1,
+                "sub_count": 10,
+                "not_recorded": True,
+            }
+        ]
+        assert summary["exposures"] == [
+            {
+                "label": "Not recorded",
+                "exposure_seconds": 300.0,
+                "sub_count": 10,
+                "actual_minutes": 50.0,
+                "not_recorded": True,
+                "filter_id": None,
+            }
+        ]
+
+    async def test_hand_entered_other_stays_other(self, client: AsyncClient):
+        pid = await _make_project(client)
+        await _insert_session(pid, source="manual", line_name="other")
+        await _insert_session(pid, source="auto", line_name="other")
+
+        summary = (await client.get(f"/api/projects/{pid}/integration")).json()
+        assert [(row["label"], row["not_recorded"]) for row in summary["lines"]] == [
+            ("other", False),
+            ("Not recorded", True),
+        ]
+        assert [(row["label"], row["not_recorded"]) for row in summary["exposures"]] == [
+            ("other", False),
+            ("Not recorded", True),
+        ]
+
+    async def test_not_recorded_sorts_last(self, client: AsyncClient):
+        pid = await _make_project(client)
+        await _insert_session(pid, source="manual", line_name="Ha")
+        await _insert_session(pid, source="auto", line_name="other", filter_label="Zeta")
+        await _insert_session(pid, source="auto", line_name="other")
+
+        summary = (await client.get(f"/api/projects/{pid}/integration")).json()
+        assert [row["label"] for row in summary["lines"]] == ["Ha", "Zeta", "Not recorded"]
+
+    async def test_literal_not_recorded_header_stays_separate(self, client: AsyncClient):
+        pid = await _make_project(client)
+        await _insert_session(
+            pid,
+            source="auto",
+            line_name="other",
+            filter_label="Not recorded",
+        )
+        await _insert_session(pid, source="auto", line_name="other")
+
+        summary = (await client.get(f"/api/projects/{pid}/integration")).json()
+        assert [(row["label"], row["not_recorded"]) for row in summary["lines"]] == [
+            ("Not recorded", False),
+            ("Not recorded", True),
+        ]
+        assert [(row["label"], row["not_recorded"]) for row in summary["exposures"]] == [
+            ("Not recorded", False),
+            ("Not recorded", True),
+        ]
+
+    async def test_exposure_filter_id_only_when_linked(self, client: AsyncClient):
+        pid = await _make_project(client)
+        fid, _lines = await _filter_with_passbands(1, 1)
+        async with get_db() as conn:
+            cursor = await conn.execute("SELECT model_name FROM filter WHERE id = ?", (fid,))
+            row = await cursor.fetchone()
+        model_name = row["model_name"]
+        response = await client.post(
+            f"/api/projects/{pid}/sessions",
+            json={"filter_id": fid, "exposure_seconds": 300, "num_subs": 10},
+        )
+        assert response.status_code == 201
+        summary = (await client.get(f"/api/projects/{pid}/integration")).json()
+        assert summary["exposures"][0]["filter_id"] == fid
+
+        await _insert_session(
+            pid,
+            source="auto",
+            line_name="other",
+            filter_label=model_name,
+        )
+        summary = (await client.get(f"/api/projects/{pid}/integration")).json()
+        assert len(summary["exposures"]) == 1
+        assert summary["exposures"][0]["filter_id"] is None
+
     async def test_integration_imaging_runs(self, client: AsyncClient):
         pid = await _make_project(client)
         dates = [
@@ -479,9 +603,30 @@ class TestIntegrationExposures:
         # Ha 300 s: 20 subs = 6000 s = 100 min, across two nights and two gains.
         # Ha 180 s: 5 subs = 900 s = 15 min. Oiii 600 s: 5 subs = 3000 s = 50 min.
         assert await self._exposures(client, pid) == [
-            {"label": "Ha", "exposure_seconds": 180.0, "sub_count": 5, "actual_minutes": 15.0},
-            {"label": "Ha", "exposure_seconds": 300.0, "sub_count": 20, "actual_minutes": 100.0},
-            {"label": "Oiii", "exposure_seconds": 600.0, "sub_count": 5, "actual_minutes": 50.0},
+            {
+                "label": "Ha",
+                "exposure_seconds": 180.0,
+                "sub_count": 5,
+                "actual_minutes": 15.0,
+                "not_recorded": False,
+                "filter_id": None,
+            },
+            {
+                "label": "Ha",
+                "exposure_seconds": 300.0,
+                "sub_count": 20,
+                "actual_minutes": 100.0,
+                "not_recorded": False,
+                "filter_id": None,
+            },
+            {
+                "label": "Oiii",
+                "exposure_seconds": 600.0,
+                "sub_count": 5,
+                "actual_minutes": 50.0,
+                "not_recorded": False,
+                "filter_id": None,
+            },
         ]
 
     async def test_duoband_filter_is_one_row_under_its_name(self, client: AsyncClient):
@@ -502,6 +647,8 @@ class TestIntegrationExposures:
                 "exposure_seconds": 300.0,
                 "sub_count": 10,
                 "actual_minutes": 50.0,
+                "not_recorded": False,
+                "filter_id": fid,
             }
         ]
 
@@ -538,6 +685,8 @@ class TestIntegrationExposures:
                 "exposure_seconds": 120.0,
                 "sub_count": 15,
                 "actual_minutes": 30.0,
+                "not_recorded": False,
+                "filter_id": row["id"],
             }
         ]
 

@@ -64,11 +64,11 @@ export function usePlannerSettingsSync(): { hydrated: boolean } {
   const updateSettings = useSettingsStore((s) => s.update);
   const [hydrated, setHydrated] = useState(false);
   const hydratedRef = useRef(false);
-  // Latest payload PUT to the backend, JSON-stringified. Used to skip
-  // redundant saves — the post-hydration render is the prime offender.
-  const lastPushedRef = useRef<string | null>(null);
+  const confirmedRef = useRef<Partial<Settings>>({});
+  const sentRef = useRef<Partial<Settings>>({});
+  const versionsRef = useRef<Partial<Record<PlannerSettingsKey, number>>>({});
   // rAF handle for the debounced save. A single frame coalesces multi-
-  // setter actions (e.g. Clear filters → 3 sequential setters) into one PUT.
+  // setter actions (e.g. Clear filters → 3 sequential setters) into one PATCH.
   const pendingSaveRef = useRef<number | null>(null);
 
   // Hydrate once on first arrival of settings from the backend.
@@ -104,7 +104,6 @@ export function usePlannerSettingsSync(): { hydrated: boolean } {
       ) {
         overlay.planner_filter_intent = legacy.planner_filter_intent;
       }
-      if (Object.keys(overlay).length > 0) void updateSettings(overlay);
     }
 
     const sortByFromSettings =
@@ -130,10 +129,27 @@ export function usePlannerSettingsSync(): { hydrated: boolean } {
       calendarRigId: merged.planner_calendar_rig_id,
     };
     usePlannerStore.setState(hydrated);
-    // Seed lastPushedRef with the hydrated payload so the post-hydration
-    // save effect doesn't fire a no-op PUT echoing the values that just
-    // arrived from the server.
-    lastPushedRef.current = JSON.stringify(buildPayload(hydrated));
+    const serverSnapshot = buildPayload({
+      selectedLocationId: merged.planner_selected_location_id,
+      selectedHorizonId: merged.planner_selected_horizon_id,
+      selectedRigId: merged.planner_selected_rig_id,
+      activeTab: merged.planner_active_tab,
+      sortBy: merged.planner_sort_by.length > 0 ? merged.planner_sort_by : DEFAULT_SORT,
+      filterIntent: merged.planner_filter_intent,
+      typeFilter: merged.planner_type_filter,
+      catalogFilter: merged.planner_catalog_filter,
+      constellationFilter: merged.planner_constellation_filter,
+      detailId: merged.planner_detail_id,
+      minHours: merged.planner_min_hours,
+      maxMag: merged.planner_max_mag,
+      minSize: merged.planner_min_size,
+      coverageRange: merged.planner_coverage_range,
+      calendarLocationId: merged.planner_calendar_location_id,
+      calendarHorizonId: merged.planner_calendar_horizon_id,
+      calendarRigId: merged.planner_calendar_rig_id,
+    });
+    confirmedRef.current = serverSnapshot;
+    sentRef.current = { ...serverSnapshot };
     hydratedRef.current = true;
     // This React signal must flip in the same hydration effect that updates
     // the external zustand store, so query-param consumers cannot run first.
@@ -165,10 +181,7 @@ export function usePlannerSettingsSync(): { hydrated: boolean } {
   const calendarRigId = usePlannerStore((s) => s.calendarRigId);
 
   // rAF-coalesced save: a single tick of multiple setters (e.g. Clear
-  // filters → 3 sequential setState calls) collapses to one PUT. Skips
-  // saves where the payload matches the last one we sent — guards against
-  // the post-hydration render echoing server values back, and against
-  // back-to-back identical pushes.
+  // filters → 3 sequential setState calls) collapses to one PATCH.
   useEffect(() => {
     if (!hydratedRef.current) return;
     if (pendingSaveRef.current != null) return;
@@ -193,10 +206,27 @@ export function usePlannerSettingsSync(): { hydrated: boolean } {
         calendarHorizonId,
         calendarRigId,
       });
-      const json = JSON.stringify(payload);
-      if (json === lastPushedRef.current) return;
-      lastPushedRef.current = json;
-      void updateSettings(payload);
+      const patch: Partial<Settings> = {};
+      const callVersions: Partial<Record<PlannerSettingsKey, number>> = {};
+      for (const key of PLANNER_SETTINGS_KEYS) {
+        if (settingsValueEqual(payload[key], sentRef.current[key])) continue;
+        setSettingsValue(patch, key, payload[key]);
+        setSettingsValue(sentRef.current, key, payload[key]);
+        const version = (versionsRef.current[key] ?? 0) + 1;
+        versionsRef.current[key] = version;
+        callVersions[key] = version;
+      }
+      if (Object.keys(patch).length === 0) return;
+
+      void updateSettings(patch).then((succeeded) => {
+        for (const key of Object.keys(callVersions) as PlannerSettingsKey[]) {
+          if (succeeded) {
+            setSettingsValue(confirmedRef.current, key, patch[key]);
+          } else if (versionsRef.current[key] === callVersions[key]) {
+            setSettingsValue(sentRef.current, key, confirmedRef.current[key]);
+          }
+        }
+      });
     });
     return () => {
       if (pendingSaveRef.current != null) {
@@ -268,4 +298,42 @@ function buildPayload(s: PlannerSnapshot): Partial<Settings> {
     planner_calendar_horizon_id: s.calendarHorizonId,
     planner_calendar_rig_id: s.calendarRigId,
   };
+}
+
+const PLANNER_SETTINGS_KEYS = [
+  "planner_selected_location_id",
+  "planner_selected_horizon_id",
+  "planner_selected_rig_id",
+  "planner_active_tab",
+  "planner_sort_by",
+  "planner_filter_intent",
+  "planner_type_filter",
+  "planner_catalog_filter",
+  "planner_constellation_filter",
+  "planner_detail_id",
+  "planner_min_hours",
+  "planner_max_mag",
+  "planner_min_size",
+  "planner_coverage_range",
+  "planner_calendar_location_id",
+  "planner_calendar_horizon_id",
+  "planner_calendar_rig_id",
+] as const satisfies readonly (keyof Settings)[];
+
+type PlannerSettingsKey = (typeof PLANNER_SETTINGS_KEYS)[number];
+
+function settingsValueEqual(left: unknown, right: unknown): boolean {
+  if (Object.is(left, right)) return true;
+  if (Array.isArray(left) && Array.isArray(right)) {
+    return JSON.stringify(left) === JSON.stringify(right);
+  }
+  return false;
+}
+
+function setSettingsValue<K extends PlannerSettingsKey>(
+  target: Partial<Settings>,
+  key: K,
+  value: Settings[K] | undefined,
+) {
+  if (value !== undefined) target[key] = value;
 }

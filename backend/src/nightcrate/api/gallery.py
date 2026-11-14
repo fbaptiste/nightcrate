@@ -11,8 +11,9 @@ from typing import Literal
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
-from nightcrate.api._common import load_designations, load_other_names
+from nightcrate.api._common import load_designations
 from nightcrate.api.dso import dso_search_clause
+from nightcrate.api.object_facts_db import load_other_distances, load_target_facts
 from nightcrate.api.object_search_db import load_solves
 from nightcrate.catalog_loader.designations import (
     designation_search_prefixes,
@@ -29,10 +30,8 @@ from nightcrate.services.gallery import (
     GalleryResult,
     GalleryRig,
     GallerySolveMarks,
-    GalleryTarget,
     ProjectRecord,
     SearchObject,
-    TargetFacts,
     build_gallery,
     valid_session_date,
 )
@@ -81,48 +80,79 @@ def _parse_rigs(value: str | None) -> list[int]:
     return rigs
 
 
-def _alternate_names(name: str, designations: list, other_names: list[str]) -> list[str]:
-    result: list[str] = []
-    seen = {name.casefold()}
-    for value in [*(designation.display_form for designation in designations), *other_names]:
-        key = value.casefold()
-        if key not in seen:
-            seen.add(key)
-            result.append(value)
-    return result
+_ID_QUERY_BATCH_SIZE = 500
 
 
-async def load_project_records(conn) -> list[ProjectRecord]:
-    project_cursor = await conn.execute(
-        """
-        SELECT p.id, p.name, p.status, p.active, p.created_at,
-               pi.id AS main_image_id,
-               EXISTS (SELECT 1 FROM project_solve ps WHERE ps.project_id = p.id) AS has_solve
-        FROM project p
-        LEFT JOIN project_image pi
-          ON pi.project_id = p.id AND pi.is_main = 1
-        ORDER BY p.id
-        """
-    )
-    project_rows = await project_cursor.fetchall()
+def _project_batches(project_ids: list[int] | None) -> list[list[int] | None]:
+    if project_ids is None:
+        return [None]
+    unique_ids = list(dict.fromkeys(project_ids))
+    return [
+        unique_ids[start : start + _ID_QUERY_BATCH_SIZE]
+        for start in range(0, len(unique_ids), _ID_QUERY_BATCH_SIZE)
+    ]
+
+
+def _project_where(column: str, batch: list[int] | None) -> tuple[str, list[int]]:
+    if batch is None:
+        return "", []
+    placeholders = ",".join("?" * len(batch))
+    return f"WHERE {column} IN ({placeholders})", batch
+
+
+async def load_project_records(
+    conn,
+    *,
+    project_ids: list[int] | None = None,
+    with_object_facts: bool = False,
+) -> list[ProjectRecord]:
+    """Load project Gallery inputs, optionally including solve-object facts."""
+    if project_ids == []:
+        return []
+    batches = _project_batches(project_ids)
+
+    project_rows = []
+    for batch in batches:
+        where, params = _project_where("p.id", batch)
+        cursor = await conn.execute(
+            f"""
+            SELECT p.id, p.name, p.status, p.active, p.created_at,
+                   pi.id AS main_image_id,
+                   EXISTS (
+                       SELECT 1 FROM project_solve ps WHERE ps.project_id = p.id
+                   ) AS has_solve
+            FROM project p
+            LEFT JOIN project_image pi
+              ON pi.project_id = p.id AND pi.is_main = 1
+            {where}
+            ORDER BY p.id
+            """,  # noqa: S608  # nosec B608 - placeholders built only from ?
+            params,
+        )
+        project_rows.extend(await cursor.fetchall())
+    project_rows.sort(key=lambda row: int(row["id"]))
+
     crops_by_project: dict[int, dict[Literal["small", "medium", "large"], GalleryCrop]] = (
         defaultdict(dict)
     )
-    crop_cursor = await conn.execute(
-        """
-        SELECT pt.id, pt.project_id, pt.size,
-               COALESCE(pt.source_image_id, main.id) AS image_id
-        FROM project_thumbnail pt
-        LEFT JOIN project_image main
-          ON main.project_id = pt.project_id AND main.is_main = 1
-        ORDER BY pt.project_id, pt.id
-        """
-    )
     projects_root = get_projects_root()
-    if projects_root is not None:
-        for row in await crop_cursor.fetchall():
+    for batch in batches:
+        where, params = _project_where("pt.project_id", batch)
+        cursor = await conn.execute(
+            f"""
+            SELECT pt.id, pt.project_id, pt.size,
+                   COALESCE(pt.source_image_id, main.id) AS image_id
+            FROM project_thumbnail pt
+            LEFT JOIN project_image main
+              ON main.project_id = pt.project_id AND main.is_main = 1
+            {where}
+            ORDER BY pt.project_id, pt.id
+            """,  # noqa: S608  # nosec B608 - placeholders built only from ?
+            params,
+        )
+        for row in await cursor.fetchall():
             image_id = row["image_id"]
-            if image_id is None:
+            if image_id is None or projects_root is None:
                 continue
             project_id = int(row["project_id"])
             size = row["size"]
@@ -131,97 +161,71 @@ async def load_project_records(conn) -> list[ProjectRecord]:
             crops_by_project[project_id][size] = GalleryCrop(
                 id=int(row["id"]), image_id=int(image_id)
             )
-    targets_by_project: dict[int, list] = defaultdict(list)
-    target_cursor = await conn.execute(
-        """
-        SELECT pt.project_id, pt.dso_id, d.primary_designation, d.common_name,
-               d.obj_type, d.constellation
-        FROM project_target pt
-        JOIN dso d ON d.id = pt.dso_id
-        ORDER BY pt.project_id, pt.created_at, pt.id
-        """
-    )
-    target_rows = await target_cursor.fetchall()
-    dso_ids = list(dict.fromkeys(int(row["dso_id"]) for row in target_rows))
-    designations = await load_designations(conn, dso_ids)
-    other_names = await load_other_names(conn, dso_ids)
 
-    group_catalogs: dict[int, set[str]] = defaultdict(set)
-    group_cursor = await conn.execute(
-        """
-        SELECT DISTINCT pt.dso_id, g.catalog
-        FROM project_target pt
-        JOIN dso_group_member gm ON gm.dso_id = pt.dso_id
-        JOIN dso_group g ON g.id = gm.group_id
-        """
+    loaded_targets = await load_target_facts(
+        conn,
+        project_ids,
+        with_facts=with_object_facts,
     )
-    for row in await group_cursor.fetchall():
-        group_catalogs[int(row["dso_id"])].add(str(row["catalog"]))
-
-    for row in target_rows:
-        dso_id = int(row["dso_id"])
-        dso_designations = designations.get(dso_id, [])
-        preferred_name = row["common_name"] or row["primary_designation"]
-        catalogs = {designation.catalog for designation in dso_designations}
-        catalogs.update(group_catalogs.get(dso_id, set()))
-        targets_by_project[int(row["project_id"])].append(
-            TargetFacts(
-                target=GalleryTarget(
-                    dso_id=dso_id,
-                    name=preferred_name,
-                    also_known_as=_alternate_names(
-                        preferred_name,
-                        dso_designations,
-                        other_names.get(dso_id, []),
-                    ),
-                ),
-                catalogs=frozenset(catalogs),
-                type_group=group_for_raw_type(row["obj_type"]),
-                constellation=row["constellation"],
-            )
-        )
 
     rigs_by_project: dict[int, list[GalleryRig]] = defaultdict(list)
-    rig_cursor = await conn.execute(
-        """
-        SELECT project_id, id, name, sort_order
-        FROM (
-            SELECT pr.project_id, r.id, r.name, r.sort_order
-            FROM project_rig pr
-            JOIN rig r ON r.id = pr.rig_id
-            UNION
-            SELECT ps.project_id, r.id, r.name, r.sort_order
-            FROM project_session ps
-            JOIN rig r ON r.id = ps.rig_id
+    for batch in batches:
+        where, params = _project_where("project_id", batch)
+        cursor = await conn.execute(
+            f"""
+            SELECT project_id, id, name, sort_order
+            FROM (
+                SELECT pr.project_id, r.id, r.name, r.sort_order
+                FROM project_rig pr
+                JOIN rig r ON r.id = pr.rig_id
+                UNION
+                SELECT ps.project_id, r.id, r.name, r.sort_order
+                FROM project_session ps
+                JOIN rig r ON r.id = ps.rig_id
+            )
+            {where}
+            ORDER BY project_id, sort_order, name COLLATE NOCASE, id
+            """,  # noqa: S608  # nosec B608 - placeholders built only from ?
+            params,
         )
-        ORDER BY project_id, sort_order, name COLLATE NOCASE, id
-        """
-    )
-    for row in await rig_cursor.fetchall():
-        rigs_by_project[int(row["project_id"])].append(
-            GalleryRig(id=int(row["id"]), name=row["name"])
-        )
+        for row in await cursor.fetchall():
+            rigs_by_project[int(row["project_id"])].append(
+                GalleryRig(id=int(row["id"]), name=row["name"])
+            )
 
     dates_by_project: dict[int, set[date]] = defaultdict(set)
-    date_cursor = await conn.execute(
-        "SELECT project_id, session_date FROM project_session ORDER BY project_id, id"
-    )
-    for row in await date_cursor.fetchall():
-        parsed = valid_session_date(row["session_date"])
-        if parsed is not None:
-            dates_by_project[int(row["project_id"])].add(parsed)
+    for batch in batches:
+        where, params = _project_where("project_id", batch)
+        cursor = await conn.execute(
+            f"""
+            SELECT project_id, session_date
+            FROM project_session
+            {where}
+            ORDER BY project_id, id
+            """,  # noqa: S608  # nosec B608 - placeholders built only from ?
+            params,
+        )
+        for row in await cursor.fetchall():
+            parsed = valid_session_date(row["session_date"])
+            if parsed is not None:
+                dates_by_project[int(row["project_id"])].add(parsed)
 
     integrations: dict[int, float] = {}
-    integration_cursor = await conn.execute(
-        """
-        SELECT project_id, SUM(exposure_seconds * num_subs) / 60.0 AS minutes
-        FROM project_session
-        GROUP BY project_id
-        """
-    )
-    for row in await integration_cursor.fetchall():
-        integrations[int(row["project_id"])] = float(row["minutes"])
+    for batch in batches:
+        where, params = _project_where("project_id", batch)
+        cursor = await conn.execute(
+            f"""
+            SELECT project_id, SUM(exposure_seconds * num_subs) / 60.0 AS minutes
+            FROM project_session
+            {where}
+            GROUP BY project_id
+            """,  # noqa: S608  # nosec B608 - placeholders built only from ?
+            params,
+        )
+        for row in await cursor.fetchall():
+            integrations[int(row["project_id"])] = float(row["minutes"])
 
+    other_distances = await load_other_distances(conn, project_ids) if with_object_facts else {}
     return [
         ProjectRecord(
             id=int(row["id"]),
@@ -231,11 +235,12 @@ async def load_project_records(conn) -> list[ProjectRecord]:
             retired=not bool(row["active"]),
             main_image_id=row["main_image_id"],
             crops=crops_by_project.get(int(row["id"]), {}),
-            targets=targets_by_project.get(int(row["id"]), []),
+            targets=loaded_targets.get(int(row["id"]), []),
             dates=sorted(dates_by_project.get(int(row["id"]), set())),
             rigs=rigs_by_project.get(int(row["id"]), []),
             integration_minutes=integrations.get(int(row["id"]), 0.0),
             has_solve=bool(row["has_solve"]),
+            other_distances=other_distances.get(int(row["id"]), []),
         )
         for row in project_rows
     ]
@@ -449,7 +454,7 @@ async def get_gallery(
         desc=desc,
     )
     async with get_db() as conn:
-        records = await load_project_records(conn)
+        records = await load_project_records(conn, with_object_facts=True)
         target_hits = await _search_targets(conn, normalized_q)
         matched_dsos = (
             await _matching_dsos(conn, normalized_q, exact_designations=True)

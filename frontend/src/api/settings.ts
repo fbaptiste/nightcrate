@@ -7,6 +7,7 @@ export type WeatherUnits = "metric" | "imperial";
 export type PlannerTab = "tonight" | "anytime" | "wishlist";
 export type GalleryView = "list" | "small" | "medium" | "large";
 export type MessierView = "small" | "medium" | "large";
+export type SlideshowSeconds = 2 | 3 | 4 | 5 | 6 | 8 | 10 | 15 | 20 | 30;
 
 export interface BrowserFavorite {
   name: string;
@@ -28,6 +29,7 @@ export interface Settings {
   calculators_clock_order: string[];
   nav_order: string[];
   gallery_view: GalleryView;
+  gallery_slideshow_seconds: SlideshowSeconds;
   messier_view: MessierView;
   messier_imaged_style: "own" | "sky";
   messier_unimaged_style: "sky" | "blank";
@@ -104,6 +106,14 @@ export function saveSettings(settings: Settings): Promise<Settings> {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(settings),
+  });
+}
+
+export function saveSettingsPatch(patch: Partial<Settings>): Promise<Settings> {
+  return apiFetch<Settings>("/settings", {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(patch),
   });
 }
 

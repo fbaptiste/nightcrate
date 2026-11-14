@@ -45,6 +45,7 @@ import ProjectCatalogTab from "@/components/projects/ProjectCatalogTab";
 import ProjectPlateSolveTab from "@/components/projects/ProjectPlateSolveTab";
 import ProjectSessionsTab from "@/components/projects/ProjectSessionsTab";
 import ProjectNotesTab from "@/components/projects/ProjectNotesTab";
+import ProjectInfoTab from "@/components/projects/ProjectInfoTab";
 import ProjectMetadataSection from "@/components/projects/ProjectMetadataSection";
 import ProjectEquipmentSection from "@/components/projects/ProjectEquipmentSection";
 import ProjectStatusChip from "@/components/projects/ProjectStatusChip";
@@ -62,6 +63,16 @@ import {
 import NotListedTag from "@/components/dso/NotListedTag";
 import { formatImagingRuns } from "@/lib/galleryRendition";
 import { invalidateProjectLinks } from "@/api/projectTargetLinks";
+import { invalidateProjectInfo } from "@/api/projectInfo";
+
+const TAB = {
+  overview: 0,
+  sessions: 1,
+  info: 2,
+  files: 3,
+  plateSolve: 4,
+  notes: 5,
+} as const;
 
 const escapeHtml = (s: string) =>
   s.replace(/[&<>"]/g, (c) => `&${{ "&": "amp", "<": "lt", ">": "gt", '"': "quot" }[c]};`);
@@ -181,7 +192,12 @@ export default function ProjectDetailPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const queryClient = useQueryClient();
   const projectId = Number(id);
-  const [tab, setTab] = useState(searchParams.get("tab") === "plate-solve" ? 3 : 0);
+  const [tab, setTab] = useState<number>(() => {
+    const requested = searchParams.get("tab");
+    if (requested === "plate-solve") return TAB.plateSolve;
+    if (requested === "info") return TAB.info;
+    return TAB.overview;
+  });
   const [focusNight, setFocusNight] = useState<string | undefined>();
   const [snack, setSnack] = useState<string | null>(null);
 
@@ -235,6 +251,7 @@ export default function ProjectDetailPage() {
     // The solve response derives `is_main` from project_target, so refresh it
     // too — keeps the Plate Solve tab's star toggles in sync.
     queryClient.invalidateQueries({ queryKey: ["project-solve", projectId] });
+    void invalidateProjectInfo(queryClient, projectId);
     void invalidateProjectLinks(queryClient);
   }, [queryClient, projectId]);
 
@@ -254,10 +271,11 @@ export default function ProjectDetailPage() {
     queryClient.invalidateQueries({ queryKey: ["project", projectId] });
     queryClient.invalidateQueries({ queryKey: ["projects"] });
     queryClient.invalidateQueries({ queryKey: ["project-solve", projectId] });
+    void invalidateProjectInfo(queryClient, projectId);
   }, [queryClient, projectId]);
 
   const openPlateSolve = useCallback(() => {
-    setTab(3);
+    setTab(TAB.plateSolve);
     const next = new URLSearchParams(searchParams);
     next.set("tab", "plate-solve");
     setSearchParams(next, { replace: true });
@@ -270,6 +288,7 @@ export default function ProjectDetailPage() {
       queryClient.setQueryData(["project", projectId], p);
       queryClient.invalidateQueries({ queryKey: ["projects"] });
       queryClient.invalidateQueries({ queryKey: ["project-solve", projectId] });
+      void invalidateProjectInfo(queryClient, projectId);
       void invalidateProjectLinks(queryClient);
     },
     [queryClient, projectId],
@@ -284,6 +303,7 @@ export default function ProjectDetailPage() {
     queryClient.invalidateQueries({ queryKey: ["project-sessions", projectId] });
     queryClient.invalidateQueries({ queryKey: ["project-integration", projectId] });
     queryClient.invalidateQueries({ queryKey: ["project-solve", projectId] });
+    void invalidateProjectInfo(queryClient, projectId);
     queryClient.invalidateQueries({ queryKey: ["equipment-usage"] });
   }, [queryClient, projectId]);
 
@@ -504,11 +524,13 @@ export default function ProjectDetailPage() {
       {/* Tabs */}
       <Tabs value={tab} onChange={(_, v) => {
         setTab(v);
-        if (v !== 1) setFocusNight(undefined);
+        if (v !== TAB.sessions) setFocusNight(undefined);
         const next = new URLSearchParams(searchParams);
-        if (v === 3) next.set("tab", "plate-solve");
-        else {
-          next.delete("tab");
+        if (v === TAB.plateSolve) {
+          next.set("tab", "plate-solve");
+        } else {
+          if (v === TAB.info) next.set("tab", "info");
+          else next.delete("tab");
           next.delete("solve");
           next.delete("hdu");
         }
@@ -516,17 +538,19 @@ export default function ProjectDetailPage() {
       }} sx={{ mb: 2 }}>
         <Tab label="Overview" />
         <Tab label="Sessions" />
+        <Tab label="Info" />
         <Tab label="Files" />
         <Tab label="Plate Solve" />
         <Tab label="Notes" />
       </Tabs>
 
-      {tab === 1 && <ProjectSessionsTab projectId={projectId} focusNight={focusNight} />}
-      {tab === 2 && <ProjectCatalogTab projectId={projectId} />}
-      {tab === 3 && (
+      {tab === TAB.sessions && <ProjectSessionsTab projectId={projectId} focusNight={focusNight} />}
+      {tab === TAB.info && <ProjectInfoTab projectId={projectId} onPlateSolve={openPlateSolve} />}
+      {tab === TAB.files && <ProjectCatalogTab projectId={projectId} />}
+      {tab === TAB.plateSolve && (
         <ProjectPlateSolveTab projectId={projectId} onMainsChange={invalidate} />
       )}
-      {tab === 4 && (
+      {tab === TAB.notes && (
         <ProjectNotesTab
           projectId={projectId}
           notes={displayNotes}
@@ -535,7 +559,7 @@ export default function ProjectDetailPage() {
           }}
           onOpenNight={(night) => {
             setFocusNight(night);
-            setTab(1);
+            setTab(TAB.sessions);
             const next = new URLSearchParams(searchParams);
             next.delete("tab");
             next.delete("solve");
@@ -546,7 +570,7 @@ export default function ProjectDetailPage() {
       )}
 
       {/* Overview tab */}
-      {tab === 0 && (
+      {tab === TAB.overview && (
         <Box sx={{ maxWidth: 1280 }}>
           <Box
             sx={{

@@ -308,7 +308,7 @@ export default function WishlistTab() {
           Your wishlist is empty
         </Typography>
         <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
-          Star targets in the Tonight or Full Catalog tabs to add them here.
+          Star targets in Plan a Night or Full Catalog to add them here.
         </Typography>
       </Stack>
     );

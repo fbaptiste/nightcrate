@@ -82,8 +82,19 @@ Shared architecture, checks, and privacy rules live in [CLAUDE.md](../CLAUDE.md)
   not mounted. Do not add a fallback to paths relative to the project: projects
   legitimately reference subs, masters, and outputs on different drives, and a
   same-named file elsewhere could load silently. Improve the message instead.
-  The loader does not yet reject a relative stored path, which would resolve
-  against the server's working directory (see `PLAN.md` deferred work).
+- Every reader of a referenced path goes through
+  `pxiproject_io.referenced_image_path` (v0.51.0). The readers are pixel
+  loading, the preview's file identity, the image-info file size, and the
+  check when adding a project image. It refuses, with a `PxiProjectError`:
+  - a Windows path on a Mac or Linux (a drive letter, a leading `\\`, or a
+    forward-slash UNC path, which POSIX would also treat as absolute and
+    resolve to an unrelated local file);
+  - any other relative path, which would resolve against the server's
+    working directory.
+
+  `PxiProjectError` is a `ValueError`, so the image API's existing
+  `ValueError` → 422 handlers carry its message, as they do for
+  `XISFError`.
 - Annotation counts must match drawn objects: keep any object whose extent
   intersects the frame, clip the overlay, and clamp labels into the image.
 - **An object's ellipse** comes from the solution's local geometry at the
@@ -416,6 +427,30 @@ Since v0.47.0. Spec: [v0.47.0 design](superpowers/specs/2026-11-07-v0.47.0-desig
   whole-spectrum filters, then R, G, B, then narrowband from red to blue
   (SII, NII, Hα, OI, OIII, Hβ); a multi-line filter sits with its reddest
   line.
+  - **Equipment filters with no lines on record** (v0.51.0) take their
+    swatch from their type, but only when the filter is **linked** through
+    a `filter_id`. That means a hand-entered batch with an equipment
+    filter (a bandpass-only batch isn't linked), or an exposure row whose
+    sessions all share one `filter_id`.
+    - Light-pollution, UV/IR cut and neutral density filters get the
+      striped whole-spectrum swatch; "other" filters stay grey.
+    - An unlinked exposure label can still reuse passbands through the
+      table's exact model-name lookup (since v0.47.0). It never gets the
+      type rule and never becomes linked: inferring equipment from headers
+      was removed on purpose.
+  - The Sessions tab loads retired filters too, so old batches keep their
+    colours. Pickers still offer active filters only.
+  - **"Not recorded"** marks a batch built from frames (`source='auto'`)
+    with `line_name='other'`, no `filter_label` and no `filter_id`, meaning
+    the files named no filter.
+    - It is an identity, not a label: `IntegrationLine.not_recorded` and
+      `ExposureLine.not_recorded`, and the grouping keys include it. A
+      header literally named "Not recorded" stays separate.
+    - A hand-entered "Other" batch stays "other", sorted with the other
+      unknown labels. "Not recorded" sorts last, after all of them.
+    - On the Files tab its pill sends `filter_missing=true` (the list, the
+      quality counts and Analyze). `FramePill` keeps it apart from a named
+      filter.
 - Derived grain: **night, rig, canonical filter, exposure, gain, binning**.
   Fall back to the project's rig only when it has exactly one. Round REAL gain
   to INTEGER; asymmetric binning becomes NULL; skip/report zero-exposure lights.
@@ -620,10 +655,100 @@ Design: [v0.46.0 spec](superpowers/specs/2026-11-04-v0.46.0-design.md) and its
   - It records `scrollTop` while visible. A hidden page reads 0, so it must
     never save on hide.
   - Turned cards survive a refetch; the viewer closes when the page hides.
-  - No window-level key listeners: the viewer handles ← and → in its own
-    `onKeyDown`.
+  - No window-level key listeners: the viewer handles ← → ↑ ↓ and Space in
+    its own `onKeyDown`. Its `onKeyUp` takes Space too, so Space on a
+    focused button toggles once.
   - The viewer's arrows are pinned to the window, so repeated clicks need no
     pointer movement.
+- **The slideshow** (v0.51.0; `components/gallery/useSlideshow.ts`,
+  `slideshow.ts`, `SlideshowBar.tsx`, `GalleryViewer.tsx`) runs in the
+  shared viewer, so the Messier page has it too.
+  - **The interval** comes from fixed steps (2–30 s, default 5), stored in
+    the `gallery_slideshow_seconds` setting. The viewer keeps it in its own
+    state, so a failed save never changes the interval in use. ↑ lengthens
+    it and ↓ shortens it; − and + match.
+  - **The countdown starts when a picture settles**, meaning it appeared or
+    failed for good, not when the step happens. A large full-size picture
+    can take seconds to load.
+    - Each source attempt (step, solve retry, fall-back to the project
+      image) has a generation number.
+    - Only the current generation's load, error and `onShown` events
+      count.
+  - **Removing entries while playing:** the Gallery drops solve-only
+    entries whose picture is unavailable.
+    - With two or more left, the viewer moves to the entry now at the same
+      position and keeps playing.
+    - With one left, it pauses (Play is disabled with one picture).
+    - With none left, it closes.
+  - **Controls fade** after 3 s while playing.
+    - They come back on a key, real mouse movement or a tap, and stay while
+      hovered or keyboard-focused (`:focus-visible` only; a clicked button
+      keeps focus).
+    - Mouse movement is read from `pointermove` with `pointerType ===
+      "mouse"`. After a tap, touch browsers send imitation mouse events,
+      and a `mousemove` handler would undo the tap that hid the controls.
+  - **Swipes** use pointer events on the picture area, with
+    `touch-action: none`.
+    - Viewer images are `draggable={false}`, with no WebKit drag or touch
+      callout. A native image drag fires `pointercancel` and loses the
+      swipe.
+  - **Layout** follows the viewer's own size, through container queries on
+    the Dialog's `Paper`. It needs `container-type: size`, because
+    `inline-size` can't answer the height query for a phone on its side.
+  - **Pausing:** a hidden tab pauses and stays paused.
+  - **Wake lock:** the screen wake lock is requested while playing and
+    released on pause, hide and unmount. A request that resolves after
+    those is released at once.
+- **Object details** (v0.51.0; spec
+  `superpowers/specs/2026-11-13-v0.51.0-object-details-design.md`).
+  - **One source of facts.** `api/object_facts_db.py` builds each target's
+    facts and the plate solve's other objects for both `GET /api/gallery` and
+    `GET /api/projects/{id}/info`, so the Gallery, the viewer and the Info tab
+    can't drift apart.
+    - The Messier checklist, suggestions and image search keep the lean path
+      (`load_project_records(with_object_facts=False)`). A test asserts that it
+      issues no query on `dso_external_ref`.
+    - Catalog numbers are the Messier then NGC designations, otherwise the
+      primary one, minus whatever is already the name. Wikipedia is English
+      only, lowest `id` first, as in the Planner.
+    - "Other objects" are the solve's `project_dso` rows minus the targets. The
+      Gallery carries only their distances (`other_distances`). With 200 per
+      solve on 456 projects the response was 6.6 MB against 349 KB without, so
+      keep that list lean.
+  - **The distance ruler** (`components/objects/DistanceRuler.tsx`,
+    `lib/distanceRuler.ts`).
+    - **Scale:** logarithmic, 100 ly to 10 billion ly, the same on every ruler,
+      so rulers compare at a glance.
+    - **The shaded band is a size reference** ("Milky Way: about 100,000
+      light-years across"), not membership: NGC 2419 belongs to our galaxy but
+      lies beyond it, and M 54 lies inside it but belongs to the Sagittarius
+      Dwarf.
+    - **Rows, top to bottom:** value label, the lane for other objects, then the
+      line with the targets. Each row must clear the largest merged marker.
+    - **Merging:** markers that would overlap merge into one marker with a
+      count. The threshold comes from the measured width and the marker
+      diameters, and a second pass merges neighbours whose drawn markers still
+      touch.
+    - **Estimates:** a single estimate is a hollow ring; a merged marker is
+      always filled.
+  - **The viewer's details side** turns over only while the slideshow is
+    paused.
+    - The front face stays mounted while turned, so the picture's attempt
+      generations and readiness are untouched.
+    - Esc is caught in the Dialog's `onClose` (`escapeKeyDown`) to turn back
+      first.
+    - Gestures ignore events from interactive descendants, so a link never
+      turns the panel.
+    - The details panel is the scroll container, with `touch-action: pan-y`:
+      a vertical drag scrolls it natively (the browser cancels the pointer),
+      while a sideways swipe still steps.
+    - The Messier page's entries have no details, so the viewer loads them
+      with `projectInfoKey` only once the picture turns over.
+  - **The Info tab** sits after Sessions. Tab numbers live in `TAB` in
+    `ProjectDetailPage`, and `?tab=info` opens it.
+    - Its query has `staleTime: 0`, and every place that invalidates
+      `project-solve` also invalidates the project's info. Sessions edits do
+      too, because the imaging summary changes.
 - **Line fitting** (`components/gallery/LineFitList.tsx`) shows as many items
   as fit in two lines, then a "+N" pill: first items for targets, latest
   runs ("+N earlier") for dates.
@@ -806,6 +931,30 @@ Design: [v0.48.0 spec](superpowers/specs/2026-11-09-v0.48.0-design.md).
   turn each confirmed error into a `dso_match_overrides.csv` row. Overrides
   take precedence over matches a catalog or OpenNGC states and reserve their
   designation: LBN 191 is the whole Cygnus Loop, never NGC 6960.
+- **Messier and Caldwell cluster and PN distances are cited** (v0.51.0). Those
+  rows in `dso_augment.csv` come from:
+  - Baumgardt & Vasiliev 2021 for globular clusters;
+  - Hunt & Reffert 2023 for open clusters;
+  - González-Santamaría et al. 2021 or Chornay & Walton 2021 for planetary
+    nebulae;
+  - their own papers for a few single objects.
+
+  Each row names its source in `notes`. Further rules:
+  - Chance groupings get no distance: M 40, an optical double; M 73, an
+    asterism; M 24, a star cloud; and C 37, with three candidate groups.
+  - Key rows by the designation that names the measured object. C 50's row is
+    `NGC 2244`, because OpenNGC folds NGC 2239 into it. NGC 2237 shares the
+    NGC 2244 cluster distance with C 49, so the Rosette reads as one object.
+  - Older nebula rows are not yet cited.
+  - `tests/test_dso_augment_csv.py` checks the file's shape. When rows change,
+    verify them by loading the file twice into a database copy.
+- **Redshift estimates start at z = 0.01** (`MIN_HUBBLE_REDSHIFT`, v0.51.0).
+  - Below about 3,000 km/s, galaxies' own motions swamp the expansion: NGC 4452,
+    a Virgo cluster member at about 55 million ly, read 7.5 million. No
+    distance is better than a wrong one. The cut removed 49 estimates.
+  - A wrong catalog redshift needs a curated row: IC 3418 (VCC 1217) carries
+    z = 0.0896 in OpenNGC and SIMBAD, but NED gives 0.000567. It gets the Virgo
+    cluster distance.
 - Distance precedence is curated, then 50 MGC, then redshift; augmenters fill
   only NULL distances. Object types and designation catalogs are closed CHECK
   vocabularies: update migrations and loader maps together (0066 added `hh`,
@@ -1567,6 +1716,12 @@ archived in [imaging-quality-model.md](archive/imaging-quality-model.md).
 
 **Data and time**
 
+- **Connection limit** (v0.51.0). Every Open-Meteo request passes
+  `connect_timeout=10` (`OPEN_METEO_CONNECT_TIMEOUT_S`). On 2026-11-13 a US West
+  server hung on new connections (open-meteo/open-meteo#2329). With the 30 s
+  default, one retry made a forecast wait about a minute before falling back to
+  the saved one; now a hung server costs about 21 s. Transfers keep the 30 s
+  budget, and the retry and fallback are unchanged.
 - **UTC everywhere.** Open-Meteo uses one fixed offset per response and ignores
   DST, so every request uses `timezone=GMT` and `timeformat=unixtime`, and
   series are parsed to aware UTC.
@@ -1680,6 +1835,33 @@ archived in [imaging-quality-model.md](archive/imaging-quality-model.md).
   retain `pendingDate` in state until the matching forecast arrives, then apply
   only dates in its range. Declare this effect after default-location selection.
 - Cache budgets/clear controls belong in **Admin → Caches**, not Settings.
+- **Settings persistence** (v0.51.0, `core/config.py`, `stores/settingsStore.ts`):
+  - **Loading** never writes.
+    - A stored field that fails validation falls back to its default alone.
+    - A failing cross-field rule drops only its own fields: the three
+      thresholds when out of order, the minimum altitude, or each negative
+      weight. The validator names them in a `cross_field` error's
+      `ctx["fields"]`, judged on parsed values.
+    - The warning about dropped fields is logged once while the same set
+      keeps being dropped. A clean load resets that, so damage that returns
+      is reported again.
+  - **Saving** is `PATCH /api/settings` with only the changed fields.
+    - Read, merge, validate and write share one `BEGIN IMMEDIATE`
+      transaction, so two saves at once can't break the threshold order
+      between them.
+    - Only the patch's rows are written. The one exception: a threshold edit
+      while the stored trio was dropped writes all three as the user sees
+      them.
+    - The response always equals the next load. Whole-object `PUT` stays
+      for the API page.
+  - **The store** sends one request at a time, coalescing later changes.
+    - It keeps unconfirmed local choices over each response.
+    - On failure it rolls back only fields no later change has touched.
+    - `update` resolves `true` or `false` and never rejects.
+  - **The Planner** sends only fields that differ from what it last sent.
+    It tracks a send version per field, so a failed older save can't erase
+    a newer pending one, and a failed field goes out again with the next
+    Planner change.
 - **Rendered-image caches** (`services/image_cache.py`): rows store the file's
   name, resolved inside today's `APP_DIR` cache folder; legacy absolute paths
   resolve by their name, never at the old location, so a moved app-data folder

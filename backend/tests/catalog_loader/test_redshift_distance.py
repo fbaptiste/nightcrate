@@ -218,6 +218,65 @@ def test_rerun_is_idempotent(db):
     assert first["distance_pc"] == pytest.approx(second["distance_pc"])
 
 
+def test_low_redshift_gets_no_distance(db):
+    dso_id = _insert_dso(db, name="TEST LOW", obj_type="G", redshift=0.00054)
+
+    summary = apply_redshift_distances(db)
+
+    row = db.execute("SELECT distance_pc FROM dso WHERE id = ?", (dso_id,)).fetchone()
+    assert row["distance_pc"] is None
+    assert summary.skipped_low_z == 1
+
+
+def test_redshift_at_threshold_gets_distance(db):
+    threshold_id = _insert_dso(db, name="TEST EDGE", obj_type="G", redshift=0.01)
+    below_id = _insert_dso(db, name="TEST BELOW", obj_type="G", redshift=0.0099)
+
+    summary = apply_redshift_distances(db)
+
+    threshold = db.execute(
+        "SELECT distance_pc, distance_method FROM dso WHERE id = ?", (threshold_id,)
+    ).fetchone()
+    below = db.execute(
+        "SELECT distance_pc, distance_method FROM dso WHERE id = ?", (below_id,)
+    ).fetchone()
+    assert threshold["distance_pc"] is not None
+    assert threshold["distance_method"] == "redshift"
+    assert below["distance_pc"] is None
+    assert below["distance_method"] is None
+    assert summary.skipped_low_z == 1
+
+
+def test_threshold_removes_stored_low_z_estimate(db):
+    estimated_id = _insert_dso(
+        db,
+        name="TEST OLD ESTIMATE",
+        obj_type="G",
+        redshift=0.005,
+        distance_pc=20_000_000,
+        distance_method="redshift",
+    )
+    curated_id = _insert_dso(
+        db,
+        name="TEST CURATED LOW",
+        obj_type="G",
+        redshift=0.005,
+        distance_pc=15_000_000,
+        distance_method="curated",
+    )
+
+    apply_redshift_distances(db)
+
+    estimated = db.execute(
+        "SELECT distance_pc, distance_method FROM dso WHERE id = ?", (estimated_id,)
+    ).fetchone()
+    curated = db.execute(
+        "SELECT distance_pc, distance_method FROM dso WHERE id = ?", (curated_id,)
+    ).fetchone()
+    assert dict(estimated) == {"distance_pc": None, "distance_method": None}
+    assert dict(curated) == {"distance_pc": 15_000_000, "distance_method": "curated"}
+
+
 def test_redshift_to_parsecs_sanity():
     """Pinned formula regression: z=0.02 → ~85.655 Mpc."""
     d_pc = redshift_to_parsecs(0.02)

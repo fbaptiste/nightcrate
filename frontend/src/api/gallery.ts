@@ -10,6 +10,19 @@ export interface GalleryTarget {
   dso_id: number;
   name: string;
   also_known_as: string[];
+  designation: string;
+  catalog_numbers: string[];
+  obj_type: string | null;
+  constellation: string | null;
+  distance_pc: number | null;
+  distance_estimated: boolean;
+  wikipedia_url: string | null;
+}
+
+export interface OtherObjectDistance {
+  dso_id: number;
+  distance_pc: number;
+  distance_estimated: boolean;
 }
 
 export interface GalleryRig {
@@ -70,6 +83,7 @@ export interface GalleryItem {
   match_in_image: boolean;
   solve: GallerySolveMarks | null;
   has_solve: boolean;
+  other_distances: OtherObjectDistance[];
 }
 
 export interface FacetCount {

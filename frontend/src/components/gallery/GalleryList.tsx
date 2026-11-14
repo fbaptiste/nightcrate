@@ -1,12 +1,13 @@
 import type { RefObject } from "react";
 import Box from "@mui/material/Box";
-import Chip from "@mui/material/Chip";
 import Link from "@mui/material/Link";
 import { Link as RouterLink } from "react-router-dom";
 import type { GalleryItem } from "@/api/gallery";
-import NameWithAlternates from "@/components/common/NameWithAlternates";
+import DistanceRuler from "@/components/objects/DistanceRuler";
+import TargetRows from "@/components/objects/TargetRows";
 import { formatHoursMinutes } from "@/components/projects/IntegrationBars";
 import { formatImagingRuns, pickRendition, tileImageUrl } from "@/lib/galleryRendition";
+import { typeLine } from "@/lib/objectFacts";
 import ExpandButton from "./ExpandButton";
 import GalleryImage from "./GalleryImage";
 import RigSummary from "./RigSummary";
@@ -53,9 +54,6 @@ function GalleryListRow({
   const src = tileImageUrl(item, "small", 180, window.devicePixelRatio || 1, ws);
   const solve =
     item.solve && !unavailableSolveIds.has(item.solve.solve_id) ? item.solve : null;
-  const dates = runs.length
-    ? `${runs.join(", ")}, ${item.nights} ${item.nights === 1 ? "night" : "nights"}`
-    : "No imaging dates";
   const integration = item.integration_minutes
     ? formatHoursMinutes(item.integration_minutes)
     : "None recorded";
@@ -131,7 +129,7 @@ function GalleryListRow({
           />
         )}
       </Box>
-      <Box>
+      <Box sx={{ minWidth: 0 }}>
         <Box sx={{ display: "flex", alignItems: "center", gap: "10px", mb: "6px" }}>
           <Link
             component={RouterLink}
@@ -154,68 +152,24 @@ function GalleryListRow({
             Not in the plate-solved image.
           </Box>
         )}
-        <Box
-          component="dl"
-          sx={{
-            m: 0,
-            display: "grid",
-            gridTemplateColumns: "auto 1fr",
-            gap: "4px 16px",
-            fontSize: 14,
-          }}
-        >
-          <Box component="dt" sx={{ color: "text.secondary" }}>
-            Targets
+        <Box sx={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) minmax(0, 290px)", gap: "32px", alignItems: "start" }}>
+          <Box sx={{ minWidth: 0 }}>
+            <TargetRows targets={item.targets} size="list" showBadges />
+            <Box sx={{ color: "text.secondary", fontSize: 12.5, mt: "1px" }}>
+              {typeLine(item.targets)}
+            </Box>
+            <DistanceRuler size="list" targets={item.targets} others={item.other_distances} />
           </Box>
-          <Box
-            component="dd"
-            sx={{ m: 0, display: "flex", flexWrap: "wrap", gap: "6px" }}
-          >
-            {item.targets.length ? (
-              item.targets.map((target) => (
-                <NameWithAlternates
-                  key={target.dso_id}
-                  name={target.name}
-                  otherNames={target.also_known_as}
-                >
-                  <Chip
-                    variant="outlined"
-                    size="small"
-                    label={target.name}
-                    sx={{ height: 22, fontSize: 12 }}
-                  />
-                </NameWithAlternates>
-              ))
-            ) : (
-              <Box sx={{ color: "text.secondary" }}>No targets</Box>
-            )}
-          </Box>
-          <Box component="dt" sx={{ color: "text.secondary" }}>
-            Imaging dates
-          </Box>
-          <Box
-            component="dd"
-            sx={{ m: 0, color: runs.length ? "text.primary" : "text.secondary" }}
-          >
-            {dates}
-          </Box>
-          <Box component="dt" sx={{ color: "text.secondary" }}>
-            Integration
-          </Box>
-          <Box
-            component="dd"
-            sx={{
-              m: 0,
-              color: item.integration_minutes ? "text.primary" : "text.secondary",
-            }}
-          >
-            {integration}
-          </Box>
-          <Box component="dt" sx={{ color: "text.secondary" }}>
-            Rigs
-          </Box>
-          <Box component="dd" sx={{ m: 0 }}>
-            <RigSummary rigs={item.rigs} />
+          <Box component="dl" sx={{ m: 0, display: "grid", gridTemplateColumns: "auto 1fr", gap: "4px 16px", fontSize: 14 }}>
+            <Box component="dt" sx={{ color: "text.secondary" }}>Imaging dates</Box>
+            <Box component="dd" sx={{ m: 0, color: runs.length ? "text.primary" : "text.secondary" }}>
+              {runs.length ? runs.map((run) => <Box key={run}>{run}</Box>) : "No imaging dates"}
+              {item.nights > 0 && <Box sx={{ color: "text.secondary" }}>{item.nights} {item.nights === 1 ? "night" : "nights"}</Box>}
+            </Box>
+            <Box component="dt" sx={{ color: "text.secondary" }}>Integration</Box>
+            <Box component="dd" sx={{ m: 0, color: item.integration_minutes ? "text.primary" : "text.secondary" }}>{integration}</Box>
+            <Box component="dt" sx={{ color: "text.secondary" }}>Rigs</Box>
+            <Box component="dd" sx={{ m: 0 }}><RigSummary rigs={item.rigs} /></Box>
           </Box>
         </Box>
       </Box>

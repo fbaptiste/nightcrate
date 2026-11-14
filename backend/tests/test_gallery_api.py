@@ -433,6 +433,49 @@ async def test_also_known_as_lists_designations_then_names(client: AsyncClient):
     assert target["also_known_as"] == ["M 42", "NGC 1976", "Great Orion Nebula"]
 
 
+async def test_gallery_other_objects_carry_distances_only(client: AsyncClient):
+    async with get_db() as conn:
+        dsos = await make_library_dsos(conn)
+        project_id = await _project(conn, "Object facts")
+        target_id = dsos.ids["m31"]
+        measured_id = dsos.ids["m32"]
+        estimated_id = dsos.ids["m42"]
+        unknown_id = dsos.ids["m13"]
+        await _target(conn, project_id, target_id)
+        await _solve(conn, project_id, [target_id, measured_id, estimated_id, unknown_id])
+        await conn.execute(
+            "UPDATE dso SET distance_pc = 10000000, distance_method = 'curated' WHERE id = ?",
+            (measured_id,),
+        )
+        await conn.execute(
+            "UPDATE dso SET distance_pc = 300000000, distance_method = 'redshift' WHERE id = ?",
+            (estimated_id,),
+        )
+        await conn.execute(
+            """
+            INSERT INTO dso_external_ref (
+                dso_id, provider, language, identifier, url
+            ) VALUES (?, 'wikipedia', 'en', 'Andromeda_Galaxy',
+                      'https://en.wikipedia.org/wiki/Andromeda_Galaxy')
+            """,
+            (target_id,),
+        )
+        await conn.commit()
+
+    item = (await client.get("/api/gallery")).json()["items"][0]
+
+    assert item["targets"][0]["catalog_numbers"] == ["M 31", "NGC 224"]
+    assert item["targets"][0]["wikipedia_url"] == ("https://en.wikipedia.org/wiki/Andromeda_Galaxy")
+    assert [other["dso_id"] for other in item["other_distances"]] == [
+        measured_id,
+        estimated_id,
+    ]
+    assert all(
+        set(other) == {"dso_id", "distance_pc", "distance_estimated"}
+        for other in item["other_distances"]
+    )
+
+
 async def test_bad_date_is_422(client: AsyncClient):
     response = await client.get("/api/gallery", params={"imaged_from": "2025-02-30"})
     assert response.status_code == 422

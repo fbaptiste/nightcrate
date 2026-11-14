@@ -1,10 +1,18 @@
 """Settings API endpoints."""
 
-from fastapi import APIRouter
+from typing import Any
+
+from fastapi import APIRouter, Body, HTTPException
 from pydantic import BaseModel
 
 from nightcrate.core.compute import gpu_backend_name, set_gpu_enabled
-from nightcrate.core.config import Settings, get_settings, update_settings
+from nightcrate.core.config import (
+    Settings,
+    SettingsPatchError,
+    get_settings,
+    update_settings,
+    update_settings_partial,
+)
 
 router = APIRouter(prefix="/api/settings", tags=["Settings"])
 
@@ -24,6 +32,17 @@ async def read_settings() -> Settings:
 async def write_settings(payload: Settings) -> Settings:
     saved = await update_settings(payload)
     set_gpu_enabled(saved.gpu_acceleration)
+    return saved
+
+
+@router.patch("", response_model=Settings)
+async def patch_settings(patch: dict[str, Any] = Body(...)) -> Settings:
+    try:
+        saved = await update_settings_partial(patch)
+    except SettingsPatchError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    if "gpu_acceleration" in patch:
+        set_gpu_enabled(saved.gpu_acceleration)
     return saved
 
 

@@ -12,6 +12,7 @@ from pydantic import BaseModel, Field
 
 from nightcrate.services.dso_sorting import catalog_rank
 from nightcrate.services.dso_type_groups import TYPE_GROUPS
+from nightcrate.services.object_facts import OtherObjectDistance
 
 _SESSION_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 _STATUS_ORDER = ("active", "paused", "complete", "abandoned")
@@ -59,6 +60,13 @@ class GalleryTarget(BaseModel):
     dso_id: int
     name: str
     also_known_as: list[str] = Field(default_factory=list)
+    designation: str = ""
+    catalog_numbers: list[str] = Field(default_factory=list)
+    obj_type: str | None = None
+    constellation: str | None = None
+    distance_pc: float | None = None
+    distance_estimated: bool = False
+    wikipedia_url: str | None = None
 
 
 class GalleryRig(BaseModel):
@@ -91,6 +99,7 @@ class ProjectRecord(BaseModel):
     rigs: list[GalleryRig] = Field(default_factory=list)
     integration_minutes: float = 0.0
     has_solve: bool = False
+    other_distances: list[OtherObjectDistance] = Field(default_factory=list)
 
 
 class GalleryQuery(BaseModel):
@@ -156,6 +165,7 @@ class GalleryItem(BaseModel):
     match_in_image: bool
     solve: GallerySolveMarks | None = None
     has_solve: bool
+    other_distances: list[OtherObjectDistance] = Field(default_factory=list)
 
 
 class FacetCount(BaseModel):
@@ -345,6 +355,7 @@ def build_gallery(
                 match_in_image=solve is not None,
                 solve=solve,
                 has_solve=record.has_solve,
+                other_distances=record.other_distances,
             )
         )
 

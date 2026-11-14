@@ -21,7 +21,7 @@ import { formatNight } from "@/lib/localDate";
 import { CatalogInfiniteScroller } from "./CatalogCardList";
 import { formatDate, formatSubExposure } from "./CatalogCards";
 import FilterSwatch from "./FilterSwatch";
-import { resolveFilterLabel } from "./filterColors";
+import { notRecordedFilter, resolveFilterLabel } from "./filterColors";
 import {
   subFrameSelectionKey,
   type CatalogSelectionKey,
@@ -391,18 +391,18 @@ const FrameRows = memo(function FrameRows({
         <TableCell title={formatDate(row.date_obs_utc, timezone)} sx={{ whiteSpace: "nowrap", fontVariantNumeric: "tabular-nums" }}>
           {captureDate(row.date_obs_utc, timezone, !timeSorted)}
         </TableCell>
-        <TableCell title={row.filter_name ?? undefined}>
-          {row.filter_name && (
-            <Box sx={{ display: "flex", alignItems: "center", gap: "6px", minWidth: 0 }}>
-              <FilterSwatch filter={resolveFilterLabel(row.filter_name)} />
+        <TableCell title={row.filter_name ?? "Not recorded"}>
+          <Box sx={{ display: "flex", alignItems: "center", gap: "6px", minWidth: 0 }}>
+              <FilterSwatch
+                filter={row.filter_name ? resolveFilterLabel(row.filter_name) : notRecordedFilter()}
+              />
               <Typography
                 component="span"
                 sx={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontSize: "inherit" }}
               >
-                {row.filter_name}
+                {row.filter_name ?? "Not recorded"}
               </Typography>
             </Box>
-          )}
         </TableCell>
         <TableCell align="right" sx={{ fontVariantNumeric: "tabular-nums" }}>{formatSubExposure(row.exposure_seconds)}</TableCell>
         <TableCell align="right" sx={{ fontVariantNumeric: "tabular-nums" }}>{row.gain ?? ""}</TableCell>

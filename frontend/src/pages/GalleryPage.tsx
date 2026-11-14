@@ -313,6 +313,7 @@ export default function GalleryPage() {
                 : item.targets.map((target) => target.name).join(", "),
               matchMainTarget: item.match_main_target,
               matchInImage: item.match_in_image,
+              details: item,
             }];
           })
         : [],

@@ -110,6 +110,7 @@ class IntegrationLine(BaseModel):
     session_count: int
     """Distinct observing nights, not rows — a night split across exposures is one."""
     sub_count: int
+    not_recorded: bool = False
 
 
 class ExposureLine(BaseModel):
@@ -126,6 +127,8 @@ class ExposureLine(BaseModel):
     exposure_seconds: float
     sub_count: int
     actual_minutes: float
+    not_recorded: bool = False
+    filter_id: int | None = None
 
 
 class IntegrationSummary(BaseModel):

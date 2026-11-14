@@ -358,12 +358,21 @@ export function fetchUncatalogedFiles(
   return apiFetch<UncatalogedList>(`/projects/${projectId}/catalog/uncataloged`);
 }
 
+export type FramePill =
+  | { kind: "name"; name: string }
+  | { kind: "notRecorded" };
+
+function addFramePill(qs: URLSearchParams, pill: FramePill | null): void {
+  if (pill?.kind === "name") qs.set("filter_name", pill.name);
+  if (pill?.kind === "notRecorded") qs.set("filter_missing", "true");
+}
+
 export function fetchCatalogFrames(
   projectId: number,
   limit = 100,
   offset = 0,
   frameType: string | null = null,
-  filterName: string | null = null,
+  pill: FramePill | null = null,
   sort: CatalogSort | null = null,
 ): Promise<CatalogFramesPage> {
   const qs = new URLSearchParams({
@@ -371,7 +380,7 @@ export function fetchCatalogFrames(
     offset: String(offset),
   });
   if (frameType) qs.set("frame_type", frameType);
-  if (filterName) qs.set("filter_name", filterName);
+  addFramePill(qs, pill);
   if (sort) qs.set("sort", sort);
   return apiFetch<CatalogFramesPage>(
     `/projects/${projectId}/catalog/frames?${qs}`,
@@ -387,12 +396,12 @@ export function fetchCatalogFrames(
 export function fetchQualityPending(
   projectId: number,
   frameType: string | null = null,
-  filterName: string | null = null,
+  pill: FramePill | null = null,
   force = false,
 ): Promise<QualityPending> {
   const qs = new URLSearchParams();
   if (frameType) qs.set("frame_type", frameType);
-  if (filterName) qs.set("filter_name", filterName);
+  addFramePill(qs, pill);
   if (force) qs.set("force", "true");
   return apiFetch<QualityPending>(
     `/projects/${projectId}/catalog/analyze/pending?${qs}`,
@@ -407,11 +416,11 @@ export function fetchQualityPending(
 export function fetchQualityCounts(
   projectId: number,
   frameType: string | null = null,
-  filterName: string | null = null,
+  pill: FramePill | null = null,
 ): Promise<QualityCounts> {
   const qs = new URLSearchParams();
   if (frameType) qs.set("frame_type", frameType);
-  if (filterName) qs.set("filter_name", filterName);
+  addFramePill(qs, pill);
   return apiFetch<QualityCounts>(
     `/projects/${projectId}/catalog/analyze/summary?${qs}`,
   );

@@ -276,7 +276,15 @@ def _verify_project_image(path: str) -> None:
         return
     if entry["source"] != "referenced" or not entry["file_path"]:
         return
-    referenced = Path(entry["file_path"])
+    try:
+        referenced = pxiproject_io.referenced_image_path(entry["file_path"])
+    except pxiproject_io.PxiProjectError as exc:
+        raise _ProjectImageXISFError(Path(entry["file_path"]).name, str(exc)) from exc
+    if not referenced.is_file():
+        raise _ProjectImageXISFError(
+            referenced.name,
+            f"The image this PixInsight project points to isn't there: {entry['file_path']}",
+        )
     if referenced.suffix.lower() == ".xisf":
         try:
             xisf_io.verify_image(referenced)
