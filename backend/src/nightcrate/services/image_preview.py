@@ -81,7 +81,10 @@ def _pxiproject_identity(project_dir: Path, image_index: int) -> _SourceIdentity
         raise PreviewUnreadable(str(exc)) from exc
 
     if entry["source"] == "referenced" and entry["file_path"]:
-        backing = Path(entry["file_path"])
+        try:
+            backing = pxiproject_io.referenced_image_path(entry["file_path"])
+        except pxiproject_io.PxiProjectError as exc:
+            raise PreviewUnreadable(str(exc)) from exc
     else:
         data_src = entry.get("data_src")
         if not data_src:

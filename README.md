@@ -21,7 +21,10 @@ forecasts and survey imagery are fetched from external services when needed.
   identifies the catalog objects in it, and you choose one or more as main
   targets. Each project has a status (Active, Paused, Complete, Abandoned)
   that you set from its title, and a "Plate solved" pill that opens its
-  Plate Solve tab.
+  Plate Solve tab. A plate-solved project's Info tab lists its targets with
+  their catalog numbers, constellation, distance and Wikipedia links, every
+  other catalogued object in the picture, nearest first, and the
+  constellation at the picture's centre.
   - The plate-solve result estimates the focal length from the solved scale
     and the pixel size of each rig's camera, beside the rig's own value.
   - **Thumbnails:** frame each picture as you want it shown, separately for
@@ -43,9 +46,19 @@ forecasts and survey imagery are fetched from external services when needed.
     marked.
   - Filter by catalog, object type, constellation, status, rig and imaging
     dates. Sort by latest or first imaging date, or by name.
-  - Click an image to turn its card over: imaging months and nights, total
-    integration, rigs and status. Expand any image to full size and step
-    through the results with the arrow keys.
+  - Click an image to turn its card over: the targets' Messier and NGC
+    numbers and Wikipedia links, their constellation, and their distance in
+    light-years (or range of distances), on a distance ruler from 100
+    light-years to 10 billion that also places the other catalogued objects
+    in a plate-solved picture. Below them are
+    the imaging months and nights, total integration, rigs and status. The
+    list view shows the same. Expand any image to full size and step through
+    the results with the arrow keys or by swiping; while the slideshow is
+    paused, click or tap the picture to turn it over to the same details.
+  - Play a slideshow from the full-size view, on a computer, tablet or
+    phone. ↑ and ↓ (or − and +) lengthen or shorten the time per picture,
+    which is remembered. ← and → still step without stopping it. The
+    Messier page's full-size view has it too.
 - **Messier checklist:** all 110 objects, each showing your own image when a
   project has one, or a sky-survey picture marked "Not imaged" until you
   image it. A small map of the 110 shows your progress; click a box to jump
@@ -60,7 +73,9 @@ forecasts and survey imagery are fetched from external services when needed.
   setup and filter mix, and a note per night that survives rebuilding. View
   totals by filter and observing night, and sub counts by filter and
   exposure length. Duoband equipment-filter sessions count
-  toward each passed line and once toward total exposure time.
+  toward each passed line and once toward total exposure time. Subs whose
+  files name no filter show as "Not recorded", and the Files tab can list
+  them on their own.
 - **Frame quality:** batch HFR, star count, star SNR, and background measurements,
   with progress, cancellation, and sorting to find frames worth inspecting.
 - **Planning:** date/location/horizon-aware visibility, rig framing, filter-aware
@@ -271,6 +286,7 @@ Invoked across a process boundary; their licenses do not propagate to NightCrate
 | HASH PN database (VizieR V/163) | CDS public; HASH asks for this citation and acknowledgement | Parker, Q.A., Bojičić, I.S. & Frew, D.J. 2016 — HASH: the Hong Kong/AAO/Strasbourg Hα planetary nebula database, Journal of Physics: Conference Series 728, 032008. This research has made use of the HASH PN database at hashpn.space (VizieR V/163). One download serves both the planetary nebula and the Abell planetary nebula catalogs. The Abell catalog covers 85 of the 86 Abell numbers; Abell 85 (CTB 1) is a supernova remnant. |
 | Melotte | GPL-3.0-or-later (NightCrate's own list) | Melotte 1915, MmRAS 60, 175 (A Catalogue of Star Clusters shown on Franklin-Adams Chart Plates), transcribed and checked by NightCrate. Positions and sizes of clusters without an NGC or IC number: Hunt & Reffert 2023, A&A 673, A114, or SIMBAD. Ships with the app (`melotte.csv`). |
 | NightCrate editorial data | GPL-3.0-or-later | NightCrate's own reviewed lists ship with the app in `backend/src/nightcrate/data/catalogs/nightcrate/`: common names (each checked against two independent sources, among them SIMBAD, NED, Wikidata or Wikipedia, and NASA, ESA, ESO, NOIRLab and RASC publications), distances and surface brightness, Sharpless cross-references, external-reference overrides, the Melotte list, reviewed Arp members, the "part of" list and match overrides. |
+| Star cluster and planetary nebula distances | Published facts, cited per row | Distances in NightCrate's `dso_augment.csv` for Messier and Caldwell objects: Baumgardt, H. & Vasiliev, E. 2021, MNRAS 505, 5957 (globular clusters, Gaia EDR3); Hunt, E.L. & Reffert, S. 2023, A&A 673, A114 (open clusters, Gaia DR3; VizieR J/A+A/673/A114); González-Santamaría, I. et al. 2021, A&A 656, A51, and Chornay, N. & Walton, N.A. 2021, A&A 656, A110 (planetary nebulae, Gaia EDR3). A few objects cite their own papers in the file's notes. Compiled into NightCrate's file; nothing is fetched. |
 | [50 MGC](https://github.com/davidohlson/50MGC) | CDS public | Ohlson, D. et al. 2024, AJ 167, 31 (J/AJ/167/31). Galaxy distance augmenter, fetched at runtime from the author's GitHub mirror. |
 | [Wikidata](https://www.wikidata.org/) | CC0-1.0 | External reference IDs (Wikipedia, SIMBAD) via SPARQL, fetched at runtime. |
 | [Open-Meteo](https://open-meteo.com/) | Attribution required — see [their license](https://open-meteo.com/en/license) | Weather, ECMWF and air-quality forecast data, queried at runtime. |

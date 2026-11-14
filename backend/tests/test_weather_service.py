@@ -594,6 +594,48 @@ async def test_fetch_model_meta_requests_domains_concurrently():
     assert max_active == len(META_DOMAINS)
 
 
+async def test_open_meteo_requests_limit_connection_wait():
+    calls: list[tuple[str, dict]] = []
+
+    async def recording_get(url: str, **kwargs):
+        calls.append((url, kwargs))
+        if url.endswith("/static/meta.json"):
+            return _make_mock_response({"last_run_initialisation_time": 1793131200})
+        return _make_mock_response(
+            {
+                "latitude": 1,
+                "longitude": 2,
+                "utc_offset_seconds": 0,
+                "hourly": {"time": []},
+            }
+        )
+
+    with patch("nightcrate.services.weather.http_get", new=AsyncMock(side_effect=recording_get)):
+        await fetch_weather(1, 2, "America/Phoenix")
+        await fetch_weather(
+            1,
+            2,
+            "America/Phoenix",
+            source="archive",
+            start_date="2026-01-01",
+            end_date="2026-01-02",
+        )
+        await fetch_cloud_models(1, 2, "America/Phoenix")
+        await fetch_model_meta()
+        await fetch_pwv(1, 2, "America/Phoenix")
+        await fetch_air_quality(1, 2, "America/Phoenix")
+
+    urls = [url for url, _kwargs in calls]
+    assert "https://api.open-meteo.com/v1/forecast" in urls
+    assert "https://archive-api.open-meteo.com/v1/archive" in urls
+    assert "https://api.open-meteo.com/v1/ecmwf" in urls
+    assert "https://air-quality-api.open-meteo.com/v1/air-quality" in urls
+    for domain in META_DOMAINS.values():
+        assert urls.count(f"https://api.open-meteo.com/data/{domain}/static/meta.json") == 1
+    assert len(calls) == 5 + len(META_DOMAINS)
+    assert all(kwargs["connect_timeout"] == 10.0 for _url, kwargs in calls)
+
+
 class TestGetAndLogException:
     """Exception path in the shared `_get_and_log` wrapper — exercised via
     `fetch_weather` since the helper is internal. Verifies the error is

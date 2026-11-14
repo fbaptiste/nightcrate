@@ -6,11 +6,30 @@ as JSON text so composite types round-trip cleanly.
 """
 
 import json
+import logging
+from collections.abc import Iterable
 from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, Field, ValidationError, model_validator
+from pydantic_core import PydanticCustomError
 
 from nightcrate.db.session import get_db
+
+logger = logging.getLogger(__name__)
+_last_logged_dropped_fields: frozenset[str] = frozenset()
+
+SLIDESHOW_SECONDS: tuple[int, ...] = (2, 3, 4, 5, 6, 8, 10, 15, 20, 30)
+THRESHOLD_FIELDS = (
+    "scoring_threshold_excellent",
+    "scoring_threshold_good",
+    "scoring_threshold_fair",
+)
+_WEIGHT_FIELDS = (
+    "scoring_weight_observability",
+    "scoring_weight_meridian",
+    "scoring_weight_moon",
+    "scoring_weight_frame_fit",
+)
 
 
 class BrowserFavorite(BaseModel):
@@ -30,6 +49,7 @@ FilterLine = Literal["Ha", "SII", "OIII", "L", "R", "G", "B"]
 class Settings(BaseModel):
     theme: Literal["light", "dark", "browser"] = "browser"
     gallery_view: Literal["list", "small", "medium", "large"] = "medium"
+    gallery_slideshow_seconds: Literal[2, 3, 4, 5, 6, 8, 10, 15, 20, 30] = 5
     messier_view: Literal["small", "medium", "large"] = "medium"
     messier_imaged_style: Literal["own", "sky"] = "own"
     messier_unimaged_style: Literal["sky", "blank"] = "sky"
@@ -176,29 +196,99 @@ class Settings(BaseModel):
 
     @model_validator(mode="after")
     def _validate_scoring(self) -> Settings:
-        if not (
-            self.scoring_threshold_excellent
-            > self.scoring_threshold_good
-            > self.scoring_threshold_fair
-        ):
-            raise ValueError(
-                "scoring_threshold_excellent > scoring_threshold_good > "
-                "scoring_threshold_fair must hold"
+        violations = _cross_field_violations(self)
+        if violations:
+            if violations.issuperset(THRESHOLD_FIELDS):
+                message = (
+                    "scoring_threshold_excellent > scoring_threshold_good > "
+                    "scoring_threshold_fair must hold"
+                )
+            elif "scoring_observability_min_altitude_deg" in violations:
+                message = (
+                    "scoring_observability_min_altitude_deg must be >= 10 "
+                    "(below 10° the airmass formula produces extreme values)"
+                )
+            else:
+                name = sorted(violations)[0]
+                message = f"{name} must be non-negative"
+            raise PydanticCustomError(
+                "cross_field",
+                message,
+                {"fields": sorted(violations)},
             )
-        if self.scoring_observability_min_altitude_deg < 10.0:
-            raise ValueError(
-                "scoring_observability_min_altitude_deg must be >= 10 "
-                "(below 10° the airmass formula produces extreme values)"
-            )
-        for name in (
-            "scoring_weight_observability",
-            "scoring_weight_meridian",
-            "scoring_weight_moon",
-            "scoring_weight_frame_fit",
-        ):
-            if getattr(self, name) < 0:
-                raise ValueError(f"{name} must be non-negative")
         return self
+
+
+def _cross_field_violations(settings: Settings) -> frozenset[str]:
+    """Return every field participating in a failed cross-field rule."""
+    violations: set[str] = set()
+    if not (
+        settings.scoring_threshold_excellent
+        > settings.scoring_threshold_good
+        > settings.scoring_threshold_fair
+    ):
+        violations.update(THRESHOLD_FIELDS)
+    if settings.scoring_observability_min_altitude_deg < 10.0:
+        violations.add("scoring_observability_min_altitude_deg")
+    violations.update(name for name in _WEIGHT_FIELDS if getattr(settings, name) < 0)
+    return frozenset(violations)
+
+
+def settings_from_rows(data: dict[str, Any]) -> tuple[Settings, frozenset[str]]:
+    """Load stored values, dropping only fields that fail current validation."""
+    remaining = dict(data)
+    dropped: set[str] = set()
+    for _ in range(3):
+        try:
+            settings = Settings(**remaining)
+            dropped_fields = frozenset(dropped)
+            _log_dropped_fields(dropped_fields)
+            return settings, dropped_fields
+        except ValidationError as exc:
+            invalid: set[str] = set()
+            for error in exc.errors():
+                if error["type"] == "cross_field":
+                    invalid.update(error.get("ctx", {}).get("fields", ()))
+                elif error["loc"]:
+                    invalid.add(str(error["loc"][0]))
+            invalid.intersection_update(remaining)
+            if not invalid:
+                break
+            dropped.update(invalid)
+            for key in invalid:
+                remaining.pop(key, None)
+
+    dropped.update(remaining)
+    dropped_fields = frozenset(dropped)
+    _log_dropped_fields(dropped_fields)
+    return Settings(), dropped_fields
+
+
+def _log_dropped_fields(dropped: frozenset[str]) -> None:
+    """Warn once for each distinct damaged-field set seen consecutively.
+
+    A clean load resets the memory, so damage that returns after a repair is
+    reported again.
+    """
+    global _last_logged_dropped_fields
+    if dropped and dropped != _last_logged_dropped_fields:
+        logger.warning("[settings] ignored invalid stored fields: %s", sorted(dropped))
+    _last_logged_dropped_fields = dropped
+
+
+def _decode_rows(rows: Iterable[Any]) -> dict[str, Any]:
+    """Decode known settings rows, skipping invalid JSON and unknown keys."""
+    known = set(Settings.model_fields)
+    data: dict[str, Any] = {}
+    for row in rows:
+        key = row["key"]
+        if key not in known:
+            continue
+        try:
+            data[key] = json.loads(row["value_json"])
+        except ValueError:
+            continue
+    return data
 
 
 async def get_settings() -> Settings:
@@ -209,27 +299,55 @@ async def get_settings() -> Settings:
         cursor = await conn.execute("SELECT key, value_json FROM settings")
         rows = await cursor.fetchall()
 
-    known = set(Settings.model_fields.keys())
-    data: dict[str, Any] = {}
-    for row in rows:
-        key = row["key"]
-        if key not in known:
-            continue
-        # json.JSONDecodeError is a ValueError subclass — single class catches
-        # both bad JSON and any other ValueErrors json raises. Using one
-        # exception class keeps the py314 ruff-format bug at bay.
-        try:
-            data[key] = json.loads(row["value_json"])
-        except ValueError:
-            # Leave the field at its Pydantic default.
-            continue
+    settings, _dropped = settings_from_rows(_decode_rows(rows))
+    return settings
 
-    # Schema drift (type mismatch across versions) → fall back to defaults
-    # rather than crash the app.
-    try:
-        return Settings(**data)
-    except ValidationError:
-        return Settings()
+
+class SettingsPatchError(ValueError):
+    """A partial settings update could not be safely applied."""
+
+
+async def update_settings_partial(patch: dict[str, Any]) -> Settings:
+    """Validate and persist only the supplied settings fields atomically."""
+    known = set(Settings.model_fields)
+    unknown = sorted(set(patch) - known)
+    if unknown:
+        raise SettingsPatchError(f"Unknown setting(s): {', '.join(unknown)}")
+
+    async with get_db() as conn:
+        await conn.execute("BEGIN IMMEDIATE")
+        try:
+            cursor = await conn.execute("SELECT key, value_json FROM settings")
+            rows = await cursor.fetchall()
+            current, dropped = settings_from_rows(_decode_rows(rows))
+            merged = current.model_dump()
+            merged.update(patch)
+            try:
+                saved = Settings(**merged)
+            except ValidationError as exc:
+                messages = "; ".join(error["msg"] for error in exc.errors())
+                raise SettingsPatchError(messages) from exc
+
+            payload = saved.model_dump()
+            write_keys = set(patch)
+            if write_keys.intersection(THRESHOLD_FIELDS) and dropped.intersection(THRESHOLD_FIELDS):
+                write_keys.update(THRESHOLD_FIELDS)
+            for key in sorted(write_keys):
+                await conn.execute(
+                    """
+                    INSERT INTO settings (key, value_json, updated_at)
+                    VALUES (?, ?, CURRENT_TIMESTAMP)
+                    ON CONFLICT(key) DO UPDATE SET
+                        value_json = excluded.value_json,
+                        updated_at = CURRENT_TIMESTAMP
+                    """,
+                    (key, json.dumps(payload[key])),
+                )
+            await conn.commit()
+            return saved
+        except BaseException:
+            await conn.rollback()
+            raise
 
 
 async def update_settings(updated: Settings) -> Settings:

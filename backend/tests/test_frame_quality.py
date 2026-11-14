@@ -13,6 +13,7 @@ import pytest
 from astropy.io import fits
 from httpx import ASGITransport, AsyncClient
 
+from nightcrate.db.session import get_db
 from nightcrate.main import app
 from nightcrate.services.frame_quality import (
     ADU_FULL_SCALE,
@@ -74,6 +75,71 @@ async def _analyze_all(client: AsyncClient, project_id: int, **scope) -> dict:
     )
     assert resp.status_code == 200, resp.text
     return resp.json()
+
+
+@pytest.mark.parametrize("frame_type", ["light", "flat"])
+async def test_frame_list_filter_missing(client, tmp_path, frame_type):
+    folder = tmp_path / f"{frame_type}-scope"
+    folder.mkdir()
+    image_type = frame_type.upper()
+    for name in ("missing_a.fits", "missing_b.fits", "missing_c.fits"):
+        _write_fits(folder / name, imagetyp=image_type, filt=None, stars=5)
+    _write_fits(folder / "named.fits", imagetyp=image_type, filt="Ha", stars=5)
+
+    other_folder = tmp_path / f"other-{frame_type}"
+    other_folder.mkdir()
+    _write_fits(other_folder / "missing_elsewhere.fits", imagetyp=image_type, filt=None, stars=5)
+    project_id = await _make_project(client, f"Missing {frame_type}")
+    other_project_id = await _make_project(client, f"Other missing {frame_type}")
+    await _ingest_folder(client, project_id, folder)
+    await _ingest_folder(client, other_project_id, other_folder)
+
+    first = (
+        await client.get(
+            f"/api/projects/{project_id}/catalog/frames",
+            params={"frame_type": frame_type, "filter_missing": True, "limit": 2},
+        )
+    ).json()
+    second = (
+        await client.get(
+            f"/api/projects/{project_id}/catalog/frames",
+            params={
+                "frame_type": frame_type,
+                "filter_missing": True,
+                "limit": 2,
+                "offset": 2,
+            },
+        )
+    ).json()
+    scoped_ids = [row["id"] for row in first["rows"] + second["rows"]]
+    assert first["total"] == second["total"] == 3
+    assert len(scoped_ids) == 3
+    assert all(row["filter_name"] is None for row in first["rows"] + second["rows"])
+
+    async with get_db() as conn:
+        await conn.execute(
+            "UPDATE sub_frame SET quality_analyzed_at = CURRENT_TIMESTAMP, quality_status = 'ok' "
+            "WHERE id = ?",
+            (scoped_ids[0],),
+        )
+        await conn.execute(
+            "UPDATE sub_frame SET quality_analyzed_at = CURRENT_TIMESTAMP, "
+            "quality_status = 'unreadable' WHERE id = ?",
+            (scoped_ids[1],),
+        )
+        await conn.commit()
+
+    scope = {"frame_type": frame_type, "filter_missing": True}
+    pending = await client.get(f"/api/projects/{project_id}/catalog/analyze/pending", params=scope)
+    forced = await client.get(
+        f"/api/projects/{project_id}/catalog/analyze/pending",
+        params={**scope, "force": True},
+    )
+    summary = await client.get(f"/api/projects/{project_id}/catalog/analyze/summary", params=scope)
+    assert pending.json() == {"frame_ids": [scoped_ids[2]], "total": 3}
+    assert set(forced.json()["frame_ids"]) == set(scoped_ids)
+    assert forced.json()["total"] == 3
+    assert summary.json() == {"total": 3, "analyzed": 2, "pending": 1, "unreadable": 1}
 
 
 # ── the pure worker ───────────────────────────────────────────────────────────

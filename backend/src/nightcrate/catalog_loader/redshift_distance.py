@@ -21,6 +21,7 @@ from nightcrate.services.astronomy import redshift_to_parsecs
 logger = logging.getLogger("nightcrate.catalog_loader.redshift")
 
 _GALAXY_TYPES: tuple[str, ...] = ("G", "GPair", "GTrpl", "GGroup")
+MIN_HUBBLE_REDSHIFT: float = 0.01
 
 
 @dataclass
@@ -28,6 +29,7 @@ class RedshiftAugmentSummary:
     galaxies_considered: int = 0
     distances_applied: int = 0
     skipped_non_positive_z: int = 0
+    skipped_low_z: int = 0
 
 
 def apply_redshift_distances(conn: sqlite3.Connection) -> RedshiftAugmentSummary:
@@ -71,6 +73,9 @@ def apply_redshift_distances(conn: sqlite3.Connection) -> RedshiftAugmentSummary
         if z <= 0:
             summary.skipped_non_positive_z += 1
             continue
+        if z < MIN_HUBBLE_REDSHIFT:
+            summary.skipped_low_z += 1
+            continue
         distance_pc = redshift_to_parsecs(z)
         cur.execute(
             """
@@ -86,9 +91,11 @@ def apply_redshift_distances(conn: sqlite3.Connection) -> RedshiftAugmentSummary
     conn.commit()
     logger.info(
         "[redshift] considered %d galaxies with redshift, applied %d "
-        "Hubble-law distances (skipped %d non-positive z)",
+        "Hubble-law distances (skipped %d non-positive z, %d below z %.2f)",
         summary.galaxies_considered,
         summary.distances_applied,
         summary.skipped_non_positive_z,
+        summary.skipped_low_z,
+        MIN_HUBBLE_REDSHIFT,
     )
     return summary

@@ -478,13 +478,24 @@ class TestDeriveEndpoint:
         assert resp.status_code == 200, resp.text
         # Ha: 9 subs x 300 s = 2700 s = 45 min. L-eXtreme: 2 x 600 s = 20 min,
         # labelled by its own name rather than "other".
+        # Header-derived rows: never "not recorded" (they name a filter) and
+        # never linked to an equipment filter.
         assert resp.json()["exposures"] == [
-            {"label": "Ha", "exposure_seconds": 300.0, "sub_count": 9, "actual_minutes": 45.0},
+            {
+                "label": "Ha",
+                "exposure_seconds": 300.0,
+                "sub_count": 9,
+                "actual_minutes": 45.0,
+                "not_recorded": False,
+                "filter_id": None,
+            },
             {
                 "label": "L-eXtreme",
                 "exposure_seconds": 600.0,
                 "sub_count": 2,
                 "actual_minutes": 20.0,
+                "not_recorded": False,
+                "filter_id": None,
             },
         ]
 

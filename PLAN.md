@@ -1,12 +1,250 @@
 # NightCrate — active plan
 
-**Version:** v0.50.0 — XISF specification update
+**Version:** v0.51.0 — Cleanup before Distribution, and object details
 
-**Branch:** `v0.50.0/xisf-spec-update`
+**Branch:** `v0.51.0/cleanup`
 
-**Status:** Complete — awaiting merge
+**Status:** Complete — awaiting merge (Fred accepted on 2026-11-13: "everything
+looks good, please finalize")
+
+**Next versions** (Fred, 2026-11-13): v0.52.0 adds a sky chart to the project
+Info tab (a planisphere with the constellations and where the picture sits);
+Distribution moves to v0.53.0.
+
+## v0.51.0 — Cleanup before Distribution, and object details
+
+Fred started this version on 2026-11-12, after merging v0.50.0, and chose its
+number. Asked what was next, he chose a short version of promised and
+approved work that had slipped, ahead of Distribution (then v0.52.0, now
+v0.53.0), over Distribution with the filter fixes folded in. Its scope is
+below. On 2026-11-13, during his acceptance test, he added the object
+details (see "Object details" below).
+
+- [x] Start from updated `main` on `v0.51.0/cleanup`.
+- [x] Spec: [v0.51.0 design](docs/superpowers/specs/2026-11-12-v0.51.0-design.md),
+  with a clickable mockup (`.superpowers/mockups/v0.51.0/slideshow.html`,
+  local). Fred's decisions (2026-11-12):
+  - **Slideshow:** a default speed the user can change, remembered across
+    runs; ↑ a longer interval, ↓ a shorter one; ← → step without stopping it; on a tablet and
+    a phone (only the viewer, on a phone); on the Messier page too.
+  - **Label:** "Not recorded" for frames whose file names no filter.
+  - **After the design review:**
+    - fix two settings problems found there (scope item 5);
+    - keep filter fix 1 to batches that know their equipment filter.
+  - **Fred's change on review:** ↑ lengthens the interval and ↓ shortens it
+    ("makes more intuitive sense"); the bar's buttons became − and + to
+    match.
+  - **Fred approved the spec and mockup** (2026-11-12: "otherwise everything
+    else looks good. go ahead an implement"). That also authorizes
+    implementation once Codex's plan review converges; material
+    disagreements still go to Fred.
+- [x] Implementation plan: [v0.51.0 plan](docs/superpowers/plans/2026-11-12-v0.51.0.md).
+  Codex's review converged in 5 rounds (the plan's Codex review section).
+  - It hardened the settings fixes: one transaction, ordered saves, and
+    Planner saves that survive quick changes and failures.
+  - It found a fourth PixInsight path reader (previews), and slideshow
+    cases for failed and retried pictures.
+  - No finding was rejected, and no disagreement remains.
+  - Implementation follows under Fred's authorization of 2026-11-12.
+- [x] Implementation (Codex, worktree `.superpowers/wt-v0.51.0`, detached
+  at `104888f`), with Claude's review of each phase. Details are in the
+  plan's "Implementation and reviews" record.
+  - **Phase A, backend:** settings recovery and `PATCH`, "Not recorded"
+    and `filter_missing`, and PixInsight paths. A fresh independent review
+    found a forward-slash UNC path accepted on POSIX and a warning that
+    didn't reset; Claude fixed both.
+  - **Phase B, frontend:**
+    - the settings queue and the Planner's changed-field saves;
+    - swatches, the "Not recorded" pill and the Planner wording;
+    - the slideshow.
+  - **Claude's rendered checks** of Phase B found three bugs, all fixed:
+    - a mouse drag on the picture never swiped (native image drag);
+    - "Analyze 1 lights";
+    - a tap couldn't hide the controls on touch screens.
+  - **The independent review** of Phase B and Claude's fixes found a
+    stale settings load that could overwrite a newer save, plus two
+    minors. All fixed.
+  - **Rendered checks** (headless, private servers, a copy of Fred's
+    database plus seeded batches). These pass:
+    - the five mockup sizes;
+    - keys, Space on a focused button, wrapping, and disabled ends while
+      paused;
+    - a slow picture (the countdown waits) and a failed picture (the show
+      carries on);
+    - fading, and mouse and touch input (swipes and taps);
+    - a hidden tab, the wake lock (stubbed), reduced motion, and the
+      Messier viewer;
+    - two windows saving different settings;
+    - a delayed save, and the Planner's A → B → A;
+    - every filter case on the Sessions, Overview and Files tabs.
+  - **Brought into the main checkout** (2026-11-12): the 38 reviewed
+    files, identical to the worktree and staged. Fred's dev server wasn't
+    running.
+- [x] Candidate preparation (2026-11-12, under Fred's "go ahead and build
+  everything"):
+  - **Version:** 0.51.0 in `VERSION`, `backend/pyproject.toml` and
+    `uv.lock` (`uv lock --check` passes), and in the headers of
+    `DB_SCHEMA.md`, `DB_SCHEMA_DDL.sql` and `LLM_DB_SPECS.md`. No schema
+    change and no migration.
+  - **Documentation synced:**
+    - development decisions: the slideshow, filter types and "Not
+      recorded", settings persistence, and PixInsight referenced paths;
+    - README, the code map, and `CLAUDE.md`'s settings rule.
+  - **Checks:**
+    - ruff, format, and bandit (0 issues);
+    - the frontend build, and ESLint on every changed file (3 warnings, all
+      on `main` before this version);
+    - 189 local links resolve; `git diff --check` is clean.
+    - **Full backend suite:** 4,090 passed, 4 skipped, 0 failed (16 min).
+  - **Coverage** of the changed modules, on the same tests, `main` → this
+    version: images API 75% → 76%; ingest API 91% → 93%; project sessions
+    83% → 84%; projects API 88% → 88%; settings API 94% → 96%;
+    `core/config.py` 98% → 100%; image preview 82% → 82%; `pxiproject_io`
+    96% → 96%.
+    - `core/config.py` had dipped to 96%, on the minimum-altitude rule and
+      the defensive fallback. Claude added tests for both.
+  - **Reviews:**
+    - fresh independent reviews of Phase A and of Phase B (with Claude's
+      code fixes);
+    - a batched review of Claude's documentation (four minor wording
+      corrections, applied).
+  - **Privacy scan** of the staged diff and the new spec and plan: no
+    personal paths, equipment, locations or contact details.
+- [ ] Fred's acceptance test. Owed checks for him:
+  - [x] the slideshow on his iPad over `make dev-lan` (Fred, 2026-11-13:
+    "works on an iPad");
+  - a quick look on a phone.
+- **From the start sweep (2026-11-12):**
+  - two v0.47.0 items, both waiting on a real case, have gone three
+    releases with no evidence either way, so they go to Fred to close as
+    inconclusive or keep with a next check:
+    - v0.47.0-R1: untagged frames lose their rig and setup when a project
+      gains a second rig, until the folder is tagged;
+    - v0.47.0-R2: untagged frames match calibration by settings alone
+      across a camera change. Its next check is the calibration coverage
+      version.
+
+    Fred (2026-11-12): "you can skip those things for now". Both stay
+    pending, unchanged.
+  - v0.46.0-R1 (one workspace per request) stays with Distribution's
+    design, now v0.53.0.
+  - v0.50.0-D1 and R1: no new evidence. Fred's database has no
+    uncataloged files yet (read-only count), and this version doesn't
+    change ingest.
+- **Still due from earlier versions:**
+  - the CDS checks under v0.43.1 ("When CDS returns"). On 2026-11-12 the
+    Strasbourg tile server, VizieR and SIMBAD all answered with a static
+    "Page unavailable — CDS" page; the Harvard VizieR mirror answered;
+  - the iPad/Safari check of v0.46.0's framing dialog: dragging the frame,
+    and the long-press tooltip;
+  - Safari, Firefox and touch devices on v0.48.0's Messier page.
+
+### Scope (Fred, 2026-11-12)
+
+Checked against the code on 2026-11-12.
+
+1. **Filter colour fixes** (Fred, 2026-11-08: "fix 1-3 in the next
+   version"). From the post-publication Codex review of v0.47.0 (PR #26),
+   checked by Claude against the code. They were recorded only in Fred's
+   notes, so v0.48.0–v0.50.0 missed them.
+   1. Equipment filters with no lines on record (17 of 80 seeded: 10
+      light-pollution such as L-Pro, UHC, CLS; 3 UV/IR cut; 3 other; 1 ND)
+      show the grey "unknown" outline instead of the striped whole-spectrum
+      swatch. `resolveFilter` (`components/projects/filterColors.ts`) tries
+      passbands, then the line name, then the label, never the filter's
+      type. Fix: resolve them from the filter's type.
+   2. Sessions loads active filters only (`fetchFilters(false, false)` in
+      `ProjectSessionsTab.tsx`), so a batch shot with a retired dual-band
+      filter loses its split and sorts last. Fix: load retired filters for
+      display; keep pickers active-only.
+   3. Frames with no FILTER header show a grey "—" chip on Sessions and
+      nothing in the Files table's Filter column. Show them the same way in
+      both, kept as unknown (a missing header is not proof there was no
+      filter).
+   - Left as minor (not in scope): 3+-line swatches drop the stripes of
+     rare lines; two makers' filters with the same model name could swap
+     order in the exposure table.
+2. **Gallery slideshow: automatic playing.** v0.46.0 brought the viewer's
+   arrows forward and left "only automatic playing" for later
+   (`GalleryViewer.tsx` has arrows, ← → and Esc, no play). From v0.46.0's
+   scope: starts paused; play and pause, with Space; pauses on hover or
+   focus, on a flipped card, and when hidden; preloads its neighbours; key
+   handlers act only in the visible view, because persistent routes stay
+   mounted.
+3. **Planner wording** (moved from the deferred list, approved 2026-09-23).
+   The scope toggle reads "Plan a Night" / "Full Catalog"
+   ([PlannerPage.tsx](frontend/src/pages/PlannerPage.tsx)), but the
+   empty-results hint says to switch to "Browse the full catalog" mode, and
+   the Wishlist empty state says "Tonight or Full Catalog tabs"
+   ([WishlistTab.tsx](frontend/src/components/planner/WishlistTab.tsx)).
+4. **Relative paths in PixInsight projects** (moved from the deferred list,
+   found during the v0.41.7 review). `pxiproject_io.load_image_data`
+   accepts a relative stored `filePath`, which resolves against the
+   server's working directory; reject it, with a test.
+5. **Settings saving and loading** (added 2026-11-12, found by the spec's
+   design review; Fred: fix both). One invalid stored setting resets every
+   setting to its default, and the next save makes that permanent. Every
+   save also sends all settings, so a page open on one device overwrites
+   values set on another.
+- **Closed at the start:** the other v0.41.7 item, the rig form's software
+  sort, is already fixed: `/api/rigs` options sort software by category,
+  then name (`api/rigs.py`).
+
+### Object details (added by Fred, 2026-11-13)
+
+Spec: [object details design](docs/superpowers/specs/2026-11-13-v0.51.0-object-details-design.md),
+from mockups Fred chose in conversation (`.superpowers/mockups/v0.51.0/`,
+local). Fred's decisions (2026-11-13), in brief:
+
+- the backs of Gallery cards show each target's constellation, Messier and
+  NGC numbers, distance in light-years and Wikipedia link;
+- the full-size viewer turns over to the same details when the slideshow
+  isn't playing;
+- add published distances for the Messier and Caldwell objects that lack one;
+- a distance ruler (chosen from three designs), with grey dots for other
+  objects found by plate solving;
+- the list view as mocked;
+- a new project tab, Info, after Sessions, for plate-solved projects.
+
+The sky chart is v0.52.0. Fred then asked Claude to build it all while he was
+away, recording best guesses for his review; they are at the end of the spec.
+
+- [x] Spec and mockups (2026-11-13).
+- [x] Builder check of the spec; [implementation plan](docs/superpowers/plans/2026-11-13-v0.51.0-object-details.md).
+  Codex's plan review converged in 3 rounds; all findings were accepted.
+- [x] Distances for the Messier and Caldwell objects that had none, from
+  cited catalogs through the Harvard VizieR mirror:
+  - 109 of 113 filled; four have no single distance;
+  - the existing cluster and PN rows re-sourced;
+  - checked against the raw tables and applied twice through the real
+    loader.
+- [x] Implementation (Codex, worktree `.superpowers/wt-v0.51.0-details`),
+  Claude's reviews and rendered checks, and fresh independent reviews of
+  each phase and of the data. Details are in the plan's "Implementation and
+  reviews".
+- [x] Also in this addition:
+  - redshift estimates below z = 0.01 dropped, and IC 3418's wrong
+    redshift corrected (spec §8);
+  - a 10 s connection limit on Open-Meteo requests (spec §9).
+- [x] Brought into the main checkout and staged (2026-11-13) after Fred
+  stopped `make dev-lan`: 40 files, byte-identical to the worktree. The
+  whole version is now 88 staged files, tree `cb38964`.
+  - **Checks in the main checkout:** the build, ruff and format, plus the
+    key backend tests.
+- [x] **Full backend suite** on the identical worktree code:
+  - 4,113 passed, 10 skipped, 0 failed (54 min);
+  - six of the skips need local catalog samples the worktree lacks; those
+    55 loader tests pass in the main checkout;
+  - the other four skips (an XISF fixture, the real-sky solver data) are
+    environmental, as before.
+- [x] Fred's acceptance test of the whole version (2026-11-13). A batched
+  Codex review before publication found two documentation inaccuracies,
+  which were fixed, and two minors left as follow-ups (see the plan's
+  record).
 
 ## v0.50.0 — XISF specification update
+
+Merged in [PR #29](https://github.com/fbaptiste/nightcrate/pull/29) on 2026-11-11.
 
 Fred started this version on 2026-11-11, after merging v0.49.0, and chose its
 number. Its scope is the roadmap's next item, the updated XISF specification,
@@ -3234,7 +3472,8 @@ after it, also ahead of the gallery; it became v0.45.0. The gallery became
 v0.46.0. On 2026-11-07 Fred placed rigs that don't change underneath their
 records as the very next version after the gallery; it became v0.47.0. The
 Messier checklist became v0.48.0 and object search v0.49.0. The updated XISF
-specification became v0.50.0, the active version above.
+specification became v0.50.0. On 2026-11-12 Fred placed a cleanup version,
+v0.51.0, before Distribution; it is the active version above.
 Version numbers are otherwise assigned when each version starts.
 
 ### Distribution
@@ -3411,23 +3650,6 @@ sources.
   thresholds are proposals, not established diagnostic rules.
 - Background-region statistics and quality indicators while browsing frames.
 - Equipment/manufacturer links for specifications, manuals, drivers, and forums.
-
-### Found during v0.41.7 review
-
-- `pxiproject_io.load_image_data` accepts a relative stored `filePath`, which
-  resolves against the server's working directory; reject it, with a test.
-- The rig form's software Autocomplete groups by category, but `/api/rigs`
-  options sort software by name only, so category headers can repeat. Sort by
-  category, then name.
-
-### Planner wording
-
-- Stale mode names: the scope toggle reads "Plan a Night" / "Full Catalog"
-  ([PlannerPage.tsx](frontend/src/pages/PlannerPage.tsx)), but the empty-results
-  hint says to switch to "Browse the full catalog" mode, and the Wishlist empty
-  state says "Tonight or Full Catalog tabs"
-  ([WishlistTab.tsx](frontend/src/components/planner/WishlistTab.tsx)).
-  Approved for this list on 2026-09-23; not yet checked in the running app.
 
 ## Settled scope
 

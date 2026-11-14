@@ -94,7 +94,10 @@ instructions to restore removed features.
 - Settings are `settings(key, value_json, updated_at)`, one Pydantic field per row.
   Add defaults to `core/config.py:Settings`; no migration is needed. Computed
   values such as the detected GPU name must not become persisted settings.
-  Invalid stored JSON is ignored and validation failures fall back to defaults.
+  Invalid stored JSON is ignored, and a stored field that fails validation
+  falls back to its default alone; loading never writes. Clients save with
+  `PATCH /api/settings`, sending only changed fields (development decisions,
+  "Settings persistence").
   GPU acceleration and maximum worker cores are runtime preferences; a NULL
   core limit defaults to CPU count minus one.
 - Outbound HTTP uses `services/http_client.py:get`: 30 s timeout, one retry after

@@ -14,6 +14,7 @@ interface Props {
   alt: string;
   inset?: boolean;
   onUnavailable: () => void;
+  onShown?: () => void;
   matchMainTarget?: boolean;
   matchInImage?: boolean;
   compactChips?: boolean;
@@ -136,6 +137,7 @@ export default function SolveMarkedImage({
   alt,
   inset = true,
   onUnavailable,
+  onShown,
   matchMainTarget = false,
   matchInImage = false,
   compactChips = false,
@@ -333,6 +335,7 @@ export default function SolveMarkedImage({
     : 9;
   const src = projectSolveImageUrl(projectId, variant, solve.solve_id, ws);
   const fullSrc = projectSolveImageUrl(projectId, "full", solve.solve_id, ws);
+  const preventNativeDrag = variant === "full";
 
   return (
     <Box
@@ -354,7 +357,12 @@ export default function SolveMarkedImage({
           component="img"
           src={src}
           alt={alt}
-          onLoad={() => setLoaded(true)}
+          draggable={preventNativeDrag ? false : undefined}
+          onDragStart={preventNativeDrag ? (event) => event.preventDefault() : undefined}
+          onLoad={() => {
+            setLoaded(true);
+            onShown?.();
+          }}
           onError={onUnavailable}
           sx={{
             display: "block",
@@ -365,6 +373,9 @@ export default function SolveMarkedImage({
             maxWidth: "100%",
             maxHeight: "100%",
             objectFit: "contain",
+            ...(preventNativeDrag
+              ? { WebkitUserDrag: "none", WebkitTouchCallout: "none" }
+              : {}),
           }}
         />
       )}
@@ -473,6 +484,8 @@ export default function SolveMarkedImage({
               component="img"
               src={fullSrc}
               alt=""
+              draggable={preventNativeDrag ? false : undefined}
+              onDragStart={preventNativeDrag ? (event) => event.preventDefault() : undefined}
               onError={onUnavailable}
               sx={{
                 position: "absolute",
@@ -481,6 +494,9 @@ export default function SolveMarkedImage({
                 maxWidth: "none",
                 left: diameter / 2 - insetScreenMark.mark.pixel_x * insetScale,
                 top: diameter / 2 - insetScreenMark.mark.pixel_y * insetScale,
+                ...(preventNativeDrag
+                  ? { WebkitUserDrag: "none", WebkitTouchCallout: "none" }
+                  : {}),
               }}
             />
             <Box

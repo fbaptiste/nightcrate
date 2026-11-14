@@ -1,6 +1,7 @@
 """Tests for settings configuration — key-value schema."""
 
 import json
+import logging
 
 import pytest
 
@@ -8,6 +9,7 @@ from nightcrate.core.config import (
     BrowserFavorite,
     Settings,
     get_settings,
+    settings_from_rows,
     update_settings,
 )
 
@@ -21,6 +23,7 @@ class TestSettingsModel:
         assert s.last_browse_path is None
         assert s.browser_favorites == []
         assert s.calculators_clock_order == []
+        assert s.gallery_slideshow_seconds == 5
 
     def test_custom_values(self):
         s = Settings(
@@ -42,6 +45,235 @@ class TestSettingsModel:
 
 
 class TestSettingsPersistence:
+    async def test_repeated_damaged_load_logs_once(self, caplog, monkeypatch):
+        from nightcrate.core import config
+        from nightcrate.db.session import get_db
+
+        monkeypatch.setattr(config, "_last_logged_dropped_fields", frozenset())
+        async with get_db() as conn:
+            await conn.execute(
+                "INSERT INTO settings (key, value_json) VALUES (?, ?)",
+                ("gallery_view", '"huge"'),
+            )
+            await conn.commit()
+
+        with caplog.at_level(logging.WARNING, logger="nightcrate.core.config"):
+            await get_settings()
+            await get_settings()
+
+        warnings = [
+            record
+            for record in caplog.records
+            if record.message.startswith("[settings] ignored invalid stored fields")
+        ]
+        assert len(warnings) == 1
+
+    async def test_damage_returning_after_clean_load_logs_again(self, caplog, monkeypatch):
+        """damaged → repaired → damaged again gives two warnings, not one."""
+        from nightcrate.core import config
+        from nightcrate.db.session import get_db
+
+        monkeypatch.setattr(config, "_last_logged_dropped_fields", frozenset())
+
+        async def set_view(value_json: str) -> None:
+            async with get_db() as conn:
+                await conn.execute(
+                    "INSERT INTO settings (key, value_json) VALUES ('gallery_view', ?) "
+                    "ON CONFLICT(key) DO UPDATE SET value_json = excluded.value_json",
+                    (value_json,),
+                )
+                await conn.commit()
+
+        with caplog.at_level(logging.WARNING, logger="nightcrate.core.config"):
+            await set_view('"huge"')
+            await get_settings()
+            await set_view('"large"')
+            assert (await get_settings()).gallery_view == "large"
+            await set_view('"huge"')
+            await get_settings()
+
+        warnings = [
+            record
+            for record in caplog.records
+            if record.message.startswith("[settings] ignored invalid stored fields")
+        ]
+        assert len(warnings) == 2
+
+    async def test_invalid_field_falls_back_alone_and_nothing_is_written(self):
+        from nightcrate.db.session import get_db
+
+        async with get_db() as conn:
+            await conn.executemany(
+                "INSERT INTO settings (key, value_json, updated_at) VALUES (?, ?, ?)",
+                [
+                    ("gallery_view", '"huge"', "2000-01-01 00:00:00"),
+                    ("theme", '"dark"', "2000-01-01 00:00:00"),
+                    ("gallery_slideshow_seconds", "7", "2000-01-01 00:00:00"),
+                ],
+            )
+            await conn.commit()
+            before = await (await conn.execute("SELECT * FROM settings ORDER BY key")).fetchall()
+
+        loaded = await get_settings()
+
+        async with get_db() as conn:
+            after = await (await conn.execute("SELECT * FROM settings ORDER BY key")).fetchall()
+        assert loaded.gallery_view == "medium"
+        assert loaded.gallery_slideshow_seconds == 5
+        assert loaded.theme == "dark"
+        assert [tuple(row) for row in after] == [tuple(row) for row in before]
+
+    async def test_threshold_order_failure_resets_only_thresholds(self):
+        from nightcrate.db.session import get_db
+
+        values = {
+            "scoring_threshold_excellent": 50,
+            "scoring_threshold_good": 60,
+            "scoring_weight_moon": 4.0,
+            "theme": "dark",
+        }
+        async with get_db() as conn:
+            await conn.executemany(
+                "INSERT INTO settings (key, value_json) VALUES (?, ?)",
+                [(key, json.dumps(value)) for key, value in values.items()],
+            )
+            await conn.commit()
+
+        loaded = await get_settings()
+        assert (
+            loaded.scoring_threshold_excellent,
+            loaded.scoring_threshold_good,
+            loaded.scoring_threshold_fair,
+        ) == (80, 60, 40)
+        assert loaded.scoring_weight_moon == 4.0
+        assert loaded.theme == "dark"
+
+    async def test_negative_weight_resets_only_that_weight(self):
+        from nightcrate.db.session import get_db
+
+        async with get_db() as conn:
+            await conn.executemany(
+                "INSERT INTO settings (key, value_json) VALUES (?, ?)",
+                [
+                    ("scoring_weight_moon", "-1"),
+                    ("scoring_weight_meridian", "3"),
+                    ("theme", '"dark"'),
+                ],
+            )
+            await conn.commit()
+
+        loaded = await get_settings()
+        assert loaded.scoring_weight_moon == 1.5
+        assert loaded.scoring_weight_meridian == 3
+        assert loaded.theme == "dark"
+
+    async def test_string_stored_numbers_judged_as_parsed(self):
+        from nightcrate.db.session import get_db
+
+        async with get_db() as conn:
+            await conn.executemany(
+                "INSERT INTO settings (key, value_json) VALUES (?, ?)",
+                [
+                    ("scoring_threshold_excellent", '"50"'),
+                    ("scoring_threshold_good", "60"),
+                ],
+            )
+            await conn.commit()
+        loaded = await get_settings()
+        assert (
+            loaded.scoring_threshold_excellent,
+            loaded.scoring_threshold_good,
+            loaded.scoring_threshold_fair,
+        ) == (80, 60, 40)
+
+        async with get_db() as conn:
+            await conn.execute("DELETE FROM settings")
+            await conn.executemany(
+                "INSERT INTO settings (key, value_json) VALUES (?, ?)",
+                [
+                    ("scoring_threshold_excellent", '"100"'),
+                    ("scoring_threshold_good", '"90"'),
+                    ("scoring_threshold_fair", '"80"'),
+                    ("scoring_weight_moon", "-1"),
+                ],
+            )
+            await conn.commit()
+        loaded = await get_settings()
+        assert (
+            loaded.scoring_threshold_excellent,
+            loaded.scoring_threshold_good,
+            loaded.scoring_threshold_fair,
+        ) == (100, 90, 80)
+        assert loaded.scoring_weight_moon == 1.5
+
+    def test_settings_from_rows_valid_passthrough(self):
+        loaded, dropped = settings_from_rows({"gallery_slideshow_seconds": 8})
+        assert loaded.gallery_slideshow_seconds == 8
+        assert dropped == frozenset()
+
+    def test_composite_and_scoring_failures_together(self):
+        loaded, dropped = settings_from_rows(
+            {
+                "browser_favorites": [{"name": "missing path"}],
+                "planner_coverage_range": [15],
+                "scoring_threshold_excellent": 50,
+                "scoring_threshold_good": 60,
+                "scoring_threshold_fair": 40,
+                "theme": "dark",
+            }
+        )
+        assert loaded.browser_favorites == []
+        assert loaded.planner_coverage_range is None
+        assert (
+            loaded.scoring_threshold_excellent,
+            loaded.scoring_threshold_good,
+            loaded.scoring_threshold_fair,
+        ) == (80, 60, 40)
+        assert loaded.theme == "dark"
+        assert dropped == frozenset(
+            {
+                "browser_favorites",
+                "planner_coverage_range",
+                "scoring_threshold_excellent",
+                "scoring_threshold_good",
+                "scoring_threshold_fair",
+            }
+        )
+
+    def test_low_min_altitude_resets_only_altitude(self):
+        loaded, dropped = settings_from_rows(
+            {"scoring_observability_min_altitude_deg": 5.0, "theme": "dark"}
+        )
+        assert loaded.scoring_observability_min_altitude_deg == 30.0
+        assert loaded.theme == "dark"
+        assert dropped == frozenset({"scoring_observability_min_altitude_deg"})
+
+    def test_low_min_altitude_error_names_its_field(self):
+        from pydantic import ValidationError
+
+        with pytest.raises(ValidationError) as exc_info:
+            Settings(scoring_observability_min_altitude_deg=5.0)
+        (error,) = exc_info.value.errors()
+        assert error["type"] == "cross_field"
+        assert error["ctx"]["fields"] == ["scoring_observability_min_altitude_deg"]
+        assert "must be >= 10" in error["msg"]
+
+    def test_unplaceable_validation_error_falls_back_to_defaults(self, monkeypatch):
+        """Defensive path: an error naming no stored key can't be fixed by
+        dropping one, so every stored key is dropped and defaults load."""
+        from nightcrate.core import config
+
+        calls = {"n": 0}
+
+        def flaky_violations(_settings):
+            calls["n"] += 1
+            return frozenset({"scoring_threshold_good"}) if calls["n"] == 1 else frozenset()
+
+        monkeypatch.setattr(config, "_cross_field_violations", flaky_violations)
+        loaded, dropped = settings_from_rows({"theme": "dark"})
+        assert loaded == Settings()
+        assert dropped == frozenset({"theme"})
+
     async def test_messier_settings_round_trip_and_invalid_location_fallback(self):
         values = Settings(
             messier_view="large",

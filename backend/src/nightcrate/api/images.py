@@ -301,7 +301,7 @@ def _file_size_bytes(p: Path | BinaryIO, ft: str, idx: int) -> int | None:
         if ft == "pxiproject" and isinstance(p, Path):
             entry = pxiproject_io.list_project_images(p)[idx]
             if entry["source"] == "referenced" and entry["file_path"]:
-                referenced = Path(entry["file_path"])
+                referenced = pxiproject_io.referenced_image_path(entry["file_path"])
                 return referenced.stat().st_size if referenced.is_file() else None
             if entry["data_src"]:
                 # The same containment rule as pxiproject_io.load_image_data:

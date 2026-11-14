@@ -1,9 +1,9 @@
 {
   "category": "nightcrate",
-  "version": "0.45.0",
+  "version": "0.51.0",
   "files": {
     "dso_augment.csv": {
-      "description": "NightCrate editorial DSO augmentation: non-galaxy surface brightness and curated distances."
+      "description": "NightCrate editorial DSO augmentation: non-galaxy surface brightness and curated distances, cited from published catalogs for Messier and Caldwell clusters and planetary nebulae."
     },
     "sharpless_crossref.csv": {
       "description": "Maps Sharpless 2 identifiers to existing DSOs from other catalogs (NGC/IC/Messier) to avoid duplicate entries for the same region."

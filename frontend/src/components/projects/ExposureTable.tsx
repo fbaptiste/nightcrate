@@ -32,7 +32,7 @@ export default function ExposureTable({ lines }: Props) {
         </TableHead>
         <TableBody>
           {lines.map((line) => (
-            <TableRow key={`${line.label}|${line.exposure_seconds}`} hover>
+            <TableRow key={`${line.label}|${line.not_recorded}|${line.exposure_seconds}`} hover>
               <TableCell sx={{ maxWidth: 200 }}>
                 {/* A free string, possibly a long FITS filter name — truncate like
                     the bars rather than wrap. */}

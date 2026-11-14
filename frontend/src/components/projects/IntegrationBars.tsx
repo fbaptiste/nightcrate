@@ -3,7 +3,7 @@ import Tooltip from "@mui/material/Tooltip";
 import Typography from "@mui/material/Typography";
 import type { IntegrationSummary } from "@/api/projectSessions";
 import FilterSwatch from "./FilterSwatch";
-import { compareFilters, resolveFilterLabel } from "./filterColors";
+import { compareFilters, notRecordedFilter, resolveFilterLabel } from "./filterColors";
 
 // Shared with the sessions exposure table and gallery read-outs.
 // eslint-disable-next-line react-refresh/only-export-components
@@ -51,7 +51,10 @@ export default function IntegrationBars({
   // Scale every bar against the largest value, so the longest bar fills the track.
   const scale = Math.max(1, ...summary.lines.map((l) => l.actual_minutes));
   const lines = summary.lines
-    .map((line) => ({ ...line, filter: resolveFilterLabel(line.label) }))
+    .map((line) => ({
+      ...line,
+      filter: line.not_recorded ? notRecordedFilter() : resolveFilterLabel(line.label),
+    }))
     .sort((a, b) => compareFilters(a.filter, b.filter));
 
   return (
@@ -72,7 +75,7 @@ export default function IntegrationBars({
       <Box sx={{ display: "flex", flexDirection: "column", gap: compact ? "6px" : 1 }}>
         {lines.map((line) => (
           <Box
-            key={line.label}
+            key={`${line.label}:${line.not_recorded}`}
             sx={{ display: "flex", alignItems: "center", gap: compact ? "12px" : 1 }}
           >
             {/* The label is a free string — a canonical bandpass, or a filter

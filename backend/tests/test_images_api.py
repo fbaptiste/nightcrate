@@ -784,6 +784,27 @@ async def test_metadata_file_size_unknown_for_missing_project_reference(client, 
     assert _file_size_bytes(project, "pxiproject", 5) is None
 
 
+@pytest.mark.anyio
+async def test_image_stats_relative_reference_422(client, tmp_path):
+    from tests.test_pxiproject_io import _make_project
+
+    project = _make_project(tmp_path, [{"name": "Relative", "file_path": "relative.xisf"}])
+    response = await client.get("/api/images/stats", params={"path": f"{project}::0"})
+    assert response.status_code == 422
+    assert response.json()["detail"] == (
+        "This PixInsight project gives the image's location as a relative path, "
+        "so NightCrate can't find it."
+    )
+
+
+def test_file_size_unusable_reference_is_none(tmp_path):
+    from nightcrate.api.images import _file_size_bytes
+    from tests.test_pxiproject_io import _make_project
+
+    project = _make_project(tmp_path, [{"name": "Relative", "file_path": "relative.xisf"}])
+    assert _file_size_bytes(project, "pxiproject", 0) is None
+
+
 def test_file_size_for_embedded_project_blob_and_traversal(tmp_path):
     """An embedded project image reports its blob's size; a path that escapes
     project.data reports none (the loader's containment rule)."""

@@ -42,6 +42,7 @@ import { solveColors } from "@/components/plate-solve/solvePalette";
 import { stepLabel } from "@/components/plate-solve/solveStepLabels";
 import { DSO_TYPE_DISPLAY } from "@/lib/dsoTypeNames";
 import { invalidateProjectLinks } from "@/api/projectTargetLinks";
+import { invalidateProjectInfo } from "@/api/projectInfo";
 
 function fileName(path: string): string {
   return path.split(/[\\/]/).pop()?.split("::").pop() ?? path;
@@ -186,6 +187,7 @@ export default function ProjectPlateSolveTab({ projectId, onMainsChange }: Props
   const refreshSaved = () => {
     void queryClient.invalidateQueries({ queryKey: ["project-solve", projectId] });
     void queryClient.invalidateQueries({ queryKey: ["project-targets", projectId] });
+    void invalidateProjectInfo(queryClient, projectId);
     void invalidateProjectLinks(queryClient);
     onMainsChange?.();
   };
@@ -259,6 +261,7 @@ export default function ProjectPlateSolveTab({ projectId, onMainsChange }: Props
       queryClient.refetchQueries({ queryKey: ["project-solve", projectId] }),
       queryClient.refetchQueries({ queryKey: ["project-targets", projectId] }),
     ]).finally(() => setChosen(null));
+    void invalidateProjectInfo(queryClient, projectId);
     void invalidateProjectLinks(queryClient);
     onMainsChange?.();
   };

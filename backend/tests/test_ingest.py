@@ -1526,6 +1526,18 @@ class TestClassificationRefinements:
         assert none["total"] == 0
         assert none["rows"] == []
 
+    async def test_filter_missing_with_name_422(self, client, calib_folder):
+        pid = await _make_project(client, "ConflictingFilterScope")
+        await client.post(f"/api/projects/{pid}/folders", json={"path": str(calib_folder)})
+        await client.post(f"/api/projects/{pid}/ingest")
+        for suffix in ("frames", "analyze/pending", "analyze/summary"):
+            response = await client.get(
+                f"/api/projects/{pid}/catalog/{suffix}",
+                params={"filter_name": "Ha", "filter_missing": True},
+            )
+            assert response.status_code == 422
+            assert response.json()["detail"] == "Choose filter_name or filter_missing, not both."
+
     async def test_master_frame_type_parsed(self, client, calib_folder):
         pid = await _make_project(client, "Masters")
         await client.post(f"/api/projects/{pid}/folders", json={"path": str(calib_folder)})

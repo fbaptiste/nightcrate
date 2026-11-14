@@ -19,6 +19,7 @@ import { useCallback, useRef, useState } from "react";
 import {
   analyzeFrames,
   fetchQualityPending,
+  type FramePill,
   type QualityAnalyzeResult,
 } from "../api/projectCatalog";
 
@@ -66,7 +67,7 @@ const IDLE: AnalyzeProgress = {
 
 export interface AnalyzeScope {
   frameType: string | null;
-  filterName: string | null;
+  pill: FramePill | null;
 }
 
 export function useAnalyzeRun(
@@ -90,7 +91,7 @@ export function useAnalyzeRun(
         const pending = await fetchQualityPending(
           projectId,
           scope.frameType,
-          scope.filterName,
+          scope.pill,
           force,
         );
         ids = pending.frame_ids;

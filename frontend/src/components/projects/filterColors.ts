@@ -21,11 +21,13 @@ export interface FilterIdentity {
   label: string;
   lineName?: string | null;
   equipmentFilter?: Filter | null;
+  linked?: boolean;
 }
 
 export interface ResolvedFilter {
   label: string;
   lines: FilterLine[];
+  notRecorded?: true;
 }
 
 export interface SessionFilterTotal extends ResolvedFilter {
@@ -83,6 +85,7 @@ const WAVELENGTH_ORDER: Record<FilterLine, number> = {
 
 const STRIPED_LINES = new Set<FilterLine>(["whole", "Hb", "OI", "Nii"]);
 const UNKNOWN_OUTLINE = "#8E8C88";
+export const NOT_RECORDED_LABEL = "Not recorded";
 
 function normalizeFilter(value: string): string {
   return value
@@ -107,7 +110,8 @@ function canonicalLine(lineName: string | null | undefined): FilterLine | null {
   if (normalized === "G") return "G";
   if (normalized === "B") return "B";
   if (normalized === "UVIR" || normalized === "LP") return "whole";
-  if (normalized === "ND" || normalized === "OTHER") return "unknown";
+  if (normalized === "ND") return "whole";
+  if (normalized === "OTHER") return "unknown";
   return null;
 }
 
@@ -129,7 +133,11 @@ function lineFromName(label: string): FilterLine {
     normalized === "NOFILTER" ||
     normalized === "NONE" ||
     normalized === "LP" ||
-    normalized === "LIGHTPOLLUTION"
+    normalized === "LIGHTPOLLUTION" ||
+    normalized === "ND" ||
+    normalized === "ND3" ||
+    normalized === "ND30" ||
+    normalized === "NEUTRALDENSITY"
   ) {
     return "whole";
   }
@@ -148,6 +156,16 @@ export function resolveFilter(identity: FilterIdentity): ResolvedFilter {
     return { label: identity.label, lines: orderedDistinct(passbandLines) };
   }
 
+  if (identity.linked && identity.equipmentFilter) {
+    const filterType = identity.equipmentFilter.filter_type.name;
+    if (["light_pollution", "uv_ir_cut", "neutral_density"].includes(filterType)) {
+      return { label: identity.label, lines: ["whole"] };
+    }
+    if (filterType === "other") {
+      return { label: identity.label, lines: ["unknown"] };
+    }
+  }
+
   if (identity.lineName && normalizeFilter(identity.lineName) !== "OTHER") {
     return {
       label: identity.label,
@@ -160,6 +178,17 @@ export function resolveFilter(identity: FilterIdentity): ResolvedFilter {
 
 export function resolveFilterLabel(label: string): ResolvedFilter {
   return resolveFilter({ label });
+}
+
+export function notRecordedFilter(): ResolvedFilter {
+  return { label: NOT_RECORDED_LABEL, lines: ["unknown"], notRecorded: true };
+}
+
+export function isSessionFilterNotRecorded(session: ProjectSession): boolean {
+  return session.source === "auto" &&
+    session.line_name === "other" &&
+    !session.filter_label &&
+    session.filter_id == null;
 }
 
 export function sessionFilterIdentity(
@@ -178,6 +207,7 @@ export function sessionFilterIdentity(
       "—",
     lineName: session.line_name,
     equipmentFilter,
+    linked: session.filter_id != null,
   };
 }
 
@@ -185,6 +215,7 @@ export function resolveSessionFilter(
   session: ProjectSession,
   filtersById: ReadonlyMap<number, Filter>,
 ): ResolvedFilter {
+  if (isSessionFilterNotRecorded(session)) return notRecordedFilter();
   return resolveFilter(sessionFilterIdentity(session, filtersById));
 }
 
@@ -195,7 +226,9 @@ export function summarizeSessionFilters(
   const totals = new Map<string, SessionFilterTotal>();
   for (const session of sessions) {
     const resolved = resolveSessionFilter(session, filtersById);
-    const key = session.filter_id == null
+    const key = resolved.notRecorded
+      ? "not-recorded"
+      : session.filter_id == null
       ? `label:${resolved.label}`
       : `filter:${session.filter_id}`;
     const existing = totals.get(key);
@@ -206,6 +239,7 @@ export function summarizeSessionFilters(
 }
 
 export function compareFilters(a: ResolvedFilter, b: ResolvedFilter): number {
+  if (a.notRecorded !== b.notRecorded) return a.notRecorded ? 1 : -1;
   const aOrder = Math.min(...a.lines.map((line) => LINE_ORDER[line]));
   const bOrder = Math.min(...b.lines.map((line) => LINE_ORDER[line]));
   if (aOrder !== bOrder) return aOrder - bOrder;

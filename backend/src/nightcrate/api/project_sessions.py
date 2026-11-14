@@ -296,6 +296,9 @@ async def delete_session(project_id: int, session_id: int) -> None:
 # ── Integration summary ──────────────────────────────────────────────────────
 
 
+NOT_RECORDED_LABEL = "Not recorded"
+
+
 def _integration_label(session: dict) -> str:
     """The bar this session's time counts toward.
 
@@ -309,8 +312,10 @@ def _integration_label(session: dict) -> str:
     return session["line_name"]
 
 
-def _label_order(label: str) -> tuple[int, str]:
+def _label_order(label: str, not_recorded: bool = False) -> tuple[int, str]:
     """Canonical bandpasses in vocabulary order, then raw filter names A-Z."""
+    if not_recorded:
+        return (len(LINE_NAMES) + 1, "")
     try:
         return (LINE_NAMES.index(label), "")
     except ValueError:
@@ -320,7 +325,7 @@ def _label_order(label: str) -> tuple[int, str]:
 async def _compute_integration(conn, project_id: int) -> IntegrationSummary:
     cursor = await conn.execute(
         "SELECT ps.id, ps.filter_id, ps.line_name, ps.filter_label, ps.exposure_seconds,"
-        " ps.num_subs, ps.session_date, f.model_name AS filter_name"
+        " ps.num_subs, ps.session_date, ps.source, f.model_name AS filter_name"
         " FROM project_session ps LEFT JOIN filter f ON f.id = ps.filter_id"
         " WHERE ps.project_id = ?",
         (project_id,),
@@ -344,13 +349,14 @@ async def _compute_integration(conn, project_id: int) -> IntegrationSummary:
         for r in await cursor.fetchall():
             passband_lines[r["filter_id"]].append(r["line_name"])
 
-    actual_sec: dict[str, float] = defaultdict(float)
-    nights: dict[str, set[str]] = defaultdict(set)
-    sub_count: dict[str, int] = defaultdict(int)
+    actual_sec: dict[tuple[str, bool], float] = defaultdict(float)
+    nights: dict[tuple[str, bool], set[str]] = defaultdict(set)
+    sub_count: dict[tuple[str, bool], int] = defaultdict(int)
     # The exposure breakdown, keyed (filter as shot, exposure). Rounded as the
     # derive groups it, so float noise can't split one sub length into two rows.
-    exposure_sec: dict[tuple[str, float], float] = defaultdict(float)
-    exposure_subs: dict[tuple[str, float], int] = defaultdict(int)
+    exposure_sec: dict[tuple[str, bool, float], float] = defaultdict(float)
+    exposure_subs: dict[tuple[str, bool, float], int] = defaultdict(int)
+    exposure_filter_ids: dict[tuple[str, bool, float], set[int | None]] = defaultdict(set)
     total_sec = 0.0
     dates = []
 
@@ -360,7 +366,16 @@ async def _compute_integration(conn, project_id: int) -> IntegrationSummary:
         session_date = valid_session_date(s["session_date"])
         if session_date is not None:
             dates.append(session_date)
-        if s["filter_id"] is not None:
+        not_recorded = (
+            s["source"] == "auto"
+            and s["line_name"] == "other"
+            and not s.get("filter_label")
+            and s["filter_id"] is None
+        )
+        if not_recorded:
+            labels = [NOT_RECORDED_LABEL]
+            shot_with = NOT_RECORDED_LABEL
+        elif s["filter_id"] is not None:
             labels = passband_lines.get(s["filter_id"], [])
             shot_with = s["filter_name"]
         elif s["line_name"] is not None:
@@ -370,37 +385,50 @@ async def _compute_integration(conn, project_id: int) -> IntegrationSummary:
             labels = []
             shot_with = None
         if shot_with is not None:
-            key = (shot_with, round(s["exposure_seconds"], 3))
+            key = (shot_with, not_recorded, round(s["exposure_seconds"], 3))
             exposure_sec[key] += secs
             exposure_subs[key] += s["num_subs"]
+            exposure_filter_ids[key].add(s["filter_id"])
         # Derived rows split one night into several rows (per exposure/gain), so
         # counting rows would overstate nights — count the distinct dates, with
         # each undated row standing alone.
         night = session_date.isoformat() if session_date is not None else f"row:{s['id']}"
         for label in labels:
-            actual_sec[label] += secs
-            nights[label].add(night)
-            sub_count[label] += s["num_subs"]
+            key = (label, not_recorded)
+            actual_sec[key] += secs
+            nights[key].add(night)
+            sub_count[key] += s["num_subs"]
 
     # Minutes stay unrounded: display rounding is the UI's, and rounding here
     # reported a single 0.1 s sub as no time at all.
     lines = [
         IntegrationLine(
             label=label,
-            actual_minutes=actual_sec[label] / 60.0,
-            session_count=len(nights[label]),
-            sub_count=sub_count[label],
+            actual_minutes=actual_sec[(label, not_recorded)] / 60.0,
+            session_count=len(nights[(label, not_recorded)]),
+            sub_count=sub_count[(label, not_recorded)],
+            not_recorded=not_recorded,
         )
-        for label in sorted(actual_sec, key=_label_order)
+        for label, not_recorded in sorted(actual_sec, key=lambda key: _label_order(key[0], key[1]))
     ]
     exposures = [
         ExposureLine(
             label=label,
             exposure_seconds=exposure,
-            sub_count=exposure_subs[(label, exposure)],
-            actual_minutes=exposure_sec[(label, exposure)] / 60.0,
+            sub_count=exposure_subs[(label, not_recorded, exposure)],
+            actual_minutes=exposure_sec[(label, not_recorded, exposure)] / 60.0,
+            not_recorded=not_recorded,
+            filter_id=(
+                next(iter(exposure_filter_ids[(label, not_recorded, exposure)]))
+                if len(exposure_filter_ids[(label, not_recorded, exposure)]) == 1
+                and None not in exposure_filter_ids[(label, not_recorded, exposure)]
+                else None
+            ),
         )
-        for label, exposure in sorted(exposure_sec, key=lambda k: (_label_order(k[0]), k[1]))
+        for label, not_recorded, exposure in sorted(
+            exposure_sec,
+            key=lambda key: (_label_order(key[0], key[1]), key[2]),
+        )
     ]
 
     return IntegrationSummary(

@@ -49,6 +49,7 @@ export interface IntegrationLine {
   /** Distinct observing nights, not rows — one night split across exposures is one. */
   session_count: number;
   sub_count: number;
+  not_recorded: boolean;
 }
 
 export interface ExposureLine {
@@ -59,6 +60,8 @@ export interface ExposureLine {
   /** Summed across nights, rigs, gains and binnings. */
   sub_count: number;
   actual_minutes: number;
+  not_recorded: boolean;
+  filter_id: number | null;
 }
 
 export interface IntegrationSummary {

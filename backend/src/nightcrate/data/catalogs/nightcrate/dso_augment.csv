@@ -13,7 +13,7 @@ NGC 6514,,1680,M20
 NGC 6611,,1740,M16
 NGC 6618,,1700,M17 (aka Swan / Horseshoe / Checkmark)
 NGC 7000,,800,Cygnus (Kiminki & Kobulnicky 2015)
-NGC 2237,,1550,Nebulosity around cluster NGC 2244
+NGC 2237,,1420,Rosette Nebula; distance of its cluster NGC 2244; Hunt & Reffert 2023 (Gaia DR3)
 NGC 2264,,770,Christmas Tree Cluster region
 IC 5070,,800,Cygnus; adjacent to NGC 7000
 IC 1805,,2400,Cassiopeia
@@ -36,31 +36,31 @@ NGC 6992,,740,Network Nebula; Cygnus Loop east
 NGC 6995,,740,Part of Eastern Veil complex
 LBN 191,,740,Whole Cygnus Loop; its pieces are in dso_parts.csv
 # --- Planetary nebulae (curated distances + non-galaxy surface brightness) ---
-NGC 6720,20.5,800,M57 (Gaia DR2 central-star parallax)
-NGC 6853,20.0,380,M27; Apple Core
-NGC 7293,22.5,200,Nearest bright PN to Earth
-NGC 6543,,1000,Draco
-NGC 2392,,900,Gemini (aka Eskimo Nebula; modern nomenclature avoids the latter)
-NGC 7662,,1700,Andromeda
-NGC 3242,,550,Hydra
-NGC 6302,,1170,Scorpius
-NGC 246,,490,Cetus
-NGC 2438,,1400,PN in line of sight of M46
+NGC 6720,20.5,783,M 57; Gonzalez-Santamaria et al. 2021 (Gaia EDR3)
+NGC 6853,20.0,387,M 27; Gonzalez-Santamaria et al. 2021 (Gaia EDR3)
+NGC 7293,22.5,199,C 63 (Helix); Gonzalez-Santamaria et al. 2021 (Gaia EDR3)
+NGC 6543,,1320,C 6; Gonzalez-Santamaria et al. 2021 (Gaia EDR3)
+NGC 2392,,1730,C 39; Gonzalez-Santamaria et al. 2021 (Gaia EDR3)
+NGC 7662,,1640,C 22; Gonzalez-Santamaria et al. 2021 (Gaia EDR3)
+NGC 3242,,1280,C 59; Gonzalez-Santamaria et al. 2021 (Gaia EDR3)
+NGC 6302,,1170,C 69; Meaburn et al. 2008 (expansion parallax); no Gaia central-star distance
+NGC 246,,560,C 56; Chornay & Walton 2021 (Gaia EDR3 + statistical)
+NGC 2438,,849,PN in line of sight of M 46; Chornay & Walton 2021 (Gaia EDR3 + statistical)
 # --- Supernova remnants ---
 NGC 1952,19.0,2000,M1 (only SNR in Messier catalog)
 # --- Reflection nebulae ---
 NGC 7023,,400,Cepheus
 NGC 2261,,780,Monoceros
 # --- Clusters with iconic names and well-measured distances ---
-NGC 2632,,187,M44; Praesepe
-NGC 1039,,494,M34
-NGC 884,,2300,Paired with NGC 869
-NGC 869,,2300,Paired with NGC 884
-NGC 6205,,7200,M13
-NGC 7078,,10400,M15
-NGC 5139,,5240,Largest Milky Way globular
-NGC 104,,4700,Second-brightest globular after Omega Cen
-NGC 5272,,10400,M3
+NGC 2632,,183,M 44 (Praesepe); Hunt & Reffert 2023 (Gaia DR3)
+NGC 1039,,490,M 34; Hunt & Reffert 2023 (Gaia DR3)
+NGC 884,,2290,Double Cluster east (chi Per); Hunt & Reffert 2023 (Gaia DR3)
+NGC 869,,2280,Double Cluster west (h Per); Hunt & Reffert 2023 (Gaia DR3)
+NGC 6205,,7420,M 13; Baumgardt & Vasiliev 2021 (Gaia EDR3)
+NGC 7078,,10700,M 15; Baumgardt & Vasiliev 2021 (Gaia EDR3)
+NGC 5139,,5430,Omega Centauri (C 80); Baumgardt & Vasiliev 2021 (Gaia EDR3)
+NGC 104,,4520,47 Tucanae (C 106); Baumgardt & Vasiliev 2021 (Gaia EDR3)
+NGC 5272,,10200,M 3; Baumgardt & Vasiliev 2021 (Gaia EDR3)
 # --- Sharpless-only common names (Sh2 without crossref) ---
 Sh2-155,,725,Cepheus
 Sh2-240,,800,Simeis 147; Taurus/Auriga SNR
@@ -74,3 +74,115 @@ B33,,450,Silhouetted against IC 434
 B72,,170,Ophiuchus
 B142,,,E Nebula (paired with B143)
 B143,,,Aquila dark complex (paired with B142)
+# --- Messier and Caldwell objects without a distance (v0.51.0); cited catalog distances ---
+NGC 7089,,11700,M 2; Baumgardt & Vasiliev 2021 (Gaia EDR3)
+NGC 6121,,1850,M 4; Baumgardt & Vasiliev 2021 (Gaia EDR3)
+NGC 5904,,7480,M 5; Baumgardt & Vasiliev 2021 (Gaia EDR3)
+NGC 6405,,452,M 6; Hunt & Reffert 2023 (Gaia DR3)
+NGC 6475,,276,M 7; Hunt & Reffert 2023 (Gaia DR3)
+NGC 6333,,8300,M 9; Baumgardt & Vasiliev 2021 (Gaia EDR3)
+NGC 6254,,5070,M 10; Baumgardt & Vasiliev 2021 (Gaia EDR3)
+NGC 6705,,2230,M 11; Hunt & Reffert 2023 (Gaia DR3)
+NGC 6218,,5110,M 12; Baumgardt & Vasiliev 2021 (Gaia EDR3)
+NGC 6402,,9140,M 14; Baumgardt & Vasiliev 2021 (Gaia EDR3)
+NGC 6613,,1500,M 18; Hunt & Reffert 2023 (Gaia DR3)
+NGC 6273,,8340,M 19; Baumgardt & Vasiliev 2021 (Gaia EDR3)
+NGC 6531,,1200,M 21; Hunt & Reffert 2023 (Gaia DR3)
+NGC 6656,,3300,M 22; Baumgardt & Vasiliev 2021 (Gaia EDR3)
+NGC 6494,,713,M 23; Hunt & Reffert 2023 (Gaia DR3)
+IC 4725,,645,M 25; Hunt & Reffert 2023 (Gaia DR3)
+NGC 6694,,1840,M 26; Hunt & Reffert 2023 (Gaia DR3)
+NGC 6626,,5370,M 28; Baumgardt & Vasiliev 2021 (Gaia EDR3)
+NGC 6913,,1710,M 29; Hunt & Reffert 2023 (Gaia DR3)
+NGC 7099,,8460,M 30; Baumgardt & Vasiliev 2021 (Gaia EDR3)
+NGC 2168,,839,M 35; Hunt & Reffert 2023 (Gaia DR3)
+NGC 1960,,1120,M 36; Hunt & Reffert 2023 (Gaia DR3)
+NGC 2099,,1400,M 37; Hunt & Reffert 2023 (Gaia DR3)
+NGC 1912,,1090,M 38; Hunt & Reffert 2023 (Gaia DR3)
+NGC 7092,,296,M 39; Hunt & Reffert 2023 (Gaia DR3; catalogued as Theia 517)
+NGC 2287,,715,M 41; Hunt & Reffert 2023 (Gaia DR3)
+M 45,,135,Pleiades; Hunt & Reffert 2023 (Gaia DR3)
+NGC 2437,,1550,M 46; Hunt & Reffert 2023 (Gaia DR3)
+NGC 2422,,468,M 47; Hunt & Reffert 2023 (Gaia DR3)
+NGC 2548,,747,M 48; Hunt & Reffert 2023 (Gaia DR3)
+NGC 2323,,957,M 50; Hunt & Reffert 2023 (Gaia DR3)
+NGC 7654,,1570,M 52; Hunt & Reffert 2023 (Gaia DR3)
+NGC 5024,,18500,M 53; Baumgardt & Vasiliev 2021 (Gaia EDR3)
+NGC 6715,,26300,M 54; Baumgardt & Vasiliev 2021 (Gaia EDR3)
+NGC 6809,,5350,M 55; Baumgardt & Vasiliev 2021 (Gaia EDR3)
+NGC 6779,,10400,M 56; Baumgardt & Vasiliev 2021 (Gaia EDR3)
+NGC 6266,,6410,M 62; Baumgardt & Vasiliev 2021 (Gaia EDR3)
+NGC 2682,,837,M 67; Hunt & Reffert 2023 (Gaia DR3)
+NGC 4590,,10400,M 68; Baumgardt & Vasiliev 2021 (Gaia EDR3)
+NGC 6637,,8900,M 69; Baumgardt & Vasiliev 2021 (Gaia EDR3)
+NGC 6681,,9360,M 70; Baumgardt & Vasiliev 2021 (Gaia EDR3)
+NGC 6838,,4000,M 71; Baumgardt & Vasiliev 2021 (Gaia EDR3)
+NGC 6981,,16700,M 72; Baumgardt & Vasiliev 2021 (Gaia EDR3)
+NGC 6864,,20500,M 75; Baumgardt & Vasiliev 2021 (Gaia EDR3)
+NGC 650,,1360,M 76; Chornay & Walton 2021 (Gaia EDR3 + statistical)
+NGC 2068,,404,M 78; embedded cluster NGC 2068 per Hunt & Reffert 2023 (Gaia DR3)
+NGC 1904,,13100,M 79; Baumgardt & Vasiliev 2021 (Gaia EDR3)
+NGC 6093,,10300,M 80; Baumgardt & Vasiliev 2021 (Gaia EDR3)
+NGC 6341,,8500,M 92; Baumgardt & Vasiliev 2021 (Gaia EDR3)
+NGC 2447,,971,M 93; Hunt & Reffert 2023 (Gaia DR3)
+NGC 3587,,816,M 97; Gonzalez-Santamaria et al. 2021 (Gaia EDR3)
+NGC 581,,2530,M 103; Hunt & Reffert 2023 (Gaia DR3)
+NGC 6171,,5630,M 107; Baumgardt & Vasiliev 2021 (Gaia EDR3)
+NGC 188,,1820,C 1; Hunt & Reffert 2023 (Gaia DR3)
+NGC 40,,1620,C 2; Gonzalez-Santamaria et al. 2021 (Gaia EDR3)
+NGC 559,,2770,C 8; Hunt & Reffert 2023 (Gaia DR3)
+NGC 663,,2670,C 10; Hunt & Reffert 2023 (Gaia DR3)
+NGC 457,,2800,C 13; Hunt & Reffert 2023 (Gaia DR3)
+C 14,,2290,Double Cluster; Hunt & Reffert 2023 (Gaia DR3) mean of NGC 869 and NGC 884
+NGC 6826,,1280,C 15; Gonzalez-Santamaria et al. 2021 (Gaia EDR3)
+NGC 7243,,864,C 16; Hunt & Reffert 2023 (Gaia DR3)
+IC 5146,,749,Cocoon Nebula; cluster IC 5146 per Hunt & Reffert 2023 (Gaia DR3)
+NGC 2419,,88500,C 25; Baumgardt & Vasiliev 2021 (Gaia EDR3)
+NGC 752,,434,C 28; Hunt & Reffert 2023 (Gaia DR3)
+IC 405,,382,Flaming Star Nebula; illuminating star AE Aur per Bailer-Jones et al. 2021 (Gaia EDR3)
+C 41,,47.2,Hyades; Hunt & Reffert 2023 (Gaia DR3)
+NGC 7006,,39300,C 42; Baumgardt & Vasiliev 2021 (Gaia EDR3)
+NGC 6934,,15700,C 47; Baumgardt & Vasiliev 2021 (Gaia EDR3)
+NGC 2238,,1420,Rosette Nebula; ionizing cluster NGC 2244 per Hunt & Reffert 2023 (Gaia DR3)
+NGC 2244,,1420,C 50; Hunt & Reffert 2023 (Gaia DR3); OpenNGC lists NGC 2239 as the same object
+NGC 2506,,3140,C 54; Hunt & Reffert 2023 (Gaia DR3)
+NGC 7009,,1180,C 55; Gonzalez-Santamaria et al. 2021 (Gaia EDR3)
+NGC 2360,,1040,C 58; Hunt & Reffert 2023 (Gaia DR3)
+NGC 2362,,1230,C 64; Hunt & Reffert 2023 (Gaia DR3)
+NGC 5694,,34800,C 66; Baumgardt & Vasiliev 2021 (Gaia EDR3)
+NGC 6729,,152,C 68; R CrA on-cloud population per Galli et al. 2020 (Gaia DR2)
+NGC 2477,,1380,C 71; Hunt & Reffert 2023 (Gaia DR3)
+NGC 1851,,12000,C 73; Baumgardt & Vasiliev 2021 (Gaia EDR3)
+NGC 3132,,759,C 74; Chornay & Walton 2021 (Gaia EDR3 + statistical)
+NGC 6124,,612,C 75; Hunt & Reffert 2023 (Gaia DR3)
+NGC 6231,,1550,C 76; Hunt & Reffert 2023 (Gaia DR3)
+NGC 6541,,7610,C 78; Baumgardt & Vasiliev 2021 (Gaia EDR3)
+NGC 3201,,4740,C 79; Baumgardt & Vasiliev 2021 (Gaia EDR3)
+NGC 6352,,5540,C 81; Baumgardt & Vasiliev 2021 (Gaia EDR3)
+NGC 6193,,1140,C 82; Hunt & Reffert 2023 (Gaia DR3)
+NGC 5286,,11100,C 84; Baumgardt & Vasiliev 2021 (Gaia EDR3)
+IC 2391,,150,C 85; Hunt & Reffert 2023 (Gaia DR3)
+NGC 6397,,2480,C 86; Baumgardt & Vasiliev 2021 (Gaia EDR3)
+NGC 1261,,16400,C 87; Baumgardt & Vasiliev 2021 (Gaia EDR3)
+NGC 5823,,1730,C 88; Hunt & Reffert 2023 (Gaia DR3)
+NGC 6087,,938,C 89; Hunt & Reffert 2023 (Gaia DR3)
+NGC 2867,,2810,C 90; Gonzalez-Santamaria et al. 2021 (Gaia EDR3)
+NGC 3532,,472,C 91; Hunt & Reffert 2023 (Gaia DR3)
+NGC 3372,,2360,Carina Nebula; Goppl & Preibisch 2022 (Gaia EDR3 OB stars)
+NGC 6752,,4130,C 93; Baumgardt & Vasiliev 2021 (Gaia EDR3)
+NGC 4755,,1980,C 94; Hunt & Reffert 2023 (Gaia DR3)
+NGC 6025,,760,C 95; Hunt & Reffert 2023 (Gaia DR3)
+NGC 2516,,407,C 96; Hunt & Reffert 2023 (Gaia DR3)
+NGC 3766,,1940,C 97; Hunt & Reffert 2023 (Gaia DR3)
+NGC 4609,,1400,C 98; Hunt & Reffert 2023 (Gaia DR3)
+C 99,,189,Coalsack; Zucker et al. 2020 (mean of 6 sightlines 182-193 pc)
+IC 2944,,2360,C 100; cluster IC 2944 per Hunt & Reffert 2023 (Gaia DR3)
+IC 2602,,151,C 102; Hunt & Reffert 2023 (Gaia DR3)
+NGC 2070,,49600,Tarantula Nebula; LMC distance per Pietrzynski et al. 2019
+NGC 362,,8830,C 104; Baumgardt & Vasiliev 2021 (Gaia EDR3)
+NGC 4833,,6480,C 105; Baumgardt & Vasiliev 2021 (Gaia EDR3)
+NGC 6101,,14400,C 107; Baumgardt & Vasiliev 2021 (Gaia EDR3)
+NGC 4372,,5710,C 108; Baumgardt & Vasiliev 2021 (Gaia EDR3)
+NGC 3195,,2540,C 109; Chornay & Walton 2021 (Gaia EDR3 + statistical)
+# --- Corrections (v0.51.0) ---
+IC 3418,,16500000,Virgo cluster member VCC 1217; NED z=0.000567 (Jachym+ 2013) not the catalog's 0.0896; Virgo cluster distance (Mei+ 2007)

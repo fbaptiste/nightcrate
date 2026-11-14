@@ -1,7 +1,9 @@
 """Tests for the PixInsight .pxiproject parser."""
 
+import os
 import struct
 import zlib
+from pathlib import Path
 
 import lz4.block
 import numpy as np
@@ -18,6 +20,7 @@ from nightcrate.services.pxiproject_io import (
     list_project_images,
     load_image_data,
     read_header,
+    referenced_image_path,
 )
 
 # ── Helpers to build test .pxiproject bundles ────────────────────────────────
@@ -360,6 +363,37 @@ class TestListExtensions:
 
 
 class TestLoadImageData:
+    def test_referenced_relative_path_refused(self):
+        with pytest.raises(
+            PxiProjectError,
+            match="This PixInsight project gives the image's location as a relative path, "
+            "so NightCrate can't find it\\.",
+        ):
+            referenced_image_path("images/m31.xisf")
+
+    @pytest.mark.skipif(os.name == "nt", reason="Windows paths are native on Windows")
+    @pytest.mark.parametrize(
+        "file_path",
+        [
+            "C:/Astro/m31.xisf",  # drive-absolute, forward slashes
+            "C:\\Astro\\m31.xisf",  # drive-absolute, backslashes
+            "C:Astro\\m31.xisf",  # drive-relative
+            "//server/share/m31.xisf",  # UNC, forward slashes: absolute on POSIX too
+            "\\\\server\\share\\m31.xisf",  # UNC, backslashes
+        ],
+    )
+    def test_referenced_windows_path_refused_on_posix(self, file_path):
+        with pytest.raises(PxiProjectError) as exc_info:
+            referenced_image_path(file_path)
+        assert str(exc_info.value) == (
+            "This PixInsight project was saved on Windows and points to its image at "
+            f"{file_path}, which this computer can't open."
+        )
+
+    @pytest.mark.skipif(os.name == "nt", reason="Windows paths are native on Windows")
+    def test_referenced_posix_absolute_path_accepted(self):
+        assert referenced_image_path("/Volumes/Astro/m31.xisf") == Path("/Volumes/Astro/m31.xisf")
+
     def test_embedded_mono_uncompressed(self, tmp_path):
         width, height = 10, 8
         rng = np.random.default_rng(42)

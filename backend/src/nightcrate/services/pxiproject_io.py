@@ -4,10 +4,11 @@ A .pxiproject is a directory bundle containing project.xosm (XML manifest)
 and project.data/ (binary blobs for pixel data in PixInsight's swap format).
 """
 
+import os
 import struct
 import zlib
 from functools import lru_cache
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 
 import defusedxml.ElementTree as ET
 import lz4.block
@@ -22,8 +23,29 @@ RAWIMAGE_MAGIC = b"egamiwar"
 RAWIMAGE_HEADER_SIZE = 128
 
 
-class PxiProjectError(Exception):
+class PxiProjectError(ValueError):
     """Raised when a .pxiproject cannot be parsed."""
+
+
+def referenced_image_path(file_path: str) -> Path:
+    """Return a usable absolute image reference from a PixInsight project.
+
+    On a Mac or Linux the Windows check comes first: a UNC path written with
+    forward slashes (``//server/share/m31.xisf``) is also an absolute POSIX
+    path, and accepting it would open an unrelated local file.
+    """
+    if os.name != "nt" and (PureWindowsPath(file_path).drive or file_path.startswith("\\")):
+        raise PxiProjectError(
+            "This PixInsight project was saved on Windows and points to its image at "
+            f"{file_path}, which this computer can't open."
+        )
+    path = Path(file_path)
+    if path.is_absolute():
+        return path
+    raise PxiProjectError(
+        "This PixInsight project gives the image's location as a relative path, "
+        "so NightCrate can't find it."
+    )
 
 
 def _tag(local: str) -> str:
@@ -267,7 +289,7 @@ def load_image_data(project_dir: Path, image_index: int) -> np.ndarray:
     if entry["source"] == "referenced" and entry["file_path"]:
         from nightcrate.services import xisf_io
 
-        ref_path = Path(entry["file_path"])
+        ref_path = referenced_image_path(entry["file_path"])
         if not ref_path.exists():
             raise FileNotFoundError(f"Referenced file not found: {entry['file_path']}")
         return xisf_io.load_image_data(ref_path)
