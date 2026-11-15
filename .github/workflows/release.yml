@@ -328,10 +328,20 @@ jobs:
         with:
           pattern: nightcrate-*
           path: artifacts
-      - name: Install minisign
+      - name: Install minisign on Linux
+        if: runner.os == 'Linux'
+        shell: bash
         run: |
-          sudo apt-get update
-          sudo apt-get install -y minisign
+          # Ubuntu 22.04 has no minisign package. This is minisign 0.12's
+          # official Linux build; its checksum was recorded after checking the
+          # release signature against the key in minisign's README.
+          curl -fsSL -o "$RUNNER_TEMP/minisign.tar.gz" \
+            https://github.com/jedisct1/minisign/releases/download/0.12/minisign-0.12-linux.tar.gz
+          echo "9a599b48ba6eb7b1e80f12f36b94ceca7c00b7a5173c95c3efc88d9822957e73  $RUNNER_TEMP/minisign.tar.gz" \
+            | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/minisign.tar.gz" -C "$RUNNER_TEMP" minisign-linux/x86_64/minisign
+          sudo install -m 0755 "$RUNNER_TEMP/minisign-linux/x86_64/minisign" /usr/local/bin/minisign
+          minisign -v
       - name: Assemble, verify and draft release
         env:
           GH_TOKEN: ${{ github.token }}

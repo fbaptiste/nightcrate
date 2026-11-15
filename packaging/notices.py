@@ -781,7 +781,11 @@ def _owner_for_python_native(
 def _python_distribution_index(
     distributions: dict[str, metadata.Distribution],
 ) -> dict[str, set[str]]:
-    """Map importable top-level names to build-environment distributions."""
+    """Map top-level names under ``lib/`` to build-environment distributions.
+
+    Keys are importable names plus any top-level folder a distribution's
+    ``RECORD`` lists, such as the ``numpy.libs`` DLL folder of a Windows wheel.
+    """
     result: dict[str, set[str]] = defaultdict(set)
     for canonical, dist in distributions.items():
         top_levels = {
@@ -809,8 +813,10 @@ def _python_distribution_index(
                     top_level = match.group(1)
                 else:
                     continue
-            if re.fullmatch(r"[A-Za-z_]\w*", top_level):
-                top_levels.add(top_level)
+                if re.fullmatch(r"[A-Za-z_]\w*", top_level):
+                    top_levels.add(top_level)
+            else:
+                result[top_level].add(canonical)
         for top_level in top_levels:
             if re.fullmatch(r"[A-Za-z_]\w*", top_level):
                 result[top_level].add(canonical)

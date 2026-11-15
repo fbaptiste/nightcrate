@@ -146,7 +146,8 @@ forecasts and survey imagery are fetched from external services when needed.
 Active development. Folder ingestion, derived sessions and frame measurements
 are implemented. Calibration coverage UI, guiding association with exposures,
 capture-log/autofocus integration and a unified session timeline are planned.
-The app has no packaged native installer yet.
+Installers are available for macOS on Apple Silicon, 64-bit Windows and 64-bit
+Linux.
 
 Equipment is assigned through declared rigs and folder tags; automatic FITS
 equipment inference and integration goals were removed. Derived sessions update
@@ -155,6 +156,73 @@ inflate totals.
 
 See [the active plan](PLAN.md) for remaining work and the
 [documentation index](docs/README.md) for code locations and technical references.
+
+## Install
+
+Download NightCrate from the [latest GitHub release](https://github.com/fbaptiste/nightcrate/releases/latest).
+
+### macOS (Apple Silicon only)
+
+Download the `.dmg` and drag NightCrate to Applications. The first launch shows
+a warning because NightCrate is not signed by Apple. Open System Settings →
+Privacy & Security and click "Open Anyway" once.
+
+After each update, macOS may ask again for permission to read folders such as
+Documents or an external drive. Allow it. Run NightCrate from Applications. It
+refuses to start from a folder reached through a symbolic link.
+
+### Windows (64-bit)
+
+Run the `.exe` installer. Administrator rights are not needed. If SmartScreen
+warns, click "More info", then "Run anyway" once.
+
+### Linux (64-bit)
+
+Download the `.AppImage`, make it executable and run it:
+
+```bash
+chmod +x NightCrate_*.AppImage
+```
+
+Some distributions need FUSE 2 (`libfuse2`) to run AppImages.
+
+### Updates
+
+On first launch, NightCrate asks whether it may check GitHub once a day for a
+new version. You can change this in Admin.
+
+The check sends nothing about your images or workspaces. "Check now" in Admin
+and opening Admin's Catalogs section also contact GitHub, even when automatic
+checks are off.
+
+A new version is installed only when you click "Install and restart".
+NightCrate backs up the workspace before upgrading it. On Windows, if the
+installer itself fails after it starts, download the installer from the release
+page and run it.
+
+### Where your data lives
+
+Workspaces are the folders you chose. App settings, catalogs and caches live in
+the app-data folder:
+
+- macOS: `~/Library/Application Support/NightCrate`
+- Windows: `%LOCALAPPDATA%\NightCrate`
+- Linux: `~/.local/share/NightCrate`
+
+Logs live here:
+
+- macOS: `~/Library/Logs/NightCrate`
+- Windows: `%LOCALAPPDATA%\NightCrate\Logs`
+- Linux: `~/.local/state/NightCrate/log`
+
+Admin → App Info shows both folders. Uninstalling NightCrate leaves your
+workspaces and the app-data folder in place. NightCrate and a copy run from
+source share the app-data folder. Only one can run at a time.
+
+### Update signing
+
+If the project's update-signing key is ever lost, every installed copy will
+need the next installer downloaded by hand, once.
 
 ## Run locally
 
@@ -166,7 +234,11 @@ Command Line Tools for source-built dependencies (`xcode-select --install`).
 ```bash
 make install    # install backend/frontend dependencies from the lockfiles
 make dev        # backend :8000, frontend :5173
+make start      # built frontend and production server :8765
 ```
+
+`make start` builds the frontend and runs the production server at
+http://127.0.0.1:8765 without the Vite development server.
 
 The setup wizard creates or opens a workspace containing `nightcrate.db` and
 rendered `project_data/`. Source images remain in their original locations;
@@ -198,6 +270,9 @@ and Linux.
 NightCrate trusts the local user and has no authentication. Normal `make dev`
 binds the backend to localhost. The file browser can access paths permitted to
 the process; this is not a shared or publicly hosted service.
+
+The installed app is local-only. It serves only `127.0.0.1` and rejects
+requests for other host names.
 
 `make dev-lan` enables HTTPS tablet access on a trusted LAN and exposes **both**
 servers on the network, with permissive backend CORS. Do not use it on an

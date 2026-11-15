@@ -1,6 +1,6 @@
 ---
 name: finalize-session
-description: Prepare a release candidate for Fred's acceptance test, then publish it (commit, tag, push, PR) once he authorizes.
+description: Prepare a release candidate for Fred's acceptance test, then publish it (commit, push, PR) once he authorizes. Release tags come from release.yml.
 ---
 
 # Finalize session
@@ -18,9 +18,14 @@ publication. Never force-push.
    findings to the writer during review. If preparation shows a code change is
    needed, return it to implementation and review, then prepare the candidate
    again.
-3. Bump `VERSION` and `backend/pyproject.toml` together; update `uv.lock` if its
-   project metadata changes. Run `sync-docs`, including its schema/reference
-   version headers.
+3. Bump the version in all four places together: `VERSION`,
+   `backend/pyproject.toml`, `frontend/package.json` (with `npm version
+   <x> --no-git-tag-version`, so `package-lock.json` follows) and
+   `packaging/shell/src-tauri/Cargo.toml` (then `cargo update -p
+   nightcrate-shell --offline`). The installed app's shell takes its
+   version from `frontend/package.json`, and `release.yml` refuses to build
+   when they disagree. Update `uv.lock` if its project metadata changes.
+   Run `sync-docs`, including its schema/reference version headers.
 4. Complete the release checks in `CLAUDE.md`: backend lint, format, security
    (zero medium/high findings), and tests; frontend TypeScript/production build.
    Run the full backend suite once here. Report every security finding under
@@ -53,10 +58,11 @@ publication. Never force-push.
    message explaining the change. Use the actual running
    agent's harness-provided attribution; never copy a model name or invent a
    co-author address. Pass multiline bodies through a temporary file.
-3. Tag the release commit `v{version}`; if that tag exists elsewhere, resolve the
-   conflict instead of moving it. Push the branch with upstream tracking, and
-   verify the remote branch SHA equals local HEAD (`git ls-remote`). Publish the
-   version tag only as part of the authorized release workflow.
+3. Don't tag. From v0.54.0, `release.yml` creates the version tag on the
+   merged commit it builds, when Fred says "release" (spec v0.54.0 §10).
+   A tag made at PR time could end up behind the merged code. Push the
+   branch with upstream tracking, and verify the remote branch SHA equals
+   local HEAD (`git ls-remote`).
 4. Create a PR to `main`, or update the existing branch PR. Keep the title under
    70 characters. Describe the final scope and relevant validation; omit tool
    marketing and canned boilerplate.

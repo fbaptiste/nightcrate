@@ -82,6 +82,47 @@ def test_unknown_library_zip_module_fails_with_its_name(tmp_path: Path) -> None:
         _frozen_python_inventory(tmp_path / "backend", _installed_distributions())
 
 
+class _RecordDistribution:
+    def __init__(self, name: str, files: list[str]):
+        self.metadata = {"Name": name}
+        self.version = "1.0"
+        self.files = files
+
+    def read_text(self, _name: str) -> str | None:
+        return None
+
+
+def test_wheel_library_folder_under_lib_is_attributed_to_its_wheel(
+    tmp_path: Path,
+) -> None:
+    library = tmp_path / "backend" / "lib"
+    (library / "numpy.libs").mkdir(parents=True)
+    (library / "numpy.libs" / "libscipy_openblas64_-abc.dll").write_bytes(b"MZ")
+    distributions = {
+        "numpy": _RecordDistribution(
+            "numpy",
+            [
+                "numpy/__init__.py",
+                "numpy.libs/libscipy_openblas64_-abc.dll",
+                "numpy-2.3.4.dist-info/RECORD",
+            ],
+        )
+    }
+
+    modules, names = _frozen_python_inventory(tmp_path / "backend", distributions)
+
+    assert modules == []
+    assert names == {"numpy"}
+
+
+def test_unowned_folder_under_lib_fails_with_its_path(tmp_path: Path) -> None:
+    library = tmp_path / "backend" / "lib"
+    (library / "mystery.libs").mkdir(parents=True)
+
+    with pytest.raises(NoticeError, match=r"lib/mystery\.libs.*no distribution owner"):
+        _frozen_python_inventory(tmp_path / "backend", {})
+
+
 def test_subprocess_output_is_decoded_as_strict_utf8() -> None:
     output = _run(
         [
