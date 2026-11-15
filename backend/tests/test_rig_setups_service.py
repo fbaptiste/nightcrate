@@ -153,12 +153,80 @@ async def test_rig_usage_counts_session_nights(rig_db: Path):
         equipment = await make_equipment(conn)
         rig_id = await make_rig(conn, equipment, "Session rig")
         project_id = await make_project(conn)
+        session_id = (
+            await conn.execute(
+                "INSERT INTO session (project_id, rig_id, start_utc) VALUES (?, ?, ?)",
+                (project_id, rig_id, "2026-11-04T03:00:00+00:00"),
+            )
+        ).lastrowid
+        frame_id = await make_frame(
+            conn,
+            project_id,
+            "session-light",
+            rig_id=rig_id,
+            date_obs_utc="2026-11-04T03:00:00+00:00",
+        )
         await conn.execute(
-            "INSERT INTO session (project_id, rig_id, start_utc) VALUES (?, ?, ?)",
-            (project_id, rig_id, "2026-11-04T03:00:00+00:00"),
+            "UPDATE sub_frame SET session_id = ? WHERE id = ?", (session_id, frame_id)
         )
 
         assert await rig_usage(conn, rig_id) == RigUsage(1, 1)
+
+
+@pytest.mark.asyncio
+async def test_rig_usage_excludes_calibration_nights(rig_db: Path):
+    async with aiosqlite.connect(rig_db) as conn:
+        conn.row_factory = aiosqlite.Row
+        await conn.execute("PRAGMA foreign_keys = ON")
+        equipment = await make_equipment(conn)
+        rig_id = await make_rig(conn, equipment, "Calibration rig")
+        project_id = await make_project(conn)
+        await make_frame(
+            conn,
+            project_id,
+            "light",
+            rig_id=rig_id,
+            date_obs_utc="2026-09-01T03:00:00+00:00",
+        )
+        await make_frame(
+            conn,
+            project_id,
+            "flat",
+            rig_id=rig_id,
+            date_obs_utc="2037-12-31T16:06:36+00:00",
+            frame_type="flat",
+        )
+        await make_frame(
+            conn,
+            project_id,
+            "dark",
+            rig_id=rig_id,
+            date_obs_utc="2025-06-15T03:00:00+00:00",
+            frame_type="dark",
+        )
+
+        assert await rig_usage(conn, rig_id) == RigUsage(1, 1)
+
+        calibration_project = await make_project(conn, "Calibration only")
+        only_flat = await make_frame(
+            conn,
+            calibration_project,
+            "only-flat",
+            rig_id=rig_id,
+            date_obs_utc="2037-12-31T16:06:36+00:00",
+            frame_type="flat",
+        )
+        calibration_session = (
+            await conn.execute(
+                "INSERT INTO session (project_id, rig_id, start_utc) VALUES (?, ?, ?)",
+                (calibration_project, rig_id, "2037-12-31T16:06:36+00:00"),
+            )
+        ).lastrowid
+        await conn.execute(
+            "UPDATE sub_frame SET session_id = ? WHERE id = ?",
+            (calibration_session, only_flat),
+        )
+        assert await rig_usage(conn, rig_id) == RigUsage(2, 1)
 
 
 @pytest.mark.asyncio

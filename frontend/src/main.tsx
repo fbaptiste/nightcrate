@@ -4,6 +4,9 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import "./index.css";
 import "katex/dist/katex.min.css";
 import App from "./App";
+import { installDropGuard } from "./lib/dropGuard";
+
+installDropGuard();
 
 const queryClient = new QueryClient({
   defaultOptions: { queries: { retry: 1, staleTime: 30_000 } },

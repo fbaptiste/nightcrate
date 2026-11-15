@@ -240,8 +240,12 @@ export function AppShell() {
   const drawerWidth = navOpen ? DRAWER_WIDTH_OPEN : DRAWER_WIDTH_CLOSED;
 
   useEffect(() => onDownloadSaved((path) => {
-    const name = path.split(/[\\/]/).pop() || path;
-    setDownloadToast(`Saved to Downloads: ${name}`);
+    // The user chose the folder in the Save dialog, so name it rather than
+    // assuming Downloads.
+    const parts = path.split(/[\\/]/).filter(Boolean);
+    const name = parts.pop() ?? path;
+    const folder = parts.pop();
+    setDownloadToast(folder ? `Saved “${name}” to ${folder}` : `Saved “${name}”`);
   }), []);
 
   useEffect(() => {
@@ -515,6 +519,8 @@ function SortableNavItemRow({ item, navOpen }: { item: NavItem; navOpen: boolean
       <NavLink
         to={item.to}
         end={item.to === "/"}
+        // dnd-kit does the reordering; a native link drag would start too.
+        draggable={false}
         style={{ textDecoration: "none", width: "100%", color: "inherit" }}
       >
         {({ isActive }) => (

@@ -13,9 +13,10 @@ resolver and the rig-attribution pass): a project carries its rigs via
 project_rig, and that is the equipment context. ``sub_frame.filter_name_hint``
 holds the header's filter name and is the only filter fact.
 
-Ingest also never writes ``project_session`` — building the user-facing session
-list from these frames is an explicit action on the Sessions tab
-(``services/session_derivation.py``).
+Ingest does not create ``project_session`` rows. Building the user-facing session
+list for the first time is an explicit action on the Sessions tab. Once automatic
+rows exist, changing a source folder's rig rebuilds them so they cannot retain the
+old rig (``services/session_derivation.py``).
 
 This module owns the transaction; the pure services (ingest_scanner,
 ingest_classify, ingest_sessions) never commit. One ingest runs at a time per
@@ -94,6 +95,7 @@ from nightcrate.services.ingest_sessions import (
     project_geo_timezone,
 )
 from nightcrate.services.line_names import canonicalize_line_name
+from nightcrate.services.session_derivation import derive_sessions
 
 logger = logging.getLogger("nightcrate.ingest")
 _LOG_PREFIX = "[ingest]"
@@ -312,7 +314,7 @@ async def update_folder(project_id: int, folder_id: int, body: SourceFolderUpdat
     """
     async with get_db() as conn:
         await conn.execute("PRAGMA foreign_keys = ON")
-        await _get_folder_or_404(conn, project_id, folder_id)
+        folder = await _get_folder_or_404(conn, project_id, folder_id)
         sent = body.model_fields_set
         if not ({"rig_id", "project_target_id"} & sent):
             return await _fetch_folder(conn, folder_id)
@@ -320,6 +322,14 @@ async def update_folder(project_id: int, folder_id: int, body: SourceFolderUpdat
             await get_or_404(conn, "rig", body.rig_id, "Rig")
         if "project_target_id" in sent:
             await _validate_folder_target(conn, project_id, body.project_target_id)
+        rig_changed = "rig_id" in sent and body.rig_id != folder["rig_id"]
+        had_auto_batches = False
+        if rig_changed:
+            cursor = await conn.execute(
+                "SELECT 1 FROM project_session WHERE project_id = ? AND source = 'auto' LIMIT 1",
+                (project_id,),
+            )
+            had_auto_batches = await cursor.fetchone() is not None
         # Only the fields actually sent are written, so tagging a rig can't clear
         # a target that was set separately.
         sets = [f"{f} = ?" for f in ("rig_id", "project_target_id") if f in sent]
@@ -329,9 +339,10 @@ async def update_folder(project_id: int, folder_id: int, body: SourceFolderUpdat
             f"UPDATE project_source_folder SET {', '.join(sets)} WHERE id = ?",  # nosec B608
             (*params, folder_id),
         )
-        await assign_rigs_and_sessions(
-            conn, project_id, await project_geo_timezone(conn, project_id)
-        )
+        tz_name = await project_geo_timezone(conn, project_id)
+        await assign_rigs_and_sessions(conn, project_id, tz_name)
+        if rig_changed and had_auto_batches:
+            await derive_sessions(conn, project_id, tz_name=tz_name)
         await conn.commit()
         return await _fetch_folder(conn, folder_id)
 

@@ -18,7 +18,6 @@ use tauri::webview::PageLoadEvent;
 use tauri::{
     AppHandle, LogicalSize, Manager, RunEvent, WebviewUrl, WebviewWindowBuilder, WindowEvent,
 };
-use tauri_plugin_window_state::{StateFlags, WindowExt};
 
 struct BackendSlot(Mutex<Option<Arc<Backend>>>);
 
@@ -48,6 +47,9 @@ fn capability_spec(port: u16, selftest: bool) -> (String, Vec<&'static str>) {
     let mut permissions = vec![
         "core:event:allow-listen",
         "core:event:allow-unlisten",
+        // On macOS and Linux, the zoom shortcuts (Cmd/Ctrl +, -, 0) are a script
+        // in the page that calls this; without it they do nothing.
+        "core:webview:allow-set-webview-zoom",
         "allow-install-update",
     ];
     if selftest {
@@ -151,11 +153,11 @@ fn remembered_size_usable(width: f64, height: f64) -> bool {
     width >= MAIN_MIN_SIZE.0 && height >= MAIN_MIN_SIZE.1
 }
 
-/// Restore the main window's remembered size and place, but never a size below
-/// the minimum: the plugin restores whatever was saved, and a 1400 x 100
-/// window once came back from a test run (Fred, 2026-11-15).
+/// The window-state plugin restores whatever size was saved, and a 1400 x 100
+/// window once came back from a test run (Fred, 2026-11-15). Put a too-small
+/// window back to the default size, centred. The plugin restores during
+/// `build()`; restoring by hand here instead deadlocked on its state lock.
 fn restore_main_size(window: &tauri::WebviewWindow) {
-    let _ = window.restore_state(StateFlags::all());
     let usable = window
         .inner_size()
         .and_then(|size| Ok(size.to_logical::<f64>(window.scale_factor()?)))
@@ -324,8 +326,6 @@ fn main() {
         .plugin(
             tauri_plugin_window_state::Builder::default()
                 .with_denylist(&["loading"])
-                // Restored by `restore_main_size`, which refuses a too-small size.
-                .skip_initial_state("main")
                 // Test builds keep their own file, so they can't change the size
                 // a real install restores.
                 .with_filename(if option_env!("NIGHTCRATE_TEST_APP_DIR").is_some() {
@@ -462,6 +462,7 @@ mod tests {
             vec![
                 "core:event:allow-listen",
                 "core:event:allow-unlisten",
+                "core:webview:allow-set-webview-zoom",
                 "allow-install-update"
             ]
         );
@@ -471,6 +472,7 @@ mod tests {
             vec![
                 "core:event:allow-listen",
                 "core:event:allow-unlisten",
+                "core:webview:allow-set-webview-zoom",
                 "allow-install-update",
                 "allow-selftest-report"
             ]

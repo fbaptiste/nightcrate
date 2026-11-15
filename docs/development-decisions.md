@@ -118,13 +118,19 @@ Shared architecture, checks, and privacy rules live in [CLAUDE.md](../CLAUDE.md)
 
 ## App shell
 
-- Users run the app through the Vite development server (`make dev`); the
-  backend does not serve a built frontend. Vite's development-server advisories
-  therefore reach users. For example, Vite 8.0.3's open-in-editor route could
-  leak a Windows password hash to any web page visited while NightCrate ran.
-  So `vite`, `@vitejs/plugin-react`, and `@vitejs/plugin-basic-ssl` are listed
-  under `dependencies`, which means `npm audit --omit=dev` covers them.
-  `make install` uses `npm ci` so that installs never rewrite the lockfile.
+- **Three ways to run NightCrate** (v0.54.0):
+  - **the installed app:** the Tauri shell runs the frozen backend;
+  - **`make start`:** the production entrypoint, `nightcrate.serve`, serves
+    the built frontend at `127.0.0.1:8765`;
+  - **`make dev`:** the Vite development server, for development.
+
+  Development runs still expose Vite's development-server advisories. For
+  example, Vite 8.0.3's open-in-editor route could leak a Windows password
+  hash to any web page visited while NightCrate ran. So `vite`,
+  `@vitejs/plugin-react` and `@vitejs/plugin-basic-ssl` stay listed under
+  `dependencies`, where `npm audit --omit=dev` covers them. `make install`
+  uses `npm ci`, so installs never rewrite the lockfile. See Distribution
+  and the installed app, below.
 - `AppShell` keeps the Image Analyzer, Planner, PHD2 Analyzer, DSO Catalog,
   Weather, Gallery and Messier pages mounted after their first visit, hidden with `display: none`, so
   nested state such as chart zoom survives navigation. To add a page, register
@@ -465,8 +471,14 @@ Since v0.47.0. Spec: [v0.47.0 design](superpowers/specs/2026-11-07-v0.47.0-desig
   `line_names` service supplies canonical bandpasses. Keep its 15-value vocabulary,
   the TypeScript copy, and the database CHECK synchronized (including `R+`).
 - `session` is the ingest rig/night group; `project_session` is a capture batch.
-  Derive capture batches **only on request**, never during ingest. Replace auto
-  rows and preserve manual rows. Derived rows are read-only (409 on edit/delete).
+  Derive capture batches for the first time **only on request**, never during
+  ingest. Once auto batches exist, a folder rig change rebuilds them in the same
+  transaction (Fred, 2026-11-15), because a stale batch keeps the old rig in use.
+  Replace auto rows and preserve manual rows. Derived rows are read-only (409 on
+  edit/delete).
+- Night counts and first/last imaging dates use light frames only. Calibration
+  frames never count because they are often reused across projects (Fred,
+  2026-11-15); their ingest rig/night groups still exist for calibration matching.
 - **Night notes** (`project_night_note`, v0.47.0) hold one note per project
   and observing night, keyed by the civil night date (`YYYY-MM-DD`; the API
   rejects anything that doesn't round-trip, such as week dates). They live
@@ -2053,3 +2065,122 @@ archived in [imaging-quality-model.md](archive/imaging-quality-model.md).
 - Diagnostics middleware records requests. Use `X-Activity` for fetch and
   `_activity` for image URLs; keep an image's activity label stable from file
   open so cache busting does not split request groups.
+
+## Distribution and the installed app
+
+v0.54.0. The design is in the spec
+(`docs/superpowers/specs/2026-11-14-v0.54.0-installers-and-updates-design.md`);
+these are the constraints and traps found while building it.
+
+- **One backend per app-data folder.** Every backend, `make dev` included,
+  takes an OS lock on `APP_DIR/instance.lock`, and `APP_DIR/instance.json`
+  says who holds it. The installed app and a source run share
+  `APP_DIR`. So with the lock in place, never run them at once against the
+  same workspace; the second one refuses with a clear message.
+- **Workspace activation is one guarded path,**
+  `db/workspace_upgrade.initialize_workspace`. It runs at startup, from
+  setup, and from Admin. In order:
+  1. a marker classification from files only;
+  2. SQLite's own journal recovery;
+  3. a read-only refusal of newer databases (yoyo's API would create or
+     upgrade its tables, so it isn't used for that);
+  4. a backup;
+  5. migrations;
+  6. loaders;
+  7. a durable completion record.
+
+  A leftover `backups/upgrade-in-progress.json` marker restores its backup
+  unless `nightcrate-workspace.json`'s `completed_upgrade` matches the
+  marker's id. **Residual:** versions before v0.54.0 ignore markers; if one
+  opens a half-upgraded workspace, its writes are lost when a later version
+  restores.
+- **While a workspace is refused, nothing opens its database.**
+  `get_db_path()` raises `WorkspaceUnavailable`, which becomes a 409, and
+  code that read `config.active_db` itself uses `active_db_path_or_none()`.
+  New database openers must use one of the two.
+- **`with sqlite3.connect(...) as conn` doesn't close the connection.** Use
+  `contextlib.closing`. On Windows an open connection blocks `os.replace`
+  of the database, so a backup or a restore would fail.
+- **Durability:** backups, markers and the workspace file are written with
+  `db/durable_fs.py` (fsync of the file and of its directory). Windows has
+  no directory fsync; NTFS journaling covers the rename.
+- **Hard-linked `nightcrate.db` files are refused,** and symlinked ones are
+  resolved: a restore replaces only one directory entry.
+- **Child processes:** every pool, standalone process and subprocess is
+  registered in `core/child_processes.py`. Shutdown and the shell-EOF
+  deadline call `terminate_all()`, which rescans until no child is left,
+  with handle-based termination. **uvicorn runs on uvloop** wherever it's
+  installed (`uvicorn[standard]`, not Windows), and uvloop's subprocess
+  transport exposes no `Popen`. Asyncio children (ASTAP) therefore use a
+  POSIX adapter. Tests that run on pytest's standard loop can't see this;
+  `test_terminate_all_under_uvloop` covers it.
+- **The production entrypoint's stdout is a protocol:** `NIGHTCRATE_STEP`,
+  `NIGHTCRATE_ALIVE`, `NIGHTCRATE_READY` and `NIGHTCRATE_LOCKED`, plus
+  exit codes 3–6. The shell must keep draining stdout and stderr after
+  ready, or the backend blocks once the pipe fills.
+- **Port binding:** `choose_port` sets `SO_REUSEADDR` on POSIX
+  (`SO_EXCLUSIVEADDRUSE` on Windows). Without it, ports in TIME_WAIT after
+  a quit can't be re-bound for a while, so the app would move off 8765 and
+  lose its `localStorage` origin.
+- **The Host check compares the full `host:port`.** Starlette's
+  `TrustedHostMiddleware` ignores the port.
+- **`APP_DIR/updates.json`, not `config.json`,** holds the update answers,
+  because older versions rewrite `config.json` and drop unknown keys.
+  Automatic checks run only when the frontend asks and 24 h have passed
+  since the last *attempt*. "Check now" and opening the Catalogs section
+  still contact GitHub.
+- **The install reservation** (`api/app_activity.py`) is owned by a token;
+  the shell renews it while downloading and sets a non-expiring barrier
+  just before stopping the backend. `admit_work` guards every
+  work-starting route. The decision uses only in-memory signals, with no
+  `await` between check and set.
+- **The app's version** lives in `VERSION`, `backend/pyproject.toml`,
+  `frontend/package.json` and the shell's `Cargo.toml`.
+  `tauri.conf.json` reads `frontend/package.json` (it said `0.0.0` until
+  v0.54.0), and `release.yml` checks that all four agree.
+- **cx_Freeze:**
+  - it drops migrations whose file names aren't module names, so
+    `freeze.py` copies the migrations folder whole and `check_build.py`
+    compares it;
+  - on macOS it moves `libmlx.dylib` without `mlx.metallib`, and the first
+    GPU call then kills the process;
+  - on Linux it rewrites RPATHs, so the frozen files' hashes differ from
+    their wheels' `RECORD` entries;
+  - its interpreter leaves SIGPIPE at the default, unlike standard
+    Python. A force-quit shell closes the backend's stdin and stdout
+    together, and the backend died logging "Shutting down", leaving its
+    workers running. `serve.py` ignores SIGPIPE and sends its output to the
+    null device when stdin closes; `smoke.py` checks the force-quit case
+    on the frozen build.
+- **Tauri:**
+  - on macOS it refuses to run from a path with a symlink in any ancestor
+    (`/var` → `/private/var` breaks CI temp folders);
+  - `open_devtools` exists only in debug builds or with the
+    `test-devtools` feature;
+  - the resource path in `tauri.conf.json` is relative to
+    `packaging/shell/src-tauri`;
+  - the main window's IPC permission is added at runtime for exactly
+    `http://127.0.0.1:{port}`;
+  - a locked macOS screen suspends WebKit pages, so a local self-test needs
+    an unlocked session.
+- **Test hooks**, read only when set: `NIGHTCRATE_TEST_STARTUP_DELAY`,
+  `NIGHTCRATE_TEST_BUSY_POOL` and `NIGHTCRATE_TEST_BASE_PORT` (backend);
+  the `NIGHTCRATE_TEST_*` compile-time options (shell), which
+  `release.yml` refuses in release builds.
+- **Licences:** `packaging/notices.py` inventories every native file the
+  installers ship, fails closed, and renders `licences/` plus a
+  per-platform LGPL source archive. The policy and the reasoning behind
+  each accepted licence are in `packaging/licence_policy.toml`. The MSVC
+  runtime counts as a GPLv3 System Library. GCC runtimes whose exact
+  release can't be determined (numpy's and scipy's Linux wheels) are
+  flagged; with `--allow-unresolved-gcc`, which release builds pass too
+  (Fred, 2026-11-15), they point to upstream GCC's source and carry the
+  wheels' own licence files. Vendor builds are treated the same: GNU
+  releases are numbered X.Y.0, so scipy's GCC 14.2.1 (a gcc-toolset
+  snapshot) has no upstream source to attach.
+- **App icon:** the source drawing is `packaging/shell/app-icon.svg`;
+  `npx tauri icon app-icon.svg` in `packaging/shell` regenerates the set;
+  keep only the seven desktop files already in `src-tauri/icons/` and delete
+  the mobile and Windows Store sizes it also writes.
+  `frontend/public/favicon.svg` is the same drawing cropped to the rounded
+  square.

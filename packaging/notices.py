@@ -552,6 +552,19 @@ def _gcc_runtime_version(
     return None
 
 
+def _gcc_has_upstream_release(version: str) -> bool:
+    """Whether gcc.gnu.org publishes a source release for this GCC version.
+
+    Since GCC 5, releases are numbered X.Y.0; X.Y.1 is a development snapshot,
+    which distributions ship as vendor builds (gcc-toolset-14's 14.2.1).
+    """
+    match = re.fullmatch(r"(\d+)\.(\d+)\.(\d+)", version)
+    if match is None:
+        return False
+    major, _minor, patch = (int(part) for part in match.groups())
+    return major < 5 or patch == 0
+
+
 def _elf_gcc_version(library: Path) -> str | None:
     """Read the compiler release from an ELF .comment section when available."""
     output = _run(["readelf", "--string-dump=.comment", str(library)])
@@ -717,7 +730,7 @@ def _distribution_native_owner(
             _compiler_record(dist),
             path,
         )
-        if gcc_version:
+        if gcc_version and _gcc_has_upstream_release(gcc_version):
             return {
                 "kind": "gcc",
                 "name": "GCC runtime",
@@ -732,9 +745,17 @@ def _distribution_native_owner(
                 f"{path}: unresolved GCC runtime provider {display_name} "
                 "has no bundled licence file"
             )
+        # Fred, 2026-11-15, decision (a): point to upstream GCC and keep the
+        # wheel's own licence files. A vendor build (scipy's Linux wheels report
+        # GCC 14.2.1) has no upstream source to attach either.
         return {
             "kind": "gcc-unresolved",
-            "name": "GCC runtime library, exact GCC release undetermined",
+            "name": (
+                f"GCC runtime library, built with GCC {gcc_version}, a vendor "
+                "build with no upstream release"
+                if gcc_version
+                else "GCC runtime library, exact GCC release undetermined"
+            ),
             "provider": display_name,
             "provider_version": dist.version,
             "source_url": "https://gcc.gnu.org/",
@@ -1703,8 +1724,8 @@ def render(
         raise NoticeError(f"unresolved GCC runtime libraries: {paths}")
     for item in unresolved:
         print(
-            f"warning: {item['path']}: GCC runtime library, exact GCC release "
-            "undetermined; omitted from the exact-source archive",
+            f"warning: {item['path']}: {item['owner']['name']}; omitted from the "
+            "exact-source archive",
             file=sys.stderr,
         )
     out.mkdir(parents=True, exist_ok=True)

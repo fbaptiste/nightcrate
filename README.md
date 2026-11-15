@@ -348,6 +348,18 @@ Libraries and data sources used by NightCrate:
 | [Vite](https://vite.dev/) | MIT | Copyright (c) 2019-present, VoidZero Inc. and Vite contributors |
 | [Geist Font](https://vercel.com/font) | SIL OFL 1.1 | Copyright (c) 2023 Vercel |
 
+### Desktop app
+
+The installers' window, updater and packaging. Each installer also carries
+the full licence notices for every component it ships.
+
+| Component | License | Copyright |
+|---|---|---|
+| [Tauri](https://tauri.app/) | MIT or Apache 2.0 | Copyright (c) 2017 - Present Tauri Apps Contributors |
+| Tauri plugins: single-instance, window-state, updater | MIT or Apache 2.0 | Copyright (c) 2017 - Present Tauri Apps Contributors; The Tauri Programme in the Commons Conservancy |
+| [rfd](https://github.com/PolyMeilex/rfd) (the Save dialog) | MIT | Copyright (c) 2022 Bartłomiej Maryńczak |
+| [cx_Freeze](https://cx-freeze.readthedocs.io/) | PSF-2.0 | Copyright © 2020-2026, Marcelo Duarte; © 2007-2019, Anthony Tuininga; © 2001-2006, Computronix (Canada) Ltd. |
+
 ### External Programs
 
 Invoked across a process boundary; their licenses do not propagate to NightCrate.

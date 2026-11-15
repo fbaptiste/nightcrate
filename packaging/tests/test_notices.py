@@ -740,6 +740,24 @@ def test_linux_elf_comment_is_second_gcc_version_source(
     assert version == "12.3.0"
 
 
+@pytest.mark.parametrize(
+    ("version", "upstream"),
+    [
+        ("14.2.0", True),
+        ("12.3.0", True),
+        ("4.9.4", True),
+        ("14.2.1", False),
+        ("15.0.1", False),
+        ("13.2.1-20231205", False),
+        ("", False),
+    ],
+)
+def test_only_gcc_release_numbers_have_upstream_source(
+    version: str, upstream: bool
+) -> None:
+    assert notices._gcc_has_upstream_release(version) is upstream
+
+
 def test_unresolved_gcc_requires_flag_and_renders_warning_without_source_archive(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
