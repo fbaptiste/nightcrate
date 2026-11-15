@@ -76,6 +76,7 @@ def _workspace_problem(
     error: str | None = None,
     backup: Path | None = None,
 ) -> WorkspaceProblem:
+    logger.warning("[workspace] refused %s (%s): %s", workspace, kind, error or "no detail")
     return WorkspaceProblem(
         kind=kind,
         workspace_path=str(workspace),
@@ -162,7 +163,8 @@ def backup_database(
             closing(sqlite3.connect(temp)) as target,
         ):
             source.backup(target)
-        with temp.open("rb") as stream:
+        # Writable handle: Windows refuses to flush a read-only one (EBADF).
+        with temp.open("r+b") as stream:
             os.fsync(stream.fileno())
         os.replace(temp, destination)
         fsync_dir(folder)
@@ -213,7 +215,8 @@ def restore_backup(backup: Path, db_path: Path) -> None:
     temp = db_path.with_name(f".{db_path.name}.restore")
     try:
         shutil.copyfile(backup, temp)
-        with temp.open("rb") as stream:
+        # Writable handle: Windows refuses to flush a read-only one (EBADF).
+        with temp.open("r+b") as stream:
             os.fsync(stream.fileno())
         for suffix in ("-journal", "-wal", "-shm"):
             try:

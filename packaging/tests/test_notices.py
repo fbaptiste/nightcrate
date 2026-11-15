@@ -546,6 +546,33 @@ def test_appimage_copy_of_runtime_shipped_identically_by_two_wheels(
     }
 
 
+def test_appimage_copy_of_unresolved_gcc_runtime_names_both_wheels(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    appimage, backend, backend_natives = _shared_runtime_backend(
+        tmp_path, b"\x7fELF gfortran"
+    )
+    for item, provider in zip(backend_natives, ("scipy", "numpy"), strict=True):
+        item["owner"] = {
+            "kind": "gcc-unresolved",
+            "name": "GCC runtime library, exact GCC release undetermined",
+            "provider": provider,
+            "provider_version": "2.0",
+        }
+    monkeypatch.setattr(
+        notices,
+        "_dpkg_owner",
+        lambda _path: pytest.fail("wheel library copy reached dpkg"),
+    )
+
+    natives, _ = _system_natives(appimage, backend, {}, {}, {}, backend_natives)
+
+    owner = natives[0]["owner"]
+    assert owner["provider"] == "numpy"
+    assert owner["notice"].endswith("identical copies also ship with scipy")
+
+
 def test_appimage_copy_of_differing_same_named_libraries_fails(
     tmp_path: Path,
 ) -> None:

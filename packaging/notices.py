@@ -1228,15 +1228,25 @@ def _appimage_copy_of(
             f"{relative}: same-named frozen backend libraries differ, so the "
             "copy's owner is ambiguous"
         )
+    # GCC runtimes of unknown version share one generic name and differ only by
+    # the wheel that ships them, so identify owners by that wheel first.
     owners = sorted(
-        {json.dumps(item["owner"], sort_keys=True) for item in matches},
-        key=lambda value: json.loads(value)["name"],
+        (
+            json.loads(value)
+            for value in {json.dumps(item["owner"], sort_keys=True) for item in matches}
+        ),
+        key=lambda item: (_owner_label(item), json.dumps(item, sort_keys=True)),
     )
-    owner = _appimage_copy_owner(json.loads(owners[0]), copy_note)
+    owner = _appimage_copy_owner(owners[0], copy_note)
     if len(owners) > 1:
-        others = ", ".join(json.loads(value)["name"] for value in owners[1:])
+        others = ", ".join(_owner_label(item) for item in owners[1:])
         owner["notice"] = f"{owner['notice']}; identical copies also ship with {others}"
     return owner
+
+
+def _owner_label(owner: dict[str, Any]) -> str:
+    """The name a reader recognises: the shipping wheel for a GCC runtime."""
+    return str(owner.get("provider") or owner["name"])
 
 
 def _system_natives(

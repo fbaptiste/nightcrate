@@ -49,6 +49,9 @@ export function resetZoom(): void {
 /** Start handling the zoom keys, and restore the remembered level. */
 export function installDesktopZoom(): void {
   if (!shellInvoke()) return;
+  // Project image windows fit their picture to the window, and the shell lets
+  // only the main window set its zoom; leave their keys alone.
+  if (window.location.pathname.startsWith("/image-viewer")) return;
   let stored = 1;
   try {
     stored = Number(localStorage.getItem(STORAGE_KEY) ?? "1");

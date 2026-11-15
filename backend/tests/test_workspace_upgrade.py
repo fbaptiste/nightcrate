@@ -829,3 +829,40 @@ def test_marker_backup_cannot_escape_workspace(tmp_path):
     with pytest.raises(upgrade.WorkspaceRefused) as caught:
         upgrade.initialize_workspace(workspace, "Marker", "1.0")
     assert caught.value.problem.kind == "unreadable"
+
+
+@pytest.fixture
+def windows_style_fsync(monkeypatch):
+    """Make ``os.fsync`` refuse read-only file handles, as Windows does.
+
+    Windows' flush needs write access and fails with EBADF otherwise. Every
+    workspace backup failed there until v0.54.0's update rehearsal caught it.
+    Directories are exempt: NightCrate never syncs them on Windows.
+    """
+    if os.name == "nt":
+        return
+    import fcntl
+    import stat
+
+    real_fsync = os.fsync
+
+    def fsync(fd):
+        if not stat.S_ISDIR(os.fstat(fd).st_mode) and fcntl.fcntl(fd, fcntl.F_GETFL) & 3 == 0:
+            raise OSError(9, "Bad file descriptor")
+        return real_fsync(fd)
+
+    monkeypatch.setattr(os, "fsync", fsync)
+
+
+def test_backup_and_restore_flush_through_writable_handles(tmp_path, windows_style_fsync):
+    workspace = tmp_path / "windows"
+    upgrade.initialize_workspace(workspace, "Windows", "1.0")
+    result = upgrade.initialize_workspace(workspace, "Windows", "1.1")
+    assert result.backup_path is not None
+    assert result.backup_path.is_file()
+
+    db = workspace / "nightcrate.db"
+    with sqlite3.connect(db) as conn:
+        conn.execute("INSERT INTO settings (key, value_json) VALUES ('after', '1')")
+    upgrade.restore_backup(result.backup_path, db)
+    assert db.read_bytes() == result.backup_path.read_bytes()

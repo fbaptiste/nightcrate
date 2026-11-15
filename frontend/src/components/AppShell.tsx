@@ -327,7 +327,9 @@ export function AppShell() {
             px: 0.5,
           }}
         >
-          <Tooltip title={navOpen ? "Collapse sidebar" : "Expand sidebar"} arrow placement="right">
+          {/* Remounted on each toggle: the button moves under the pointer, so the
+              open tooltip would otherwise stay put, pointing at the old spot. */}
+          <Tooltip key={navOpen ? "open" : "closed"} title={navOpen ? "Collapse sidebar" : "Expand sidebar"} arrow placement="right">
             <IconButton size="small" onClick={() => setNavOpen(!navOpen)} sx={{ p: 0.25, color: "primary.main" }}>
               {navOpen ? <KeyboardDoubleArrowLeftIcon sx={{ fontSize: 16 }} /> : <KeyboardDoubleArrowRightIcon sx={{ fontSize: 16 }} />}
             </IconButton>

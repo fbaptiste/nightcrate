@@ -355,6 +355,9 @@ def main() -> int:
         state.good = True
         request("POST", "/api/updates/check")
         wait_for(lambda: request("GET", "/api/health")["version"] == "0.0.2", "B health", 600)
+        problem = request("GET", "/api/health").get("workspace_problem")
+        if problem:
+            raise RuntimeError(f"B refused the workspace: {problem!r}")
         verify_preservation(args.workspace, args.data_dir, before)
         print("Update rehearsal passed")
         return 0

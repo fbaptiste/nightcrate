@@ -2152,6 +2152,9 @@ these are the constraints and traps found while building it.
     workers running. `serve.py` ignores SIGPIPE and sends its output to the
     null device when stdin closes; `smoke.py` checks the force-quit case
     on the frozen build.
+- **Windows refuses `os.fsync` on a read-only handle** (EBADF). Flush
+  through a handle opened for writing; until v0.54.0's update rehearsal,
+  every workspace backup and restore failed on Windows this way.
 - **Tauri:**
   - on macOS it refuses to run from a path with a symlink in any ancestor
     (`/var` → `/private/var` breaks CI temp folders);
