@@ -107,6 +107,34 @@ fn fix_from(latitude: f64, longitude: f64, accuracy_m: f64) -> Result<Fix, Failu
     }
 }
 
+/// Core Location may first deliver a cached position, from wherever the
+/// computer last was; a laptop moved to a dark site would get its old site
+/// (Codex's review, 2026-11-15). Older readings are skipped.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+const MAX_FIX_AGE_S: f64 = 60.0;
+
+/// A Core Location reading, with its age in seconds.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+#[derive(Debug, Clone, Copy)]
+struct Reading {
+    latitude: f64,
+    longitude: f64,
+    accuracy_m: f64,
+    age_s: f64,
+}
+
+/// The fix to report from one delivery (oldest reading first, as Core
+/// Location orders them), or `None` to keep waiting: the newest reading
+/// counts only when it is recent and usable.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+fn current_fix(readings: &[Reading]) -> Option<Fix> {
+    let newest = readings.last()?;
+    if !(newest.age_s.is_finite() && newest.age_s <= MAX_FIX_AGE_S) {
+        return None;
+    }
+    fix_from(newest.latitude, newest.longitude, newest.accuracy_m).ok()
+}
+
 /// What a request that hit its deadline reports.
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 fn timed_out(still_undecided: bool) -> Failure {
@@ -132,7 +160,7 @@ pub async fn current_location(app: tauri::AppHandle) -> Result<Fix, String> {
 
 #[cfg(target_os = "macos")]
 mod macos {
-    use super::{fix_from, timed_out, Failure, Fix};
+    use super::{current_fix, timed_out, Failure, Fix, Reading};
     use objc2::rc::Retained;
     use objc2::runtime::ProtocolObject;
     use objc2::{define_class, msg_send, DefinedClass, MainThreadMarker, MainThreadOnly};
@@ -145,11 +173,14 @@ mod macos {
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::sync::mpsc::{self, RecvTimeoutError, Sender};
     use std::sync::Mutex;
-    use std::time::Duration;
+    use std::time::{Duration, Instant};
 
-    /// Covers the first-time prompt too: answering it took Fred about a
-    /// minute in the 2026-11-15 test, with an explanation to read first.
+    /// The whole request, the first-time prompt included: answering it took
+    /// Fred about a minute in the 2026-11-15 test, with an explanation to
+    /// read first.
     const DEADLINE: Duration = Duration::from_secs(120);
+    /// The Location Services check; if it stalls, the request goes ahead.
+    const SERVICES_CHECK: Duration = Duration::from_secs(5);
 
     struct Pending {
         id: u64,
@@ -218,23 +249,33 @@ mod macos {
                 _manager: &CLLocationManager,
                 locations: &NSArray<CLLocation>,
             ) {
-                let outcome = match locations.lastObject() {
-                    Some(location) => unsafe {
+                let readings: Vec<Reading> = locations
+                    .iter()
+                    .map(|location| unsafe {
                         let coordinate = location.coordinate();
-                        fix_from(
-                            coordinate.latitude,
-                            coordinate.longitude,
-                            location.horizontalAccuracy(),
-                        )
-                    },
-                    None => Err(Failure::Unavailable),
-                };
-                finish(self.ivars().id, outcome);
+                        Reading {
+                            latitude: coordinate.latitude,
+                            longitude: coordinate.longitude,
+                            accuracy_m: location.horizontalAccuracy(),
+                            age_s: -location.timestamp().timeIntervalSinceNow(),
+                        }
+                    })
+                    .collect();
+                // A cached or unusable reading: updates continue until a
+                // current one arrives or the deadline passes.
+                if let Some(fix) = current_fix(&readings) {
+                    finish(self.ivars().id, Ok(fix));
+                }
             }
 
             #[unsafe(method(locationManager:didFailWithError:))]
             fn did_fail(&self, _manager: &CLLocationManager, error: &NSError) {
-                let failure = if error.code() == CLError::Denied.0 {
+                let code = error.code();
+                if code == CLError::LocationUnknown.0 {
+                    // Temporary: Core Location keeps trying.
+                    return;
+                }
+                let failure = if code == CLError::Denied.0 {
                     Failure::Denied
                 } else {
                     Failure::Unavailable
@@ -269,7 +310,9 @@ mod macos {
             {
                 note_undecided(id, false);
                 if !self.ivars().locating.replace(true) {
-                    unsafe { manager.requestLocation() };
+                    // Continuous updates rather than `requestLocation`, which
+                    // delivers one reading even when it is cached.
+                    unsafe { manager.startUpdatingLocation() };
                 }
             } else if status == CLAuthorizationStatus::Denied {
                 finish(id, Err(Failure::Denied));
@@ -332,9 +375,15 @@ mod macos {
     }
 
     pub async fn locate(app: tauri::AppHandle) -> Result<Fix, Failure> {
-        // Apple asks callers not to check this on the main thread.
-        let services_on = tauri::async_runtime::spawn_blocking(|| unsafe {
-            CLLocationManager::locationServicesEnabled_class()
+        let deadline = Instant::now() + DEADLINE;
+        // Apple asks callers not to check this on the main thread. A stalled
+        // check leaves its thread waiting, but not the request.
+        let services_on = tauri::async_runtime::spawn_blocking(|| {
+            let (sender, receiver) = mpsc::channel();
+            std::thread::spawn(move || {
+                let _ = sender.send(unsafe { CLLocationManager::locationServicesEnabled_class() });
+            });
+            receiver.recv_timeout(SERVICES_CHECK).unwrap_or(true)
         })
         .await
         .unwrap_or(true);
@@ -351,8 +400,10 @@ mod macos {
         if app.run_on_main_thread(move || start(id)).is_err() {
             finish(id, Err(Failure::Unavailable));
         }
-        let received =
-            tauri::async_runtime::spawn_blocking(move || receiver.recv_timeout(DEADLINE)).await;
+        let received = tauri::async_runtime::spawn_blocking(move || {
+            receiver.recv_timeout(deadline.saturating_duration_since(Instant::now()))
+        })
+        .await;
         let undecided = {
             let mut pending = PENDING.lock().unwrap();
             if pending.as_ref().is_some_and(|request| request.id == id) {
@@ -459,6 +510,42 @@ mod tests {
                 "{latitude} {longitude} {accuracy}"
             );
         }
+    }
+
+    fn reading(age_s: f64, accuracy_m: f64) -> Reading {
+        Reading {
+            latitude: 33.4484,
+            longitude: -112.074,
+            accuracy_m,
+            age_s,
+        }
+    }
+
+    #[test]
+    fn a_cached_reading_is_skipped_until_a_current_one_arrives() {
+        // Cached from an hour ago: keep waiting.
+        assert_eq!(current_fix(&[reading(3600.0, 35.0)]), None);
+        // The next delivery is current.
+        assert_eq!(
+            current_fix(&[reading(3600.0, 35.0), reading(1.0, 65.0)]),
+            Some(Fix {
+                latitude: 33.4484,
+                longitude: -112.074,
+                accuracy_m: 65.0
+            })
+        );
+        // Only the newest reading counts, even when an older one is current.
+        assert_eq!(current_fix(&[reading(2.0, 35.0), reading(600.0, 35.0)]), None);
+    }
+
+    #[test]
+    fn a_reading_counts_up_to_a_minute_old_and_usable() {
+        assert!(current_fix(&[reading(60.0, 35.0)]).is_some());
+        assert!(current_fix(&[reading(0.0, 35.0)]).is_some());
+        assert_eq!(current_fix(&[reading(60.5, 35.0)]), None);
+        assert_eq!(current_fix(&[reading(f64::NAN, 35.0)]), None);
+        assert_eq!(current_fix(&[reading(1.0, -1.0)]), None);
+        assert_eq!(current_fix(&[]), None);
     }
 
     #[test]

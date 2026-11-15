@@ -2216,12 +2216,16 @@ these are the constraints and traps found while building it.
     `NSLocation…UsageDescription` strings (`Info.plist`) and, under the
     hardened runtime, the location entitlement (`Entitlements.plist`).
     Each failure has its own code and message; the deadline is 2 minutes,
-    since it includes the first prompt. Windows and Linux answer
+    since it includes the first prompt, and covers the Location Services
+    check too. It listens for continuous updates and takes the first reading
+    under a minute old: Core Location may first deliver a cached position
+    from wherever the computer last was. Windows and Linux answer
     "unsupported" and use the browser's request, which
     `on_permission_request` allows for the backend's page (WebKitGTK
     refuses by default; on Linux it also needs a working GeoClue). An
-    ad-hoc signed update may make macOS ask again, or not ask at all, which
-    the page reports as no answer (Fred, 2026-11-15);
+    ad-hoc signed update counts as a new app, so macOS asks again (seen
+    with a rebuilt test app), or may not ask at all, which the page reports
+    as no answer (Fred, 2026-11-15);
   - wry asks `on_navigation` about loads inside frames too, so the
     Locations map (`https://www.openstreetmap.org/export/embed.html`) is
     allowed by URL in `links.rs`; anything else from outside still opens in
