@@ -97,11 +97,10 @@ jobs:
           uv sync --project backend --group packaging
           (cd frontend && npm ci && npm run build)
           uv run --project backend --group packaging python packaging/freeze.py
-          export TAURI_CONFIG
-          TAURI_CONFIG=$(cat "$RUNNER_TEMP/tauri-test-config.json")
           export TAURI_SIGNING_PRIVATE_KEY
           TAURI_SIGNING_PRIVATE_KEY=$(cat "$RUNNER_TEMP/updater.key")
-          (cd packaging/shell && npx --no-install tauri build --bundles "${{ matrix.bundle }}")
+          # The CLI ignores a TAURI_CONFIG variable; merge the test config explicitly.
+          (cd packaging/shell && npx --no-install tauri build --bundles "${{ matrix.bundle }}" --config "$RUNNER_TEMP/tauri-test-config.json")
           cp -R packaging/build/backend "$RUNNER_TEMP/A-backend"
           cp -R packaging/shell/src-tauri/target/release/bundle "$RUNNER_TEMP/A-bundle"
       - name: Build B (0.0.2) and bad-signature C
@@ -113,11 +112,10 @@ jobs:
           uv sync --project backend --group packaging
           (cd frontend && npm ci && npm run build)
           uv run --project backend --group packaging python packaging/freeze.py
-          export TAURI_CONFIG
-          TAURI_CONFIG=$(cat "$RUNNER_TEMP/tauri-test-config.json")
           export TAURI_SIGNING_PRIVATE_KEY
           TAURI_SIGNING_PRIVATE_KEY=$(cat "$RUNNER_TEMP/updater.key")
-          (cd packaging/shell && npx --no-install tauri build --bundles "${{ matrix.bundle }}")
+          # The CLI ignores a TAURI_CONFIG variable; merge the test config explicitly.
+          (cd packaging/shell && npx --no-install tauri build --bundles "${{ matrix.bundle }}" --config "$RUNNER_TEMP/tauri-test-config.json")
           cp -R packaging/shell/src-tauri/target/release/bundle "$RUNNER_TEMP/B-bundle"
           archive=$(find "$RUNNER_TEMP/B-bundle" -type f \
             \( -name '*.app.tar.gz' -o -name '*.AppImage.tar.gz' -o -name '*.nsis.zip' \) -print -quit)

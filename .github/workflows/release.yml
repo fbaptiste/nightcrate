@@ -157,9 +157,9 @@ jobs:
       - name: Build unsigned test installer (first pass on Linux)
         if: github.event_name == 'push'
         working-directory: packaging/shell
-        env:
-          TAURI_CONFIG: '{"bundle":{"createUpdaterArtifacts":false}}'
-        run: npx --no-install tauri build --bundles ${{ matrix.bundle }}
+        # Unsigned test builds skip updater artifacts: with a public key configured,
+        # Tauri refuses to bundle them without the private key.
+        run: npx --no-install tauri build --bundles ${{ matrix.bundle }} --config test-build.json
       - name: Build signed release installer (first pass on Linux)
         if: github.event_name == 'workflow_dispatch'
         working-directory: packaging/shell
@@ -193,9 +193,7 @@ jobs:
       - name: Rebuild unsigned Linux AppImage with notices
         if: runner.os == 'Linux' && github.event_name == 'push'
         working-directory: packaging/shell
-        env:
-          TAURI_CONFIG: '{"bundle":{"createUpdaterArtifacts":false}}'
-        run: npx --no-install tauri build --bundles appimage
+        run: npx --no-install tauri build --bundles appimage --config test-build.json
       - name: Rebuild signed Linux AppImage with notices
         if: runner.os == 'Linux' && github.event_name == 'workflow_dispatch'
         working-directory: packaging/shell
