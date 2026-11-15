@@ -58,14 +58,32 @@ after v0.53.0 merged.
   approved it under Fred's overnight delegation ("If decisions have to be
   made, please handle it yourself"), pending his review. The spec's
   "Amended after approval" list shows what changed.
-- [ ] Implementation and reviews: in progress (2026-11-15). Built in the
-  ignored worktree `.superpowers/wt-v0.54.0-build`, because Fred's
-  `make dev` runs from the main checkout and every backend edit there
-  would restart it.
-  - Phases 1–5 are implemented. Phases 1–4 are reviewed and staged in the
-    worktree, and Phase 5 is under review.
-  - Test builds run on the throwaway branch `build/v0.54.0`.
-  - The plan's "Implementation and reviews" record has the details.
+- [x] Implementation and reviews (2026-11-15). Phases 1–5 were built in the
+  ignored worktree `.superpowers/wt-v0.54.0-build`, each reviewed, with
+  independent Codex reviews of Phase 1 and of Phases 2–5, then moved into
+  the main checkout (staged, uncommitted). The plan's "Implementation and
+  reviews" record has the details.
+  - **Mac check with Fred** (local test builds 0.54.0 → 0.54.1 → 0.54.2):
+    the update installs and keeps the workspace; macOS asks again for
+    protected folders after an unsigned update, as accepted. Fixed from his
+    findings: zoom (now with a level indicator), the sidebar drag reload,
+    downloads (now a Save dialog), the image window's position, a tiny
+    restored window, the sidebar's scrolling when zoomed, a second window
+    scroll bar, a lingering tooltip, the frame table's checkboxes, and a
+    force-quit that left workers running.
+  - **Also from his findings** (Fred, 2026-11-15): a folder's rig change
+    rebuilds the automatic capture batches; a rig the project uses can't be
+    removed from its list; only light frames count as imaging nights; long
+    filter names fit the integration bars; network shares show their
+    server in the folder dialog.
+  - **CI on the throwaway branch `build/v0.54.0`** (builds 1–17): the
+    installers pass freezing, the smoke test, the licence notices, install
+    and the self-test on all three systems. The update rehearsal (a bad
+    signature refused, the good update installed, the workspace backed up
+    and intact) passes on all three; on Windows it first found that every
+    backup failed (a read-only flush), fixed in build 17.
+  - An independent Codex review of the changes since the move found no
+    blockers; its three findings are resolved.
 - [ ] Candidate verification and Fred's acceptance test.
 
 ### Packaging test results (Claude, 2026-11-14)

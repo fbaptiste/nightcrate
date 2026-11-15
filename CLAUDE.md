@@ -73,10 +73,11 @@ instructions to restore removed features.
   existing ingest/derivation helpers take a caller-owned DB connection and never
   commit. Existing `path_resolver` HTTP exceptions are a known boundary violation,
   not a pattern to copy.
-- **Runtime:** local browser app; no native wrapper yet. Use `platformdirs` for
-  app data, user-selected workspaces for databases/project images, and portable
-  path handling. Tauri is the deferred wrapper option; Electron was rejected for
-  its bundled-browser footprint.
+- **Runtime:** local only. Installed builds (since v0.54.0) are a Tauri shell
+  around the cx_Freeze-frozen backend (`packaging/`); development runs in a
+  browser against `make dev`. Use `platformdirs` for app data, user-selected
+  workspaces for databases/project images, and portable path handling. Electron
+  was rejected for its bundled-browser footprint.
 - **Work:** request-driven; no recurring scheduler. CPU-heavy ingest/analysis uses
   per-run process pools. Close pools in `finally` or a context manager; persistent
   pools leave workers alive and wedge `uvicorn --reload`.
@@ -153,7 +154,8 @@ instructions to restore removed features.
 ## Development and verification
 
 From the root: `make install`, `make dev`, `make backend`, `make frontend`,
-`make test`, or `make test-fast`. `make dev-lan` enables tablet access on a trusted
+`make test`, or `make test-fast`; `make start` runs the production backend with
+the built frontend, as the installed app does. `make dev-lan` enables tablet access on a trusted
 LAN; both servers bind to the network and the backend is unauthenticated.
 Normal `make dev` binds the backend to localhost.
 

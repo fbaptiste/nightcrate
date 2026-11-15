@@ -252,7 +252,9 @@ def test_shell_eof_during_startup_hits_deadline(tmp_path):
         extra_env={"NIGHTCRATE_TEST_STARTUP_DELAY": "60"},
     )
     try:
-        output.wait_for("NIGHTCRATE_ALIVE", timeout=8)
+        # The first heartbeat comes 5 s after the interpreter is up; under a full
+        # parallel test run, start-up alone can take several seconds.
+        output.wait_for("NIGHTCRATE_ALIVE", timeout=20)
         _close_stdin(process)
         assert process.wait(timeout=20) == 6
     finally:

@@ -292,6 +292,12 @@ Since v0.47.0. Spec: [v0.47.0 design](superpowers/specs/2026-11-07-v0.47.0-desig
 - **In use** means any `project_rig`, `project_session`, `session`,
   `sub_frame` or `project_source_folder` row. Wishlist plans and planner
   settings look forward and always use the current setup.
+- **A project's rig list can't drop a rig the project uses** (Fred,
+  2026-11-15): its frames, sessions or capture batches, or its untagged frames
+  when it is the project's only rig. `PUT /api/projects/{id}/rigs` returns 409
+  and the Equipment section shows no ×; dropping it only made the row come back
+  as "used, not listed". A rig used but not listed gets a hover note pointing
+  to the folder's rig in the Files tab.
 - **Equipment changes on a rig in use need `apply_mode`.** Without it,
   `PUT /api/rigs/{id}` returns 409 `rig_change_needs_choice` (counts and the
   changed parts) and writes nothing. Name, description, notes, default and
@@ -2165,7 +2171,28 @@ these are the constraints and traps found while building it.
   - the main window's IPC permission is added at runtime for exactly
     `http://127.0.0.1:{port}`;
   - a locked macOS screen suspends WebKit pages, so a local self-test needs
-    an unlocked session.
+    an unlocked session;
+  - the window-state plugin restores a saved size after the window is
+    built, whatever it is; the shell resets a too-small main window on
+    `Resized`. Calling `restore_state` by hand deadlocked on the plugin's
+    lock. Test builds keep their own state file;
+  - `on_download` runs on the main thread, where the Save dialog (`rfd`)
+    opens; on macOS the finished event never carries the path, so the shell
+    remembers the chosen one;
+  - only one instance per app ID runs: a second copy hands over to the
+    first and exits, so a test build can't start beside an open one.
+- **The page in the installed app (WebKit):**
+  - it handles the zoom keys itself (`lib/desktopZoom.ts`, through
+    `set_webview_zoom`, allowed for the main window only) so it can show
+    the level; Tauri's own zoom keys are off;
+  - WebKit loads a dropped link when the page *declines* the drop;
+    `lib/dropGuard.ts` accepts stray drops and ignores them;
+  - dnd-kit stops the click that ends a drag from propagating but doesn't
+    cancel it, so a sortable link navigates by itself: a full page load.
+    `lib/dragClickGuard.ts` cancels it (the sidebar is the only sortable
+    list with links);
+  - `<main>` is `position: relative`, or an absolutely positioned hidden
+    element escapes it and the whole window scrolls.
 - **Test hooks**, read only when set: `NIGHTCRATE_TEST_STARTUP_DELAY`,
   `NIGHTCRATE_TEST_BUSY_POOL` and `NIGHTCRATE_TEST_BASE_PORT` (backend);
   the `NIGHTCRATE_TEST_*` compile-time options (shell), which

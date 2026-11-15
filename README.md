@@ -151,7 +151,7 @@ Linux.
 
 Equipment is assigned through declared rigs and folder tags; automatic FITS
 equipment inference and integration goals were removed. Derived sessions update
-on request. Mixing manual and derived records for the same captures can currently
+on request, and when a folder's rig changes. Mixing manual and derived records for the same captures can currently
 inflate totals.
 
 See [the active plan](PLAN.md) for remaining work and the

@@ -97,7 +97,9 @@ class Backend:
 
 
 class State:
-    def __init__(self, archive: Path, good_signature: str, bad_signature: str, target: str):
+    def __init__(
+        self, archive: Path, good_signature: str, bad_signature: str, target: str
+    ):
         self.archive = archive
         self.good_signature = good_signature
         self.bad_signature = bad_signature
@@ -198,10 +200,16 @@ def platform_target() -> str:
 def database_facts(database: Path) -> dict[str, object]:
     with closing(sqlite3.connect(database)) as connection:
         return {
-            "projects": connection.execute("SELECT COUNT(*) FROM project").fetchone()[0],
-            "locations": connection.execute("SELECT COUNT(*) FROM location").fetchone()[0],
+            "projects": connection.execute("SELECT COUNT(*) FROM project").fetchone()[
+                0
+            ],
+            "locations": connection.execute("SELECT COUNT(*) FROM location").fetchone()[
+                0
+            ],
             "subs": connection.execute("SELECT COUNT(*) FROM sub_frame").fetchone()[0],
-            "images": connection.execute("SELECT COUNT(*) FROM project_image").fetchone()[0],
+            "images": connection.execute(
+                "SELECT COUNT(*) FROM project_image"
+            ).fetchone()[0],
             "project_location": connection.execute(
                 "SELECT p.name, l.name FROM project p JOIN location l ON l.id = p.location_id"
             ).fetchall(),
@@ -233,8 +241,12 @@ def provision(
             },
         )
         project = request("POST", "/api/projects", {"name": "Rehearsal NGC 7000"})
-        request("PATCH", f"/api/projects/{project['id']}", {"location_id": location["id"]})
-        request("POST", f"/api/projects/{project['id']}/folders", {"path": str(data_dir)})
+        request(
+            "PATCH", f"/api/projects/{project['id']}", {"location_id": location["id"]}
+        )
+        request(
+            "POST", f"/api/projects/{project['id']}/folders", {"path": str(data_dir)}
+        )
         ingest = request("POST", f"/api/projects/{project['id']}/ingest", timeout=300)
         if ingest["status"] != "completed" or ingest["subs_inserted"] != 20:
             raise RuntimeError(f"unexpected ingest result: {ingest!r}")
@@ -250,7 +262,9 @@ def provision(
         backend.stop()
 
 
-def verify_preservation(workspace: Path, data_dir: Path, before: dict[str, object]) -> None:
+def verify_preservation(
+    workspace: Path, data_dir: Path, before: dict[str, object]
+) -> None:
     database = workspace / "nightcrate.db"
     after = database_facts(database)
     if after != before or after["integrity"] != "ok" or after["foreign_keys"]:
@@ -334,7 +348,9 @@ def main() -> int:
         if report.get("outcome") != "no-bridge" and not rejected_for_acl:
             raise RuntimeError(f"probe crossed the origin boundary: {report!r}")
 
-        wait_for(lambda: request("GET", "/api/health")["version"] == "0.0.1", "A health", 120)
+        wait_for(
+            lambda: request("GET", "/api/health")["version"] == "0.0.1", "A health", 120
+        )
         request("PATCH", "/api/updates/preferences", {"check_automatically": True})
         request("POST", "/api/updates/check")
         wait_for(
@@ -349,12 +365,15 @@ def main() -> int:
             raise RuntimeError(f"reservation was not released: {reservation!r}")
         request(
             "DELETE",
-            "/api/app/install-reservation?token=" + urllib.parse.quote(reservation["token"]),
+            "/api/app/install-reservation?token="
+            + urllib.parse.quote(reservation["token"]),
         )
 
         state.good = True
         request("POST", "/api/updates/check")
-        wait_for(lambda: request("GET", "/api/health")["version"] == "0.0.2", "B health", 600)
+        wait_for(
+            lambda: request("GET", "/api/health")["version"] == "0.0.2", "B health", 600
+        )
         problem = request("GET", "/api/health").get("workspace_problem")
         if problem:
             raise RuntimeError(f"B refused the workspace: {problem!r}")

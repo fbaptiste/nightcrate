@@ -1,6 +1,6 @@
 [project]
 name = "nightcrate"
-version = "0.53.0"
+version = "0.54.0"
 description = "Astrophotography session cataloging and analysis"
 license = "GPL-3.0-or-later"
 requires-python = ">=3.14"
