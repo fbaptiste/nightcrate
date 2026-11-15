@@ -96,6 +96,8 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--frontend-dir", type=Path)
     parser.add_argument("--open-browser", action="store_true")
     parser.add_argument("--version", action="store_true")
+    parser.add_argument("--test-manifest-url")
+    parser.add_argument("--test-releases-url")
     return parser
 
 
@@ -111,6 +113,14 @@ def main(argv: list[str] | None = None) -> int:
     if args.version:
         print(runtime.app_version())
         return 0
+    if args.test_manifest_url or args.test_releases_url:
+        from nightcrate.services.update_check import set_test_urls
+
+        try:
+            set_test_urls(args.test_manifest_url, args.test_releases_url)
+        except ValueError as exc:
+            print(str(exc), file=sys.stderr)
+            return 2
 
     frontend_dir = args.frontend_dir or _default_frontend_dir()
     if not (frontend_dir / "index.html").is_file() or not (frontend_dir / "assets").is_dir():

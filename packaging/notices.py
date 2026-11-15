@@ -33,7 +33,6 @@ LICENCE_TEXT_DIR = Path(__file__).with_name("licence-texts")
 NATIVE_SUFFIXES = (".dylib", ".dll", ".pyd", ".so")
 SOURCE_LICENCES = {"LGPL-2.1-or-later", "LGPL-3.0-or-later"}
 GCC_RUNTIME_PREFIXES = ("libgcc_s", "libgfortran", "libquadmath")
-CPYTHON_DLL_PREFIXES = ("libcrypto-", "libssl-", "libffi-", "sqlite3")
 MSVC_RUNTIME_PREFIXES = ("vcruntime140", "msvcp140")
 MSVC_SYSTEM_LIBRARY_NOTICE = (
     "GPLv3 §1 System Library; no Corresponding Source archive is required."
@@ -408,34 +407,30 @@ def _interpreter_native_candidates(
         if path.is_file():
             result[path.name.lower()].append((path, owner))
 
-    cpython_owner = {
+    cpython_owner: dict[str, Any] = {
         "kind": "cpython",
         "name": "CPython",
         "version": python_version,
     }
-    dlls = interpreter_root / "DLLs"
-    if dlls.is_dir():
-        for path in dlls.iterdir():
-            lower = path.name.lower()
-            if lower.endswith(".pyd") or (
-                lower.endswith(".dll")
-                and (
-                    lower.startswith("python3")
-                    or lower.startswith(CPYTHON_DLL_PREFIXES)
-                )
-            ):
-                add(path, cpython_owner)
-    for path in interpreter_root.glob("python3*.dll"):
-        add(path, cpython_owner)
-    msvc_owner = {
+    msvc_owner: dict[str, Any] = {
         "kind": "system",
         "name": "Microsoft Visual C++ runtime",
         "system_library": True,
         "notice": MSVC_SYSTEM_LIBRARY_NOTICE,
     }
-    for path in interpreter_root.glob("*.dll"):
+
+    def interpreter_owner(path: Path) -> dict[str, Any]:
         if path.name.lower().startswith(MSVC_RUNTIME_PREFIXES):
-            add(path, msvc_owner)
+            return msvc_owner
+        return cpython_owner
+
+    dlls = interpreter_root / "DLLs"
+    if dlls.is_dir():
+        for path in dlls.iterdir():
+            add(path, interpreter_owner(path))
+    if interpreter_root.is_dir():
+        for path in interpreter_root.iterdir():
+            add(path, interpreter_owner(path))
     for path_root in platstdlib_paths:
         lib_dynload = path_root / "lib-dynload"
         if lib_dynload.is_dir():
@@ -545,60 +540,92 @@ def _elf_gcc_version(library: Path) -> str | None:
     return match.group(1) if match else None
 
 
-def _owner_for_python_native(
+def _native_binary_kind(path: Path) -> str | None:
+    try:
+        with path.open("rb") as handle:
+            magic = handle.read(4)
+    except OSError:
+        return None
+    if magic == b"\x7fELF":
+        return "elf"
+    if magic in {
+        b"\xfe\xed\xfa\xce",
+        b"\xce\xfa\xed\xfe",
+        b"\xfe\xed\xfa\xcf",
+        b"\xcf\xfa\xed\xfe",
+        b"\xca\xfe\xba\xbe",
+        b"\xbe\xba\xfe\xca",
+    }:
+        return "macho"
+    return None
+
+
+def _distribution_native_owner(
     path: Path,
-    backend_dir: Path,
+    record_relative: str,
     by_basename: dict[str, list[tuple[metadata.Distribution, str, Path]]],
     source_hashes: dict[str, str],
     frozen_versions: dict[str, str],
-    interpreter_candidates: dict[str, list[tuple[Path, dict[str, Any]]]],
-) -> dict[str, Any]:
-    interpreter_owner = _interpreter_native_owner(path, interpreter_candidates)
-    if interpreter_owner is not None:
-        return interpreter_owner
+) -> dict[str, Any] | None:
     candidates = by_basename.get(path.name, [])
-    relative = path.relative_to(backend_dir).as_posix()
-    if relative.startswith("lib/"):
-        relative = relative[4:]
-    exact = [candidate for candidate in candidates if candidate[1] == relative]
-    if len(exact) == 1:
-        candidates = exact
-    else:
-        target_hash = _sha256(path)
-        matching = [
+    target_hash = _sha256(path)
+    matching = [
+        candidate
+        for candidate in candidates
+        if source_hashes.get(str(candidate[2])) == target_hash
+    ]
+    patched_note: str | None = None
+    if matching:
+        candidates = matching
+    elif sys.platform.startswith("linux") or sys.platform == "darwin":
+        expected_kind = "elf" if sys.platform.startswith("linux") else "macho"
+        path_matches = [
             candidate
             for candidate in candidates
-            if source_hashes[str(candidate[2])] == target_hash
+            if (
+                candidate[1] == record_relative
+                or (
+                    expected_kind == "macho"
+                    and candidate[1].endswith(f"/{record_relative}")
+                )
+            )
+            and _native_binary_kind(path) == expected_kind
+            and _native_binary_kind(candidate[2]) == expected_kind
         ]
-        if matching:
-            candidates = matching
-        elif len(candidates) > 1:
-            # cx_Freeze rewrites load paths, so copied wheel libraries no longer
-            # hash to their RECORD source. The rewritten install name retains the
-            # owning top-level package (for example, /DLC/PIL/.dylibs/...).
+        if expected_kind == "macho" and len(path_matches) > 1:
             binary = path.read_bytes()
             embedded_owner = [
                 candidate
-                for candidate in candidates
+                for candidate in path_matches
                 if f"/{candidate[1].split('/', 1)[0]}/".encode() in binary
             ]
             if embedded_owner:
-                candidates = embedded_owner
+                path_matches = embedded_owner
+        candidates = path_matches
+        if path_matches:
+            patched_note = (
+                "binary patched by the freezer (RPATH)"
+                if expected_kind == "elf"
+                else "binary patched by the freezer (install name)"
+            )
+    else:
+        candidates = []
     owners = {
         (_canonical(candidate[0].metadata["Name"]), candidate[0].version)
         for candidate in candidates
     }
+    if not owners:
+        return None
     if len(owners) != 1:
         detail = ", ".join(f"{name}=={version}" for name, version in sorted(owners))
-        if not detail:
-            detail = "no installed distribution matches"
-        raise NoticeError(f"{path}: native library has no unique owner ({detail})")
+        raise NoticeError(f"{path}: native library has ambiguous owners ({detail})")
     name, version = owners.pop()
     dist = next(
         candidate[0]
         for candidate in candidates
         if _canonical(candidate[0].metadata["Name"]) == name
     )
+    note = {"notice": patched_note} if patched_note else {}
     if _is_gcc_runtime(path):
         display_name = dist.metadata["Name"]
         gcc_version = _gcc_runtime_version(
@@ -615,6 +642,7 @@ def _owner_for_python_native(
                 "version": gcc_version,
                 "provider": display_name,
                 "provider_version": dist.version,
+                **note,
             }
         licences = _distribution_licences(dist)
         if not licences:
@@ -629,12 +657,43 @@ def _owner_for_python_native(
             "provider_version": dist.version,
             "source_url": "https://gcc.gnu.org/",
             "licence_files": licences,
+            **note,
         }
     return {
         "kind": "python",
         "name": dist.metadata["Name"],
         "version": version,
+        **note,
     }
+
+
+def _owner_for_python_native(
+    path: Path,
+    backend_dir: Path,
+    by_basename: dict[str, list[tuple[metadata.Distribution, str, Path]]],
+    source_hashes: dict[str, str],
+    frozen_versions: dict[str, str],
+    interpreter_candidates: dict[str, list[tuple[Path, dict[str, Any]]]],
+) -> dict[str, Any]:
+    interpreter_owner = _interpreter_native_owner(path, interpreter_candidates)
+    if interpreter_owner is not None:
+        return interpreter_owner
+    relative = path.relative_to(backend_dir).as_posix()
+    if relative.startswith("lib/"):
+        relative = relative[4:]
+    owner = _distribution_native_owner(
+        path,
+        relative,
+        by_basename,
+        source_hashes,
+        frozen_versions,
+    )
+    if owner is None:
+        raise NoticeError(
+            f"{path}: native library has no unique owner "
+            "(no installed distribution matches)"
+        )
+    return owner
 
 
 def _python_components(
@@ -858,8 +917,25 @@ def _dpkg_owner(path: Path) -> tuple[dict[str, str], str]:
     return owner, copyright_text
 
 
+def _appimage_backend_record_path(path: Path, appimage: Path) -> str | None:
+    parts = path.relative_to(appimage).parts
+    backend_indices = [
+        index for index, part in enumerate(parts) if part.lower() == "backend"
+    ]
+    if not backend_indices:
+        return None
+    tail = list(parts[backend_indices[-1] + 1 :])
+    if tail and tail[0].lower() == "lib":
+        tail = tail[1:]
+    return PurePosixPath(*tail).as_posix() if tail else None
+
+
 def _system_natives(
-    appimage: Path, backend_dir: Path
+    appimage: Path,
+    backend_dir: Path,
+    by_basename: dict[str, list[tuple[metadata.Distribution, str, Path]]],
+    source_hashes: dict[str, str],
+    frozen_versions: dict[str, str],
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     backend_hashes = {
         _sha256(path)
@@ -874,6 +950,24 @@ def _system_natives(
         digest = _sha256(path)
         if digest in backend_hashes:
             continue
+        record_relative = _appimage_backend_record_path(path, appimage)
+        if record_relative is not None:
+            python_owner = _distribution_native_owner(
+                path,
+                record_relative,
+                by_basename,
+                source_hashes,
+                frozen_versions,
+            )
+            if python_owner is not None:
+                natives.append(
+                    {
+                        "path": path.relative_to(appimage).as_posix(),
+                        "sha256": digest,
+                        "owner": python_owner,
+                    }
+                )
+                continue
         owner, copyright_text = _dpkg_owner(path)
         natives.append(
             {
@@ -962,7 +1056,11 @@ def inventory(
         if not appimage.is_dir():
             raise NoticeError(f"extracted AppImage directory is missing: {appimage}")
         appimage_natives, system_components = _system_natives(
-            appimage.resolve(), backend_dir
+            appimage.resolve(),
+            backend_dir,
+            by_basename,
+            source_hashes,
+            frozen_versions,
         )
         natives.extend(appimage_natives)
     project = tomllib.loads(

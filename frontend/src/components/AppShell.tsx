@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import Box from "@mui/material/Box";
 import Divider from "@mui/material/Divider";
 import Drawer from "@mui/material/Drawer";
@@ -72,6 +72,14 @@ import { EasterEggWand } from "@/components/EasterEggWand";
 import { WandToast } from "@/components/WandToast";
 import { WandToastContext } from "@/components/WandToastContext";
 import { ASTRO_JOKES } from "@/lib/astroJokes";
+import { NoticesPill } from "@/components/notices/NoticesPill";
+import { NoticesPanel } from "@/components/notices/NoticesPanel";
+import { useNotices } from "@/components/notices/useNotices";
+import { UpdateQuestionDialog } from "@/components/notices/UpdateQuestionDialog";
+import { useInstallFlow } from "@/components/notices/InstallUpdateDialog";
+import { AppToast } from "@/components/notices/AppToast";
+import { markVersionSeen, setCheckAutomatically } from "@/api/updates";
+import { onDownloadSaved } from "@/lib/desktopShell";
 
 const DRAWER_WIDTH_OPEN = 220;
 const DRAWER_WIDTH_CLOSED = 52;
@@ -190,12 +198,20 @@ export function AppShell() {
     queryFn: fetchHealth,
     staleTime: Infinity,
   });
+  const queryClient = useQueryClient();
   const statusQuery = useQuery({
     queryKey: ["admin-status"],
     queryFn: fetchAdminStatus,
     staleTime: 60_000,
   });
   const activeDbName = statusQuery.data?.active_db?.name;
+  const installFlow = useInstallFlow();
+  const notices = useNotices(installFlow.start);
+  const [noticeAnchor, setNoticeAnchor] = useState<HTMLElement | null>(null);
+  const [questionDismissed, setQuestionDismissed] = useState(false);
+  const [downloadToast, setDownloadToast] = useState<string | null>(null);
+  const [updatedToastVersion, setUpdatedToastVersion] = useState<string | null>(null);
+  const updateSeen = useRef<string | null>(null);
   const { settings, update } = useSettingsStore();
   const currentTheme: Theme = settings?.theme ?? "browser";
 
@@ -222,6 +238,19 @@ export function AppShell() {
   }, [isTablet, pathname]);
 
   const drawerWidth = navOpen ? DRAWER_WIDTH_OPEN : DRAWER_WIDTH_CLOSED;
+
+  useEffect(() => onDownloadSaved((path) => {
+    const name = path.split(/[\\/]/).pop() || path;
+    setDownloadToast(`Saved to Downloads: ${name}`);
+  }), []);
+
+  useEffect(() => {
+    const from = notices.status?.updated_from;
+    if (!from || updateSeen.current === from) return;
+    updateSeen.current = from;
+    setUpdatedToastVersion(notices.status?.current_version ?? null);
+    void markVersionSeen();
+  }, [notices.status?.current_version, notices.status?.updated_from]);
 
   // Resolve the user's saved nav order. Re-normalized every render so a
   // fresh settings hydrate (or a new nav item added in a future version)
@@ -312,14 +341,16 @@ export function AppShell() {
                 {activeDbName}
               </Typography>
             )}
+            <NoticesPill status={notices.status} expanded onClick={(event) => setNoticeAnchor(event.currentTarget)} />
           </Box>
         ) : (
-          <Box sx={{ display: "flex", justifyContent: "center", py: 2 }}>
+          <Box sx={{ display: "flex", justifyContent: "center", alignItems: "center", py: 2 }}>
             <Tooltip title="NightCrate" placement="right">
               <Typography variant="h6" fontWeight={600} sx={{ fontSize: 14 }}>
                 NC
               </Typography>
             </Tooltip>
+            <NoticesPill status={notices.status} expanded={false} onClick={(event) => setNoticeAnchor(event.currentTarget)} />
           </Box>
         )}
         <Divider />
@@ -389,6 +420,27 @@ export function AppShell() {
       </Box>
 
       <ActivityConsole open={activityOpen} onClose={() => setActivityOpen(false)} />
+      <NoticesPanel anchorEl={noticeAnchor} status={notices.status} onClose={() => setNoticeAnchor(null)} onDismiss={(id, action) => void notices.dismiss(id, action)} onInstall={(notice) => { setNoticeAnchor(null); void installFlow.start(notice); }} />
+      <UpdateQuestionDialog
+        open={notices.status?.check_automatically === null && !questionDismissed}
+        onDismiss={() => setQuestionDismissed(true)}
+        onAnswer={(answer) => {
+          void setCheckAutomatically(answer).then((status) => {
+            queryClient.setQueryData(["updates"], status);
+            if (answer) void notices.refresh();
+          });
+          setQuestionDismissed(true);
+        }}
+      />
+      {installFlow.dialog}
+      <AppToast
+        message={updatedToastVersion ? `Updated to ${updatedToastVersion}.${notices.status?.backup_taken ? " Your workspace was backed up first." : ""}` : null}
+        linkLabel="What's new"
+        linkHref={`https://github.com/fbaptiste/nightcrate/releases/tag/v${notices.status?.current_version ?? ""}`}
+        left={drawerWidth + 16}
+        onClose={() => setUpdatedToastVersion(null)}
+      />
+      <AppToast message={downloadToast} left={drawerWidth + 16} onClose={() => setDownloadToast(null)} />
       <WandToast
         id={wandToast?.id ?? 0}
         message={wandToast?.message ?? null}

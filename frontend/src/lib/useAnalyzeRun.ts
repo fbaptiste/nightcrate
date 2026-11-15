@@ -38,6 +38,23 @@ const BATCH_SIZE = 60;
 /** Batches to average when estimating time remaining. */
 const RATE_WINDOW = 5;
 
+let activeAnalyzeRuns = 0;
+const analyzeRunListeners = new Set<() => void>();
+
+export function isAnalyzeRunActive(): boolean {
+  return activeAnalyzeRuns > 0;
+}
+
+export function subscribeAnalyzeRun(listener: () => void): () => void {
+  analyzeRunListeners.add(listener);
+  return () => analyzeRunListeners.delete(listener);
+}
+
+function setAnalyzeRunActive(active: boolean): void {
+  activeAnalyzeRuns = Math.max(0, activeAnalyzeRuns + (active ? 1 : -1));
+  analyzeRunListeners.forEach((listener) => listener());
+}
+
 export interface AnalyzeProgress {
   running: boolean;
   /** Frames the server accounted for this run (analyzed + unreadable + skipped).
@@ -83,70 +100,74 @@ export function useAnalyzeRun(
 
   const start = useCallback(
     async (scope: AnalyzeScope, force = false) => {
+      setAnalyzeRunActive(true);
       cancelRef.current = false;
       setProgress({ ...IDLE, running: true });
-
-      let ids: number[];
       try {
-        const pending = await fetchQualityPending(
-          projectId,
-          scope.frameType,
-          scope.pill,
-          force,
-        );
-        ids = pending.frame_ids;
-      } catch (e) {
-        const p = {
-          ...IDLE,
-          errors: [e instanceof Error ? e.message : String(e)],
-        };
-        setProgress(p);
-        onFinished?.(p);
-        return p;
-      }
-
-      const acc: AnalyzeProgress = { ...IDLE, running: true, total: ids.length };
-      // Rolling window of (frames, ms) so the ETA reflects recent throughput
-      // rather than a run-long average — file sizes and disk speed vary.
-      const recent: { frames: number; ms: number }[] = [];
-
-      for (let i = 0; i < ids.length; i += BATCH_SIZE) {
-        if (cancelRef.current) break;
-        const batch = ids.slice(i, i + BATCH_SIZE);
-        const t0 = performance.now();
-        let res: QualityAnalyzeResult;
+        let ids: number[];
         try {
-          res = await analyzeFrames(projectId, batch, force);
+          const pending = await fetchQualityPending(
+            projectId,
+            scope.frameType,
+            scope.pill,
+            force,
+          );
+          ids = pending.frame_ids;
         } catch (e) {
-          // A whole batch failing (409, backend restart, network) ends the run
-          // rather than hammering the remaining thousands of frames.
-          acc.errors.push(e instanceof Error ? e.message : String(e));
-          break;
-        }
-        recent.push({ frames: batch.length, ms: performance.now() - t0 });
-        if (recent.length > RATE_WINDOW) recent.shift();
-
-        acc.analyzed += res.analyzed;
-        acc.noStars += res.no_stars;
-        acc.unreadable += res.unreadable;
-        acc.done += res.analyzed + res.unreadable + res.skipped;
-        if (res.errors.length && acc.errors.length < 20) {
-          acc.errors.push(...res.errors.slice(0, 20 - acc.errors.length));
+          const p = {
+            ...IDLE,
+            errors: [e instanceof Error ? e.message : String(e)],
+          };
+          setProgress(p);
+          onFinished?.(p);
+          return p;
         }
 
-        const totalFrames = recent.reduce((n, r) => n + r.frames, 0);
-        const totalMs = recent.reduce((n, r) => n + r.ms, 0);
-        acc.etaSeconds =
-          totalFrames > 0 && acc.done < acc.total
-            ? Math.round(((acc.total - acc.done) * (totalMs / totalFrames)) / 1000)
-            : null;
-        setProgress({ ...acc });
+        const acc: AnalyzeProgress = { ...IDLE, running: true, total: ids.length };
+        // Rolling window of (frames, ms) so the ETA reflects recent throughput
+        // rather than a run-long average — file sizes and disk speed vary.
+        const recent: { frames: number; ms: number }[] = [];
+
+        for (let i = 0; i < ids.length; i += BATCH_SIZE) {
+          if (cancelRef.current) break;
+          const batch = ids.slice(i, i + BATCH_SIZE);
+          const t0 = performance.now();
+          let res: QualityAnalyzeResult;
+          try {
+            res = await analyzeFrames(projectId, batch, force);
+          } catch (e) {
+            // A whole batch failing (409, backend restart, network) ends the run
+            // rather than hammering the remaining thousands of frames.
+            acc.errors.push(e instanceof Error ? e.message : String(e));
+            break;
+          }
+          recent.push({ frames: batch.length, ms: performance.now() - t0 });
+          if (recent.length > RATE_WINDOW) recent.shift();
+
+          acc.analyzed += res.analyzed;
+          acc.noStars += res.no_stars;
+          acc.unreadable += res.unreadable;
+          acc.done += res.analyzed + res.unreadable + res.skipped;
+          if (res.errors.length && acc.errors.length < 20) {
+            acc.errors.push(...res.errors.slice(0, 20 - acc.errors.length));
+          }
+
+          const totalFrames = recent.reduce((n, r) => n + r.frames, 0);
+          const totalMs = recent.reduce((n, r) => n + r.ms, 0);
+          acc.etaSeconds =
+            totalFrames > 0 && acc.done < acc.total
+              ? Math.round(((acc.total - acc.done) * (totalMs / totalFrames)) / 1000)
+              : null;
+          setProgress({ ...acc });
+        }
+
+        const final = { ...acc, running: false, etaSeconds: null };
+        setProgress(final);
+        onFinished?.(final);
+        return final;
+      } finally {
+        setAnalyzeRunActive(false);
       }
-
-      const final = { ...acc, running: false, etaSeconds: null };
-      setProgress(final);
-      onFinished?.(final);
-      return final;
     },
     [projectId, onFinished],
   );

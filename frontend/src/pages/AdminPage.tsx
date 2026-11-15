@@ -40,12 +40,16 @@ import {
   type AdminStatus,
   type AppInfo,
   type ReseedResult,
+  type WorkspaceProblem,
 } from "@/api/admin";
+import { ApiError } from "@/api/client";
 import CatalogsAdminSection from "@/components/dso/CatalogsAdminSection";
 import CachesAdminSection from "@/components/admin/CachesAdminSection";
 import StarCatalogAdminSection from "@/components/admin/StarCatalogAdminSection";
+import { UpdatesAdminSection } from "@/components/admin/UpdatesAdminSection";
 import BackToPlateSolve from "@/components/common/BackToPlateSolve";
 import { useLocation } from "react-router-dom";
+import { WorkspaceProblemDialog } from "@/components/workspace/WorkspaceProblemScreen";
 
 function formatBytes(bytes: number | null): string {
   if (bytes === null) return "unknown";
@@ -628,6 +632,7 @@ export function AdminPage() {
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [reseeding, setReseeding] = useState(false);
   const [reseedResult, setReseedResult] = useState<ReseedResult | null>(null);
+  const [workspaceProblem, setWorkspaceProblem] = useState<WorkspaceProblem | null>(null);
 
   const infoQuery = useQuery({
     queryKey: ["admin-info"],
@@ -653,6 +658,13 @@ export function AdminPage() {
     try {
       await action();
     } catch (err) {
+      if (err instanceof ApiError && err.status === 409) {
+        const detail = err.detail as { problem?: WorkspaceProblem };
+        if (detail?.problem) {
+          setWorkspaceProblem(detail.problem);
+          return;
+        }
+      }
       setErrorMsg(err instanceof Error ? err.message : "Operation failed.");
     }
   };
@@ -689,9 +701,18 @@ export function AdminPage() {
             )}
             <InfoRow label="Python Version" value={info.python_version} />
             <InfoRow label="App Version" value={appVersion} />
+            {info.log_dir && <InfoRow label="Log Files" value={info.log_dir} />}
+            {info.licences_dir && (
+              <Box sx={{ display: "flex", gap: 2, py: 0.75, alignItems: "baseline" }}>
+                <Typography variant="body2" color="text.secondary" sx={{ minWidth: 160 }}>Licences</Typography>
+                <Typography variant="body2" sx={{ fontFamily: "monospace", wordBreak: "break-all" }}>{info.licences_dir} · <a href={`https://github.com/fbaptiste/nightcrate/tree/v${appVersion}`} target="_blank" rel="noopener">source</a></Typography>
+              </Box>
+            )}
           </Box>
         )}
       </Paper>
+
+      <UpdatesAdminSection />
 
       <Typography variant="h6" sx={{ mb: 1 }}>
         Workspace Management
@@ -768,6 +789,7 @@ export function AdminPage() {
           {errorMsg}
         </Alert>
       </Snackbar>
+      <WorkspaceProblemDialog problem={workspaceProblem} currentVersion={appVersion} open={workspaceProblem !== null} onClose={() => setWorkspaceProblem(null)} />
     </Box>
   );
 }

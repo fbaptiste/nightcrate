@@ -35,10 +35,11 @@ from contextlib import ExitStack
 from pathlib import Path
 from typing import get_args
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import FileResponse, Response
 
 from nightcrate.api._common import bool_fields, get_or_404, row_to_dict
+from nightcrate.api.app_activity import admit_work
 from nightcrate.core import app_config, child_processes
 from nightcrate.core.compute import effective_worker_count
 from nightcrate.core.config import get_settings
@@ -160,6 +161,7 @@ router = APIRouter(prefix="/api/projects", tags=["Projects"])
 
 # Single-flight guard: at most one ingest run in flight per process.
 _INGEST_LOCK = asyncio.Lock()
+_active_ingest_project_id: int | None = None
 
 # Separate from _INGEST_LOCK: the quality pass reads files and writes only the
 # quality columns, so it need not queue behind a folder re-scan (and vice versa).
@@ -417,7 +419,9 @@ async def _get_folder_or_404(conn, project_id: int, folder_id: int) -> dict:
 # ── Ingest run ────────────────────────────────────────────────────────────────
 
 
-@router.post("/{project_id}/ingest", response_model=IngestStatus)
+@router.post(
+    "/{project_id}/ingest", response_model=IngestStatus, dependencies=[Depends(admit_work)]
+)
 async def start_ingest(
     project_id: int,
     folder_id: int | None = Query(default=None, description="Scan only this source folder"),
@@ -447,8 +451,13 @@ async def start_ingest(
 
     # Hold the lock for the whole synchronous-within-request run. Ingest is fast
     # enough (parse fan-out is parallel) to run inline; status is queryable after.
+    global _active_ingest_project_id
     async with _INGEST_LOCK:
-        return await _run_ingest(project_id, folders)
+        _active_ingest_project_id = project_id
+        try:
+            return await _run_ingest(project_id, folders)
+        finally:
+            _active_ingest_project_id = None
 
 
 async def _run_ingest(project_id: int, folders: list[str]) -> IngestStatus:
@@ -1298,7 +1307,11 @@ async def catalog_analyze_summary(
     )
 
 
-@router.post("/{project_id}/catalog/analyze", response_model=QualityAnalyzeResult)
+@router.post(
+    "/{project_id}/catalog/analyze",
+    response_model=QualityAnalyzeResult,
+    dependencies=[Depends(admit_work)],
+)
 async def catalog_analyze(
     project_id: int,
     body: QualityAnalyzeRequest,

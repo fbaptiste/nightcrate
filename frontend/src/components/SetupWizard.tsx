@@ -5,6 +5,7 @@ import Button from "@mui/material/Button";
 import Card from "@mui/material/Card";
 import CardContent from "@mui/material/CardContent";
 import CircularProgress from "@mui/material/CircularProgress";
+import Checkbox from "@mui/material/Checkbox";
 import Dialog from "@mui/material/Dialog";
 import DialogActions from "@mui/material/DialogActions";
 import DialogContent from "@mui/material/DialogContent";
@@ -19,6 +20,7 @@ import Snackbar from "@mui/material/Snackbar";
 import TextField from "@mui/material/TextField";
 import Tooltip from "@mui/material/Tooltip";
 import Typography from "@mui/material/Typography";
+import FormControlLabel from "@mui/material/FormControlLabel";
 import CreateNewFolderIcon from "@mui/icons-material/CreateNewFolder";
 import DescriptionIcon from "@mui/icons-material/Description";
 import FolderIcon from "@mui/icons-material/Folder";
@@ -34,6 +36,7 @@ import {
   fetchShortcuts,
   createFolder,
 } from "@/api/admin";
+import { setCheckAutomatically } from "@/api/updates";
 
 /** Convert a workspace name to a folder slug (e.g., "Fred's Rig" → "Freds_Rig") */
 function nameToFolder(name: string): string {
@@ -53,6 +56,7 @@ export function SetupWizard() {
   const [newFolderOpen, setNewFolderOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [automaticChecks, setAutomaticChecks] = useState(true);
 
   const { data: info } = useQuery({
     queryKey: ["adminInfo"],
@@ -99,6 +103,7 @@ export function SetupWizard() {
     setSubmitting(true);
     try {
       await setupDatabase({ path: fullPath, name });
+      await setCheckAutomatically(automaticChecks);
       window.location.reload();
     } catch (err) {
       setErrorMsg(
@@ -278,6 +283,16 @@ export function SetupWizard() {
             >
               {fullPath}
             </Typography>
+          )}
+
+          {!hasKnownDbs && (
+            <Box sx={{ p: 1.5, bgcolor: "background.default", borderRadius: 1.5 }}>
+              <FormControlLabel
+                control={<Checkbox checked={automaticChecks} onChange={(event) => setAutomaticChecks(event.target.checked)} />}
+                label={<Box><Typography fontWeight={600} variant="body2">Check for new versions automatically</Typography><Typography color="text.secondary" variant="caption">Once a day, NightCrate asks GitHub whether a newer version of NightCrate or of the OpenNGC catalog exists. It sends nothing about your images or workspaces. You can change this later in Admin.</Typography></Box>}
+                sx={{ alignItems: "flex-start", m: 0 }}
+              />
+            </Box>
           )}
 
           <Button

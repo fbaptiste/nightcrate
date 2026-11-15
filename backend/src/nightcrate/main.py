@@ -24,6 +24,7 @@ from platformdirs import user_log_dir
 from nightcrate.api import (
     aberration,
     admin,
+    app_activity,
     calculators,
     diagnostics,
     dso,
@@ -51,6 +52,7 @@ from nightcrate.api import (
     rigs,
     settings,
     star_catalog,
+    updates,
     weather,
     wishlist,
 )
@@ -232,6 +234,7 @@ async def lifespan(app: FastAPI):
                     set_db_path(workspace_db_path(workspace))
                     runtime.last_activation_backup = result.backup_path
                     await _run_database_maintenance()
+            await updates.record_first_run_version()
             yield
         finally:
             await star_catalog_fetch.shutdown()
@@ -402,6 +405,10 @@ openapi_tags = [
         ),
     },
     {
+        "name": "Updates",
+        "description": "Application update checks, notices, and install coordination.",
+    },
+    {
         "name": "Weather",
         "description": (
             "Personal imaging verdicts (Go / Uncertain / No / Not enough data) "
@@ -458,6 +465,8 @@ app.include_router(project_targets.links_router)
 app.include_router(settings.router)
 app.include_router(star_catalog.router)
 app.include_router(admin.router)
+app.include_router(updates.router)
+app.include_router(app_activity.router)
 app.include_router(wishlist.router)
 app.include_router(diagnostics.router)
 

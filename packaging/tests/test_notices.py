@@ -17,6 +17,7 @@ from notices import (  # noqa: E402
     _interpreter_native_candidates,
     _notices_text,
     _owner_for_python_native,
+    _system_natives,
     evaluate_licence,
     has_applied_mpl_incompatibility,
     load_policy,
@@ -113,15 +114,15 @@ def _native_owner(
     )
 
 
-def test_windows_cpython_dll_tree_is_attributed_by_name_and_hash(
+def test_unlisted_windows_dlls_file_is_attributed_by_name_and_hash(
     tmp_path: Path,
 ) -> None:
     interpreter = tmp_path / "python"
     dlls = interpreter / "DLLs"
     dlls.mkdir(parents=True)
-    source = dlls / "_asyncio.pyd"
-    source.write_bytes(b"CPython extension")
-    frozen = tmp_path / "frozen" / "_asyncio.pyd"
+    source = dlls / "zlib1.dll"
+    source.write_bytes(b"CPython bundled DLL")
+    frozen = tmp_path / "frozen" / "zlib1.dll"
     frozen.parent.mkdir()
     frozen.write_bytes(source.read_bytes())
     candidates = _interpreter_native_candidates(
@@ -173,6 +174,95 @@ def test_unknown_pyd_still_fails(tmp_path: Path) -> None:
 
     with pytest.raises(NoticeError, match="unknown.pyd.*no unique owner"):
         _native_owner(frozen, candidates)
+
+
+class _FakeDistribution:
+    metadata = {"Name": "pycryptodomex"}
+    version = "3.23.0"
+
+
+def test_hash_mismatched_elf_record_path_is_attributed_with_freezer_note(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(notices.sys, "platform", "linux")
+    record_path = "Cryptodome/Cipher/_ARC4.abi3.so"
+    source = tmp_path / "installed" / record_path
+    source.parent.mkdir(parents=True)
+    source.write_bytes(b"\x7fELForiginal")
+    appimage = tmp_path / "appimage"
+    backend = tmp_path / "backend"
+    backend.mkdir()
+    frozen = appimage / "usr" / "lib" / "NightCrate" / "backend" / "lib" / record_path
+    frozen.parent.mkdir(parents=True)
+    frozen.write_bytes(b"\x7fELFpatched-rpath")
+    distribution = _FakeDistribution()
+    by_basename = {source.name: [(distribution, record_path, source)]}
+
+    monkeypatch.setattr(
+        notices,
+        "_dpkg_owner",
+        lambda _path: pytest.fail("distribution-owned binary reached dpkg"),
+    )
+    natives, system_components = _system_natives(
+        appimage,
+        backend,
+        by_basename,
+        {str(source): notices._sha256(source)},
+        {},
+    )
+
+    assert system_components == []
+    assert len(natives) == 1
+    owner = natives[0]["owner"]
+    assert owner["name"] == "pycryptodomex"
+    assert owner["notice"] == "binary patched by the freezer (RPATH)"
+
+
+def test_hash_mismatched_elf_without_record_path_falls_through_to_dpkg(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(notices.sys, "platform", "linux")
+    source = tmp_path / "installed" / "Other" / "_ARC4.abi3.so"
+    source.parent.mkdir(parents=True)
+    source.write_bytes(b"\x7fELForiginal")
+    appimage = tmp_path / "appimage"
+    frozen = (
+        appimage
+        / "usr"
+        / "lib"
+        / "NightCrate"
+        / "backend"
+        / "lib"
+        / "Cryptodome"
+        / "Cipher"
+        / "_ARC4.abi3.so"
+    )
+    frozen.parent.mkdir(parents=True)
+    frozen.write_bytes(b"\x7fELFpatched-rpath")
+    backend = tmp_path / "backend"
+    backend.mkdir()
+    distribution = _FakeDistribution()
+    by_basename = {source.name: [(distribution, "Other/_ARC4.abi3.so", source)]}
+    dpkg_calls: list[Path] = []
+
+    def failing_dpkg(path: Path) -> tuple[dict[str, str], str]:
+        dpkg_calls.append(path)
+        raise NoticeError("dpkg lookup failed")
+
+    monkeypatch.setattr(notices, "_dpkg_owner", failing_dpkg)
+
+    with pytest.raises(NoticeError, match="dpkg lookup failed"):
+        _system_natives(
+            appimage,
+            backend,
+            by_basename,
+            {str(source): notices._sha256(source)},
+            {},
+        )
+
+    assert dpkg_calls == [frozen]
 
 
 def test_vcruntime_is_a_system_library(tmp_path: Path) -> None:

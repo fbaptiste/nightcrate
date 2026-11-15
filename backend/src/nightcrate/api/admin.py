@@ -9,9 +9,10 @@ import sys
 from pathlib import Path
 from typing import Literal
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
+from nightcrate.api.app_activity import admit_work
 from nightcrate.api.catalog_choice_models import OptionalCatalogStatus, RemovalPreview
 from nightcrate.core import app_config, runtime
 from nightcrate.core.app_config import (
@@ -263,7 +264,7 @@ async def admin_status() -> dict:
     }
 
 
-@router.post("/database/create")
+@router.post("/database/create", dependencies=[Depends(admit_work)])
 async def create_database(req: CreateDatabaseRequest) -> dict:
     """Create a new workspace folder with a database inside it."""
     _guard_catalog_database_change()
@@ -291,7 +292,7 @@ async def create_database(req: CreateDatabaseRequest) -> dict:
     }
 
 
-@router.post("/database/add")
+@router.post("/database/add", dependencies=[Depends(admit_work)])
 async def add_existing_database(req: CreateDatabaseRequest) -> dict:
     """Register an existing workspace folder in the config."""
     _guard_catalog_database_change()
@@ -319,7 +320,7 @@ async def add_existing_database(req: CreateDatabaseRequest) -> dict:
     }
 
 
-@router.post("/database/activate")
+@router.post("/database/activate", dependencies=[Depends(admit_work)])
 async def activate_database(req: ActivateDatabaseRequest) -> dict:
     """Activate a known workspace, running migrations and seed loader first."""
     _guard_catalog_database_change()
@@ -360,7 +361,7 @@ async def activate_database(req: ActivateDatabaseRequest) -> dict:
     }
 
 
-@router.post("/database/setup")
+@router.post("/database/setup", dependencies=[Depends(admit_work)])
 async def setup_database(req: CreateDatabaseRequest) -> dict:
     """First-run setup: create workspace, migrate, seed, and activate.
 
@@ -408,7 +409,7 @@ async def setup_database(req: CreateDatabaseRequest) -> dict:
     }
 
 
-@router.delete("/database")
+@router.delete("/database", dependencies=[Depends(admit_work)])
 async def remove_database(
     req: RemoveDatabaseRequest,
     delete_file: bool = Query(False, description="Also delete the workspace folder from disk"),
@@ -497,7 +498,7 @@ async def create_folder(req: CreateFolderRequest) -> dict:
     return {"path": str(target.resolve())}
 
 
-@router.post("/reseed")
+@router.post("/reseed", dependencies=[Depends(admit_work)])
 async def reseed_equipment() -> dict:
     """Re-run the seed loader on the active database.
 
@@ -743,7 +744,7 @@ async def catalog_fetch_status() -> dict | None:
     return catalog_progress.snapshot()
 
 
-@router.post("/catalogs/reload")
+@router.post("/catalogs/reload", dependencies=[Depends(admit_work)])
 async def reload_catalogs(force: bool = Query(True)) -> dict:
     """Re-parse the local catalog cache without re-downloading.
 
@@ -787,7 +788,7 @@ async def remote_catalog_version() -> dict:
     }
 
 
-@router.post("/catalogs/fetch-from-github")
+@router.post("/catalogs/fetch-from-github", dependencies=[Depends(admit_work)])
 async def fetch_catalogs_from_github() -> dict:
     """Download the latest OpenNGC release from GitHub into the user's
     catalogs dir and then run the loader. Returns the load summary plus
@@ -948,7 +949,7 @@ async def optional_catalog_removal_preview(catalog_id: str) -> RemovalPreview:
     return _preview_catalog_removal(catalog_id)
 
 
-@router.post("/catalogs/optional/{catalog_id}/add")
+@router.post("/catalogs/optional/{catalog_id}/add", dependencies=[Depends(admit_work)])
 async def add_optional_catalog(catalog_id: str) -> dict:
     """Download (when needed), select, and load one optional catalog."""
     from nightcrate.catalog_loader.catalog_choice import read_choice, with_added, write_choice
@@ -1006,7 +1007,7 @@ async def add_optional_catalog(catalog_id: str) -> dict:
         }
 
 
-@router.post("/catalogs/optional/{catalog_id}/remove")
+@router.post("/catalogs/optional/{catalog_id}/remove", dependencies=[Depends(admit_work)])
 async def remove_optional_catalog(catalog_id: str) -> dict:
     """Remove one optional catalog while preserving user-linked objects."""
     from nightcrate.catalog_loader.catalog_choice import (
@@ -1079,7 +1080,7 @@ async def remove_optional_catalog(catalog_id: str) -> dict:
         }
 
 
-@router.post("/catalogs/nightcrate/reload")
+@router.post("/catalogs/nightcrate/reload", dependencies=[Depends(admit_work)])
 async def reload_nightcrate_catalogs() -> dict:
     """Re-read the vendored NightCrate CSVs (augment + crossref files) and
     re-run the loader so edits to those files take effect without restarting
@@ -1130,7 +1131,7 @@ async def mgc50_remote_version() -> dict:
     }
 
 
-@router.post("/catalogs/50mgc/fetch")
+@router.post("/catalogs/50mgc/fetch", dependencies=[Depends(admit_work)])
 async def mgc50_fetch() -> dict:
     """Download ``catalog.fits`` from the 50 MGC GitHub mirror atomically
     and run the loader.
@@ -1200,7 +1201,7 @@ async def wikidata_remote_version() -> dict:
     }
 
 
-@router.post("/catalogs/wikidata/fetch")
+@router.post("/catalogs/wikidata/fetch", dependencies=[Depends(admit_work)])
 async def wikidata_fetch() -> dict:
     """Run the SPARQL query against Wikidata, store the TSV atomically,
     and reload catalogs so the new rows land in ``dso_external_ref``.
@@ -1241,7 +1242,7 @@ async def wikidata_fetch() -> dict:
 # ---------------------------------------------------------------------------
 
 
-@router.post("/caches/reindex-images")
+@router.post("/caches/reindex-images", dependencies=[Depends(admit_work)])
 async def reindex_image_caches() -> dict:
     """Re-index on-disk thumbnail + sky-tile JPEGs into the active DB.
 

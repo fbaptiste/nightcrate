@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import threading
 from collections.abc import Callable
+from datetime import UTC, datetime
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import Literal
@@ -15,6 +16,19 @@ install_kind: InstallKind = "source"
 production: bool = False
 last_activation_backup: Path | None = None
 log_dir: Path | None = None
+admitted_work: int = 0
+install_lease_until: datetime | None = None
+install_owner: str | None = None
+install_barrier: bool = False
+
+
+def utcnow() -> datetime:
+    return datetime.now(UTC)
+
+
+def install_is_reserved(now: datetime | None = None) -> bool:
+    now = now or utcnow()
+    return install_barrier or (install_lease_until is not None and now < install_lease_until)
 
 
 def app_version() -> str:
