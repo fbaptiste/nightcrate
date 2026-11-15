@@ -11,23 +11,17 @@ import {
   type Project,
   type ProjectStatus,
 } from "@/api/projects";
+import {
+  PROJECT_STATUS_DISPLAY,
+  PROJECT_STATUS_ORDER,
+  projectStatusLabel,
+} from "@/lib/projectStatus";
 
 interface Props {
   project: Project;
   onUpdated: (project: Project) => void;
   onError: (message: string) => void;
 }
-
-const STATUSES: Array<{
-  value: ProjectStatus;
-  label: string;
-  description: string;
-}> = [
-  { value: "active", label: "Active", description: "Still capturing" },
-  { value: "paused", label: "Paused", description: "On hold" },
-  { value: "complete", label: "Complete", description: "Finished" },
-  { value: "abandoned", label: "Abandoned", description: "Stopped for good" },
-];
 
 export default function ProjectStatusChip({ project, onUpdated, onError }: Props) {
   const [anchorEl, setAnchorEl] = useState<HTMLElement | null>(null);
@@ -48,8 +42,6 @@ export default function ProjectStatusChip({ project, onUpdated, onError }: Props
     setAnchorEl(null);
     if (status !== project.status) mutation.mutate(status);
   };
-
-  const current = STATUSES.find((status) => status.value === project.status);
 
   return (
     <>
@@ -73,7 +65,7 @@ export default function ProjectStatusChip({ project, onUpdated, onError }: Props
           },
         })}
       >
-        {current?.label ?? project.status}
+        {projectStatusLabel(project.status)}
         <ArrowDropDownIcon sx={{ fontSize: "16px", color: "text.secondary" }} />
       </ButtonBase>
       <Menu
@@ -99,20 +91,20 @@ export default function ProjectStatusChip({ project, onUpdated, onError }: Props
           },
         }}
       >
-        {STATUSES.map((status) => (
+        {PROJECT_STATUS_ORDER.map((status) => (
           <MenuItem
-            key={status.value}
-            selected={status.value === project.status}
-            onClick={() => choose(status.value)}
+            key={status}
+            selected={status === project.status}
+            onClick={() => choose(status)}
             role="option"
             sx={{ px: "14px", py: "7px" }}
           >
             <Box>
               <Typography sx={{ fontSize: "14px", fontWeight: 500 }}>
-                {status.label}
+                {PROJECT_STATUS_DISPLAY[status].label}
               </Typography>
               <Typography sx={{ fontSize: "12px", color: "text.secondary" }}>
-                {status.description}
+                {PROJECT_STATUS_DISPLAY[status].description}
               </Typography>
             </Box>
           </MenuItem>

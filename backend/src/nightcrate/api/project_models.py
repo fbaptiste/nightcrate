@@ -7,7 +7,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-ProjectStatus = Literal["active", "paused", "complete", "abandoned"]
+ProjectStatus = Literal["active", "ready_to_process", "paused", "complete", "abandoned"]
 
 # ── Requests ────────────────────────────────────────────────────────────────
 

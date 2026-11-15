@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   DndContext,
@@ -34,6 +34,7 @@ import NewRigDialog from "@/components/rigs/NewRigDialog";
 import RigDetailPanel from "@/components/rigs/RigDetailPanel";
 import { setActivity } from "@/api/client";
 import { invalidateProjectInfo } from "@/api/projectInfo";
+import { useSearchParams } from "react-router-dom";
 import {
   fetchRigs,
   setRigMine,
@@ -47,6 +48,7 @@ import {
 
 export default function RigsPage() {
   const queryClient = useQueryClient();
+  const [searchParams, setSearchParams] = useSearchParams();
   // The whole catalog, retired rows included: this page owns claiming a
   // pre-defined rig and un-retiring one. Every other consumer wants only the
   // user's own kit and asks for ["rigs", "mine"] — a distinct key, because the
@@ -99,6 +101,26 @@ export default function RigsPage() {
     (r) => r.source === "seed" && r.active && !r.is_mine,
   );
   const retiredRigs = rigs.filter((r) => !r.active);
+
+  useEffect(() => {
+    if (isLoading) return;
+    const raw = searchParams.get("select");
+    if (!raw) return;
+    const id = Number(raw);
+    const match = Number.isInteger(id) ? rigs.find((rig) => rig.id === id) : undefined;
+    if (!match) return;
+    const next = new URLSearchParams(searchParams);
+    next.delete("select");
+    setSearchParams(next, { replace: true });
+    requestAnimationFrame(() => {
+      setSelectedRig(match);
+      if (!match.active) setRetiredVisible(true);
+      setActivity(`Rigs — ${match.name}`);
+      requestAnimationFrame(() => {
+        document.getElementById(`rig-${id}`)?.scrollIntoView({ block: "center" });
+      });
+    });
+  }, [isLoading, rigs, searchParams, setSearchParams]);
 
   const handleToggleMine = async (id: number, isMine: boolean) => {
     try {
@@ -343,17 +365,18 @@ export default function RigsPage() {
           {retiredVisible && (
             <Box sx={{ display: "flex", flexDirection: "column", gap: 2 }}>
               {retiredRigs.map((rig) => (
-                <RigCard
-                  key={rig.id}
-                  rig={rig}
-                  selected={resolvedSelected?.id === rig.id}
-                  onSelect={handleSelect}
-                  onEdit={handleEdit}
-                  onClone={handleClone}
-                  onDelete={handleDelete}
-                  onRestore={handleRestore}
-                  onSetDefault={handleSetDefault}
-                />
+                <Box key={rig.id} id={`rig-${rig.id}`}>
+                  <RigCard
+                    rig={rig}
+                    selected={resolvedSelected?.id === rig.id}
+                    onSelect={handleSelect}
+                    onEdit={handleEdit}
+                    onClone={handleClone}
+                    onDelete={handleDelete}
+                    onRestore={handleRestore}
+                    onSetDefault={handleSetDefault}
+                  />
+                </Box>
               ))}
             </Box>
           )}
@@ -454,6 +477,7 @@ function SortableRigCard({
   // mounted but invisible preserves the slot's exact size.
   return (
     <Box
+      id={`rig-${rig.id}`}
       ref={setNodeRef}
       style={style}
       sx={{

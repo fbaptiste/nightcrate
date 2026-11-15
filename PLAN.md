@@ -1,13 +1,12 @@
 # NightCrate — active plan
 
-**Version:** v0.52.0 — Sky chart on the project Info tab
+**Version:** v0.53.0 — Home page
 
-**Branch:** `v0.52.0/sky-chart`
+**Branch:** `v0.53.0/home-page`
 
 **Status:** Complete — awaiting merge
 
-**Next version** (Fred, 2026-11-13): the Home page as v0.53.0 ("let's plan on
-doing this in the next version"), then Distribution (installers and one-click
+**Next version** (Fred, 2026-11-13): Distribution (installers and one-click
 updates) as v0.54.0.
 
 **Tablet and phone review** (Fred, 2026-11-14): "I will do a specific
@@ -28,7 +27,137 @@ far:
 - v0.46.0's framing dialog: dragging the frame, and the long-press tooltip;
 - Safari, Firefox and touch devices on v0.48.0's Messier page.
 
+## v0.53.0 — Home page
+
+Fred placed the Home page after the sky chart on 2026-11-13 ("let's plan on
+doing this in the next version"). Started on 2026-11-14 from `main` at
+`48d506f`, after v0.52.0 merged.
+
+- [x] Start from updated `main` on `v0.53.0/home-page`.
+- [x] Spec:
+  [2026-11-14-v0.53.0-home-page-design.md](docs/superpowers/specs/2026-11-14-v0.53.0-home-page-design.md).
+  - Fred's answers on 2026-11-14:
+    - **Ready to process becomes a status set by hand** (option 3),
+      because per-filter goals were removed in v0.41.1;
+    - **the location rows** when there's no default;
+    - **the weather-worded line** when there are no locations.
+  - He approved the revised mockup (`.superpowers/mockups/home/home-v2.html`)
+    and asked for unattended building, with Claude's calls confirmed at the
+    end ("ok, this is good. please proceed to do the full implementation").
+- [x] Plan, with Codex's review:
+  [2026-11-14-v0.53.0-home-page.md](docs/superpowers/plans/2026-11-14-v0.53.0-home-page.md).
+  It converged in two rounds; every finding was accepted. Fred's
+  instruction to work unattended covered the plan's approval.
+- [x] Implementation (Codex, in `.superpowers/wt-v0.53.0`) and reviews:
+  - Phase A (backend), with Claude's review and a real-data migration
+    check;
+  - a serialisation fix after Claude's responsiveness measurement;
+  - Phase B (frontend);
+  - two fix rounds, from the rendered checks and from a fresh independent
+    review (no blocker or major finding).
+- [x] Rendered checks on desktop, docs, and the candidate (2026-11-14).
+- [x] Fred's acceptance test, including Claude's calls listed in the spec
+  (accepted 2026-11-14).
+
+### Candidate verification (Claude, 2026-11-14)
+
+- **Migration 0073:**
+  - on a copy of real data and then on Fred's live database (backed up
+    first, ignored, in `.superpowers/tmp/v053/`): `project` and every user
+    table unchanged row for row;
+  - FK lists, `table_info` and `sqlite_sequence` unchanged, and the
+    integrity and FK checks clean;
+  - the catalog tables refreshed at startup changed, as on every start.
+- **Backend:** the full suite passed: 4,174 passed, 4 skipped, 0 failed
+  (v0.52.0: 4,131). It includes `test_projects_api.py`, which Codex's
+  sandbox can't run. Coverage: `services/home.py` 99%, `api/home.py` 95%,
+  `api/home_models.py` 100%. The only new weather lines left uncovered are
+  the two endpoints' generic 500 handlers.
+  - ruff, format and bandit (0 findings at any severity) are clean.
+- **Frontend:** `check:home`, `check:sky`, the build and ESLint on the
+  changed files pass.
+- **Responsiveness:** `GET /api/home` answers in 5–7 ms on a copy of real
+  data. With stubbed fetches and real CPU, it takes 4 ms while four cold
+  forecast builds run (they're serialised; 629 ms when they ran in
+  parallel).
+- **Rendered checks** (desktop, both themes, a copy of real data with
+  projects in every stage):
+  - the page against the mockup;
+  - every stage link into the filtered Projects page, its chip, and an
+    unknown stage ignored;
+  - the rig and location links;
+  - the status menu, and the labels and pills in the Projects list and the
+    Gallery;
+  - forecast rows loading in sequence, with a failed row's message and
+    retry;
+  - the toast's placement and 15 s life;
+  - every empty state, through a stubbed summary.
+- **Found in the rendered checks:** two forecast rows loading at once made
+  Open-Meteo answer 429. The rows now load one after another. The existing
+  10-minute failure cooldown still holds a row failed after a 429.
+- **From the start sweep (2026-11-14):**
+  - v0.50.0-D1: no new evidence. Fred's database still has no uncataloged
+    files (read-only count: 0). Two releases have completed since it was
+    raised; the third is this one.
+  - v0.50.0-R1: no new evidence. This version doesn't change ingest.
+  - v0.47.0-R1 and R2 stay parked, as Fred asked on 2026-11-12.
+  - v0.46.0-R1 stays with Distribution's design (v0.54.0).
+  - v0.52.0's tracked items are both resolved.
+
+### Scope (Fred, 2026-11-13)
+
+
+Fred chose the design on 2026-11-13 from local mockups
+(`.superpowers/mockups/home/home.html`, option D, which is ignored). Today the
+page shows only a welcome line and the joke wand. What he agreed, in order
+down the page:
+
+- **Projects:** the heading "Projects", with a count. One bar shows how many
+  projects are at each stage, with a key; each part opens the Projects page
+  filtered to that stage. The stages are:
+  - Not started (active, no light frames);
+  - Capturing (active, below its filter goals);
+  - Ready to process (active, every filter goal met);
+  - Complete;
+  - Paused;
+  - Abandoned.
+
+  He rejected a summary sentence repeating the bar ("that's already shown in
+  the bar graph underneath").
+- **Recent projects:** the three most recently imaged. Each shows its
+  picture or "No picture yet", its stage, hours against goals, and when it
+  was last imaged.
+- **The next two weeks:** one row per location: the default, plus locations
+  used by active projects, up to four.
+  - Each day shows the forecast verdict and that location's moon-free dark
+    hours ("isn't that going to depend on the location? … keep it").
+  - Each row loads on its own, so the rest of the page never waits ("it has
+    to not delay loading the rest of the page").
+- **Latest picture,** large.
+- **The last 12 months:** a rolling window, not the calendar year ("what
+  does this year mean when it's January 10th"). It gives hours, nights, new
+  pictures (by date added), the longest night, and hours per month.
+- **Rigs and Locations panels,** each item linking to its own page, plus
+  "All rigs" and "All locations". Each item shows hours and nights over the
+  last 12 months, when it was last used, and how many active projects use
+  it.
+- **The joke wand** moves to the nav's bottom row, right-aligned beside the
+  theme and log icons. Its joke shows as a toast that stays about 15 s or
+  until closed ("the joke popup is too fast to disappear").
+- **Rejected:** a night time line of when each project is up tonight, which
+  "seems to put NightCrate as first and foremost a planner"; a season
+  ribbon; and a picture-first page.
+- **Open for the spec:**
+  - which forecast call each location row uses, and its caching, since each
+    is an outbound request;
+  - what shows when no default location is set;
+  - how "last imaged" and the 12-month figures are worked out from
+    sessions.
+
 ## v0.52.0 — Sky chart on the project Info tab
+
+Merged in [PR #31](https://github.com/fbaptiste/nightcrate/pull/31) on
+2026-11-14.
 
 Fred decided on 2026-11-13, while shaping v0.51.0's Info tab, that the sky
 chart would be the next version. Started on 2026-11-13 from `main` at
@@ -3641,58 +3770,9 @@ records as the very next version after the gallery; it became v0.47.0. The
 Messier checklist became v0.48.0 and object search v0.49.0. The updated XISF
 specification became v0.50.0. On 2026-11-12 Fred placed a cleanup version,
 v0.51.0, before Distribution. On 2026-11-13 he placed the sky chart as
-v0.52.0 (the active version above) and the Home page as v0.53.0, both before
+v0.52.0 and the Home page as v0.53.0 (the active version above), both before
 Distribution, which becomes v0.54.0.
 Version numbers are otherwise assigned when each version starts.
-
-### Home page (v0.53.0)
-
-Fred chose the design on 2026-11-13 from local mockups
-(`.superpowers/mockups/home/home.html`, option D, which is ignored). Today the
-page shows only a welcome line and the joke wand. Nothing is specified yet:
-the spec starts with the version. What he agreed, in order down the page:
-
-- **Projects:** the heading "Projects", with a count. One bar shows how many
-  projects are at each stage, with a key; each part opens the Projects page
-  filtered to that stage. The stages are:
-  - Not started (active, no light frames);
-  - Capturing (active, below its filter goals);
-  - Ready to process (active, every filter goal met);
-  - Complete;
-  - Paused;
-  - Abandoned.
-
-  He rejected a summary sentence repeating the bar ("that's already shown in
-  the bar graph underneath").
-- **Recent projects:** the three most recently imaged. Each shows its
-  picture or "No picture yet", its stage, hours against goals, and when it
-  was last imaged.
-- **The next two weeks:** one row per location: the default, plus locations
-  used by active projects, up to four.
-  - Each day shows the forecast verdict and that location's moon-free dark
-    hours ("isn't that going to depend on the location? … keep it").
-  - Each row loads on its own, so the rest of the page never waits ("it has
-    to not delay loading the rest of the page").
-- **Latest picture,** large.
-- **The last 12 months:** a rolling window, not the calendar year ("what
-  does this year mean when it's January 10th"). It gives hours, nights, new
-  pictures (by date added), the longest night, and hours per month.
-- **Rigs and Locations panels,** each item linking to its own page, plus
-  "All rigs" and "All locations". Each item shows hours and nights over the
-  last 12 months, when it was last used, and how many active projects use
-  it.
-- **The joke wand** moves to the nav's bottom row, right-aligned beside the
-  theme and log icons. Its joke shows as a toast that stays about 15 s or
-  until closed ("the joke popup is too fast to disappear").
-- **Rejected:** a night time line of when each project is up tonight, which
-  "seems to put NightCrate as first and foremost a planner"; a season
-  ribbon; and a picture-first page.
-- **Open for the spec:**
-  - which forecast call each location row uses, and its caching, since each
-    is an outbound request;
-  - what shows when no default location is set;
-  - how "last imaged" and the 12-month figures are worked out from
-    sessions.
 
 ### Distribution (v0.54.0)
 

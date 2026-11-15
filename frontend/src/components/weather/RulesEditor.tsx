@@ -297,6 +297,7 @@ export default function RulesEditor({
       const response = await saveImagingRules(locationId, draft);
       queryClient.setQueryData(["imaging-rules", locationId], response);
       await queryClient.invalidateQueries({ queryKey: ["weather-forecast", locationId] });
+      await queryClient.invalidateQueries({ queryKey: ["home-fortnight"] });
       setSaving(false);
       onDraftChange(null);
       onSaved();

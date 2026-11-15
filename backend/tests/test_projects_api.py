@@ -240,7 +240,9 @@ class TestUpdateMetadata:
         resp = await client.patch(f"/api/projects/{pid}", json={"name": "   "})
         assert resp.status_code == 422
 
-    @pytest.mark.parametrize("status", ["active", "paused", "complete", "abandoned"])
+    @pytest.mark.parametrize(
+        "status", ["active", "ready_to_process", "paused", "complete", "abandoned"]
+    )
     async def test_update_status_each_value(self, client: AsyncClient, status: str):
         created = await client.post("/api/projects", json={"name": f"Status {status}"})
         project_id = created.json()["id"]

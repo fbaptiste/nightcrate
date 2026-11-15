@@ -9,6 +9,7 @@ import Typography from "@mui/material/Typography";
 import { useNavigate } from "react-router-dom";
 import type { ProjectTargetLink } from "@/api/projectTargetLinks";
 import { formatImagingRuns } from "@/lib/galleryRendition";
+import { projectStatusLabel, projectStatusPillColor } from "@/lib/projectStatus";
 
 interface Props {
   designation: string;
@@ -20,10 +21,6 @@ function imagingDates(link: ProjectTargetLink): string {
   return runs.length > 0
     ? `${runs.join(", ")}, ${link.nights} ${link.nights === 1 ? "night" : "nights"}`
     : "No imaging dates";
-}
-
-function statusLabel(status: string): string {
-  return status.charAt(0).toUpperCase() + status.slice(1);
 }
 
 export default function ProjectPill({ designation, links }: Props) {
@@ -107,21 +104,15 @@ export default function ProjectPill({ designation, links }: Props) {
                       px: "7px",
                       border: "1px solid currentColor",
                       borderRadius: "10px",
-                      color:
-                        link.status === "paused"
-                          ? theme.palette.mode === "dark"
-                            ? "#f0a35e"
-                            : "#b85500"
-                          : link.status === "complete"
-                            ? theme.palette.mode === "dark"
-                              ? "#7fb2ea"
-                              : "#1f63b0"
-                            : "text.secondary",
+                      color: projectStatusPillColor(
+                        link.status,
+                        theme.palette.mode,
+                      ),
                       fontSize: "11px",
                       fontWeight: 600,
                     })}
                   >
-                    {statusLabel(link.status)}
+                    {projectStatusLabel(link.status)}
                   </Box>
                 )}
               </Box>

@@ -118,6 +118,7 @@ class NightResponse(BaseModel):
     advisory: ReasonResponse | None
     clear_hours: float
     dark_hours: float
+    moonless_dark_hours: float
     unknown_hours: float
     clear_pct: float | None
     longest_gap_start: str | None
@@ -193,6 +194,19 @@ class ForecastResponse(BaseModel):
     run_age_minutes: dict[str, int | None]
     ignored_controls: list[str]
     nights: list[NightResponse]
+
+
+class FortnightNight(BaseModel):
+    date: str
+    verdict: Verdict
+    moonless_dark_hours: float
+
+
+class FortnightResponse(BaseModel):
+    location_id: int
+    evaluated_at: datetime
+    stale_since: str | None
+    nights: list[FortnightNight]
 
 
 class MethodologyResponse(BaseModel):

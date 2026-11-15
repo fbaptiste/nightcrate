@@ -1,4 +1,4 @@
--- NightCrate version: 0.52.0
+-- NightCrate version: 0.53.0
 -- NightCrate Database Schema
 -- SQLite DDL for the full current schema. Originally authored at v0.8.0;
 -- extended through v0.15.0 (rig builder, My Equipment flag, location seeing,
@@ -1617,7 +1617,8 @@ CREATE TABLE project (
     description TEXT,
     notes       TEXT,
     status      TEXT    NOT NULL DEFAULT 'active'
-                CHECK (status IN ('active', 'paused', 'complete', 'abandoned')),
+                CHECK (status IN ('active', 'ready_to_process', 'paused',
+                                  'complete', 'abandoned')),  -- ready_to_process: migration 0073
     active      INTEGER NOT NULL DEFAULT 1 CHECK (active IN (0, 1)),
     created_at  TEXT    NOT NULL DEFAULT (datetime('now')),
     updated_at  TEXT    NOT NULL DEFAULT (datetime('now'))

@@ -7,6 +7,7 @@ import logging
 import shutil
 import tempfile
 from pathlib import Path
+from typing import Literal
 
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import FileResponse, Response
@@ -44,7 +45,7 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/projects", tags=["Projects"])
 
-_VALID_STATUSES = {"active", "paused", "complete", "abandoned"}
+_VALID_STATUSES = {"active", "ready_to_process", "paused", "complete", "abandoned"}
 _VALID_SORTS = {"name", "created_at", "updated_at"}
 _IMAGE_SUFFIXES = {".fits", ".fit", ".fts", ".xisf", ".png", ".jpg", ".jpeg", ".tif", ".tiff"}
 _VALID_VARIANTS = set(VARIANT_SIZES.keys())
@@ -307,6 +308,15 @@ async def list_projects(
     sort: str = Query("updated_at", description="Sort field: name, created_at, updated_at"),
     desc: bool = Query(True, description="Sort descending"),
     include_retired: bool = Query(False),
+    stage: Literal[
+        "not_started",
+        "capturing",
+        "ready_to_process",
+        "complete",
+        "paused",
+        "abandoned",
+    ]
+    | None = None,
 ) -> list[ProjectListItem]:
     if sort not in _VALID_SORTS:
         sort = "updated_at"
@@ -322,6 +332,20 @@ async def list_projects(
         conditions.append("(p.name LIKE ? OR p.description LIKE ?)")
         like = f"%{q}%"
         params.extend([like, like])
+
+    if stage == "not_started":
+        conditions.append(
+            "p.status = 'active' AND COALESCE((SELECT SUM(ps.exposure_seconds * ps.num_subs) "
+            "FROM project_session ps WHERE ps.project_id = p.id), 0) = 0"
+        )
+    elif stage == "capturing":
+        conditions.append(
+            "p.status = 'active' AND COALESCE((SELECT SUM(ps.exposure_seconds * ps.num_subs) "
+            "FROM project_session ps WHERE ps.project_id = p.id), 0) > 0"
+        )
+    elif stage is not None:
+        conditions.append("p.status = ?")
+        params.append(stage)
 
     where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
 

@@ -4,6 +4,7 @@ import type { GalleryItem } from "@/api/gallery";
 import FlipTile from "@/components/common/FlipTile";
 import NameWithAlternates from "@/components/common/NameWithAlternates";
 import { cropSizeForView } from "@/lib/galleryRendition";
+import { projectStatusLabel, projectStatusPillColor } from "@/lib/projectStatus";
 import { tileMinimums, useTrackWidth } from "@/lib/useTrackWidth";
 import GalleryTileBack from "./GalleryTileBack";
 import GalleryTileFront from "./GalleryTileFront";
@@ -67,16 +68,9 @@ function GalleryGridTile({
     };
   }, [expandRefs, item.project_id]);
 
-  const labelColor =
-    item.status === "paused"
-      ? (theme: { palette: { mode: string } }) =>
-          theme.palette.mode === "dark" ? "#f0a35e" : "#b85500"
-      : "text.secondary";
   let captionFontSize = 14;
   if (view === "small") captionFontSize = 13;
   if (view === "large") captionFontSize = 16;
-  const statusLabel = item.status[0].toUpperCase() + item.status.slice(1);
-
   return (
     <Box sx={{ minWidth: 0 }}>
       <FlipTile
@@ -135,13 +129,14 @@ function GalleryGridTile({
                 px: "6px",
                 border: "1px solid currentColor",
                 borderRadius: "4px",
-                color: labelColor,
+                color: (theme) =>
+                  projectStatusPillColor(item.status, theme.palette.mode),
                 fontSize: 11,
                 lineHeight: "16px",
                 fontWeight: 600,
               }}
             >
-              {statusLabel}
+              {projectStatusLabel(item.status)}
             </Box>
           )}
           {item.retired && (

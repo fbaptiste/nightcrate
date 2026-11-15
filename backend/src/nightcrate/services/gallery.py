@@ -15,7 +15,7 @@ from nightcrate.services.dso_type_groups import TYPE_GROUPS
 from nightcrate.services.object_facts import OtherObjectDistance
 
 _SESSION_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
-_STATUS_ORDER = ("active", "paused", "complete", "abandoned")
+_STATUS_ORDER = ("active", "ready_to_process", "paused", "complete", "abandoned")
 
 
 def valid_session_date(text: str | None) -> date | None:

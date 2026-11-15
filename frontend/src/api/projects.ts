@@ -3,7 +3,19 @@ import type { RigParts, RigPartsInput } from "./rigs";
 
 // ── Types ─────────────────────────────────────────────────────────────────
 
-export type ProjectStatus = "active" | "paused" | "complete" | "abandoned";
+export type ProjectStatus =
+  | "active"
+  | "ready_to_process"
+  | "paused"
+  | "complete"
+  | "abandoned";
+export type Stage =
+  | "not_started"
+  | "capturing"
+  | "ready_to_process"
+  | "complete"
+  | "paused"
+  | "abandoned";
 export type CropSize = "small" | "medium" | "large";
 
 export interface ProjectImage {
@@ -142,6 +154,7 @@ export interface ProjectListParams {
   sort?: string;
   desc?: boolean;
   include_retired?: boolean;
+  stage?: Stage;
 }
 
 export async function fetchProjects(
@@ -152,6 +165,7 @@ export async function fetchProjects(
   if (params?.sort) sp.set("sort", params.sort);
   if (params?.desc !== undefined) sp.set("desc", String(params.desc));
   if (params?.include_retired) sp.set("include_retired", "true");
+  if (params?.stage) sp.set("stage", params.stage);
   const qs = sp.toString();
   return apiFetch<ProjectListItem[]>(`/projects${qs ? `?${qs}` : ""}`);
 }
@@ -323,13 +337,3 @@ export function renderedImageUrl(
   const sp = new URLSearchParams({ ws: workspaceKey });
   return `/api/projects/${projectId}/images/${imageId}/rendered/${variant}?${sp.toString()}`;
 }
-
-export const PROJECT_STATUS_COLORS: Record<
-  string,
-  "default" | "warning" | "info"
-> = {
-  active: "default",
-  paused: "warning",
-  complete: "info",
-  abandoned: "default",
-};
