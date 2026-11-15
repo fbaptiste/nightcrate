@@ -125,11 +125,12 @@ struct Reading {
 
 /// The fix to report from one delivery (oldest reading first, as Core
 /// Location orders them), or `None` to keep waiting: the newest reading
-/// counts only when it is recent and usable.
+/// counts only when it is recent and usable. A reading dated ahead of the
+/// clock (the clock set back since) is as suspect as an old one.
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 fn current_fix(readings: &[Reading]) -> Option<Fix> {
     let newest = readings.last()?;
-    if !(newest.age_s.is_finite() && newest.age_s <= MAX_FIX_AGE_S) {
+    if !(newest.age_s.is_finite() && newest.age_s.abs() <= MAX_FIX_AGE_S) {
         return None;
     }
     fix_from(newest.latitude, newest.longitude, newest.accuracy_m).ok()
@@ -170,7 +171,7 @@ mod macos {
     };
     use objc2_foundation::{NSArray, NSError, NSObject, NSObjectProtocol};
     use std::cell::{Cell, RefCell};
-    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
     use std::sync::mpsc::{self, RecvTimeoutError, Sender};
     use std::sync::Mutex;
     use std::time::{Duration, Instant};
@@ -181,6 +182,24 @@ mod macos {
     const DEADLINE: Duration = Duration::from_secs(120);
     /// The Location Services check; if it stalls, the request goes ahead.
     const SERVICES_CHECK: Duration = Duration::from_secs(5);
+
+    /// Set while a check runs. A stalled check keeps its thread, so later
+    /// requests skip the check rather than leave one stuck thread each.
+    static SERVICES_CHECK_RUNNING: AtomicBool = AtomicBool::new(false);
+
+    /// Runs off the main thread, as Apple asks.
+    fn services_on() -> bool {
+        if SERVICES_CHECK_RUNNING.swap(true, Ordering::AcqRel) {
+            return true;
+        }
+        let (sender, receiver) = mpsc::channel();
+        std::thread::spawn(move || {
+            let on = unsafe { CLLocationManager::locationServicesEnabled_class() };
+            SERVICES_CHECK_RUNNING.store(false, Ordering::Release);
+            let _ = sender.send(on);
+        });
+        receiver.recv_timeout(SERVICES_CHECK).unwrap_or(true)
+    }
 
     struct Pending {
         id: u64,
@@ -376,18 +395,10 @@ mod macos {
 
     pub async fn locate(app: tauri::AppHandle) -> Result<Fix, Failure> {
         let deadline = Instant::now() + DEADLINE;
-        // Apple asks callers not to check this on the main thread. A stalled
-        // check leaves its thread waiting, but not the request.
-        let services_on = tauri::async_runtime::spawn_blocking(|| {
-            let (sender, receiver) = mpsc::channel();
-            std::thread::spawn(move || {
-                let _ = sender.send(unsafe { CLLocationManager::locationServicesEnabled_class() });
-            });
-            receiver.recv_timeout(SERVICES_CHECK).unwrap_or(true)
-        })
-        .await
-        .unwrap_or(true);
-        if !services_on {
+        let services = tauri::async_runtime::spawn_blocking(services_on)
+            .await
+            .unwrap_or(true);
+        if !services {
             return Err(Failure::ServicesOff);
         }
         let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
@@ -543,6 +554,11 @@ mod tests {
         assert!(current_fix(&[reading(60.0, 35.0)]).is_some());
         assert!(current_fix(&[reading(0.0, 35.0)]).is_some());
         assert_eq!(current_fix(&[reading(60.5, 35.0)]), None);
+        // Dated ahead of the clock: a little is fine, more is suspect.
+        assert!(current_fix(&[reading(-5.0, 35.0)]).is_some());
+        assert!(current_fix(&[reading(-60.0, 35.0)]).is_some());
+        assert_eq!(current_fix(&[reading(-60.5, 35.0)]), None);
+        assert_eq!(current_fix(&[reading(-86_400.0, 35.0)]), None);
         assert_eq!(current_fix(&[reading(f64::NAN, 35.0)]), None);
         assert_eq!(current_fix(&[reading(1.0, -1.0)]), None);
         assert_eq!(current_fix(&[]), None);
