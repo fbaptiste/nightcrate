@@ -11,6 +11,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Literal
 
+from nightcrate.core import child_processes
 from nightcrate.core.compute import effective_worker_count
 from nightcrate.core.config import get_settings
 
@@ -77,50 +78,55 @@ def build_layer(
         target=_child_main,
         args=(name, catalog_path(), output, max(1, threads), messages),
     )
-    process.start()
     error: str | None = None
     succeeded = False
-    try:
-        while process.is_alive():
+    started = False
+    with child_processes.registered_process(process):
+        try:
+            child_processes.ensure_running()
+            process.start()
+            started = True
+            while process.is_alive():
+                if cancel.is_set():
+                    process.terminate()
+                    break
+                try:
+                    kind, value = messages.get(timeout=0.05)
+                except queue.Empty:
+                    continue
+                if kind == "progress":
+                    on_progress(float(value))
+                elif kind == "error":
+                    error = str(value)
+            process.join()
+            while True:
+                try:
+                    kind, value = messages.get_nowait()
+                except queue.Empty:
+                    break
+                if kind == "progress":
+                    on_progress(float(value))
+                elif kind == "error":
+                    error = str(value)
             if cancel.is_set():
-                process.terminate()
-                break
-            try:
-                kind, value = messages.get(timeout=0.05)
-            except queue.Empty:
-                continue
-            if kind == "progress":
-                on_progress(float(value))
-            elif kind == "error":
-                error = str(value)
-        process.join()
-        while True:
-            try:
-                kind, value = messages.get_nowait()
-            except queue.Empty:
-                break
-            if kind == "progress":
-                on_progress(float(value))
-            elif kind == "error":
-                error = str(value)
-        if cancel.is_set():
-            raise InterruptedError("operation cancelled")
-        if process.exitcode != 0 or error:
-            raise RuntimeError(error or f"index builder exited with status {process.exitcode}")
-        if not output.is_file():
-            raise RuntimeError("index builder produced no output")
-        succeeded = True
-        for item in parent.iterdir():
-            if item != output:
-                shutil.rmtree(item) if item.is_dir() else item.unlink()
-        return output
-    finally:
-        if process.is_alive():
-            process.terminate()
-        process.join()
-        messages.close()
-        if not succeeded:
-            shutil.rmtree(parent, ignore_errors=True)
+                raise InterruptedError("operation cancelled")
+            if process.exitcode != 0 or error:
+                raise RuntimeError(error or f"index builder exited with status {process.exitcode}")
+            if not output.is_file():
+                raise RuntimeError("index builder produced no output")
+            succeeded = True
+            for item in parent.iterdir():
+                if item != output:
+                    shutil.rmtree(item) if item.is_dir() else item.unlink()
+            return output
+        finally:
+            if started:
+                if process.is_alive():
+                    process.terminate()
+                process.join()
+            messages.close()
+            if not succeeded:
+                shutil.rmtree(parent, ignore_errors=True)
 
 
 async def run_build(range_ids: list[str]) -> None:

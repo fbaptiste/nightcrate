@@ -1,25 +1,35 @@
 """Admin API endpoints — database management, status, and app info."""
 
 import asyncio
+import dataclasses
 import importlib.resources
 import logging
 import sqlite3
 import sys
 from pathlib import Path
+from typing import Literal
 
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
 from nightcrate.api.catalog_choice_models import OptionalCatalogStatus, RemovalPreview
-from nightcrate.core import app_config
+from nightcrate.core import app_config, runtime
 from nightcrate.core.app_config import (
     DatabaseEntry,
     load_config,
     save_config,
     workspace_db_path,
 )
-from nightcrate.db.migrations import apply_migrations
-from nightcrate.db.session import get_db_path, set_db_path
+from nightcrate.db.session import (
+    get_db_path,
+    set_db_path,
+    set_workspace_problem,
+    workspace_problem,
+)
+from nightcrate.db.workspace_upgrade import (
+    WorkspaceRefused,
+    initialize_workspace,
+)
 from nightcrate.seed_loader import load_all
 from nightcrate.services import catalog_progress
 
@@ -49,6 +59,15 @@ class RemoveDatabaseRequest(BaseModel):
     path: str
 
 
+class WorkspaceProblemResponse(BaseModel):
+    kind: Literal["newer", "unreadable", "backup_failed", "upgrade_failed", "restore_failed"]
+    workspace_path: str
+    workspace_name: str
+    last_opened_by: str | None
+    error: str | None
+    backup_path: str | None
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -76,7 +95,7 @@ def _db_size(workspace_path: str) -> int | None:
     return None
 
 
-def _initialize_database(db_path: Path) -> None:
+def _initialize_database(db_path: Path, name: str | None = None) -> None:
     """Run migrations, the equipment seed loader, and the DSO catalog
     loader on a database.
 
@@ -88,22 +107,19 @@ def _initialize_database(db_path: Path) -> None:
     prior database) the new DB gets populated automatically, no
     manual "Reload from local cache" click required.
     """
-    from nightcrate.catalog_loader import load_catalogs
-    from nightcrate.catalog_loader.registry import user_catalogs_root
-
-    apply_migrations(db_path=db_path)
-
-    csv_root = importlib.resources.files("nightcrate") / "data" / "seed"
-    sync_conn = sqlite3.connect(str(db_path))
-    try:
-        sync_conn.row_factory = sqlite3.Row
-        sync_conn.execute("PRAGMA foreign_keys = ON")
-        load_all(sync_conn, csv_root, "auto")
-        sync_conn.commit()
-        load_catalogs(sync_conn, user_catalogs_root())
-    finally:
-        sync_conn.close()
+    result = initialize_workspace(
+        db_path.parent,
+        name or db_path.parent.name,
+        runtime.app_version(),
+        on_step=lambda step: runtime.report_step(step, name or db_path.parent.name),
+    )
+    runtime.last_activation_backup = result.backup_path
     _clear_planner_visibility_cache()
+
+
+def _refused_response(exc: WorkspaceRefused) -> HTTPException:
+    problem = WorkspaceProblemResponse(**dataclasses.asdict(exc.problem))
+    return HTTPException(status_code=409, detail={"problem": problem.model_dump()})
 
 
 # Same tuple-constant pattern used in main.py's lifespan hook — sidesteps
@@ -202,6 +218,13 @@ async def admin_info() -> dict:
         "workspace_dir": str(workspace) if workspace else None,
         "projects_dir": str(projects_root) if projects_root else None,
         "python_version": sys.version.split()[0],
+        "log_dir": str(runtime.log_dir) if runtime.log_dir is not None else None,
+        "licences_dir": (
+            str(Path(sys.executable).resolve().parent / "licences")
+            if getattr(sys, "frozen", False)
+            and (Path(sys.executable).resolve().parent / "licences").is_dir()
+            else None
+        ),
     }
 
 
@@ -234,7 +257,7 @@ async def admin_status() -> dict:
         )
 
     return {
-        "db_configured": config.db_configured,
+        "db_configured": config.db_configured and workspace_problem() is None,
         "active_db": active_db_info,
         "known_databases": known_databases,
     }
@@ -251,7 +274,10 @@ async def create_database(req: CreateDatabaseRequest) -> dict:
         raise HTTPException(status_code=400, detail=f"Workspace already exists: {req.path}")
 
     ws.mkdir(parents=True, exist_ok=True)
-    _initialize_database(db_path)
+    try:
+        _initialize_database(db_path, req.name)
+    except WorkspaceRefused as exc:
+        raise _refused_response(exc) from exc
 
     config = load_config()
     config.databases[req.path] = DatabaseEntry(name=req.name)
@@ -306,13 +332,18 @@ async def activate_database(req: ActivateDatabaseRequest) -> dict:
     if not db_path.is_file():
         raise HTTPException(status_code=400, detail=f"Database not found in workspace: {req.path}")
 
-    _initialize_database(db_path)
+    entry = config.databases[req.path]
+    try:
+        _initialize_database(db_path, entry.name)
+    except WorkspaceRefused as exc:
+        raise _refused_response(exc) from exc
 
     config.active_db = req.path
     save_config(config)
 
     # Hot-swap the runtime database path
     set_db_path(db_path)
+    set_workspace_problem(None)
     _clear_planner_visibility_cache()
 
     # Re-index the on-disk thumbnail + sky-tile caches into the newly-
@@ -320,7 +351,6 @@ async def activate_database(req: ActivateDatabaseRequest) -> dict:
     # they already have on disk.
     await _rehydrate_caches_for_active_db()
 
-    entry = config.databases[req.path]
     size = _db_size(req.path)
     return {
         "path": req.path,
@@ -338,7 +368,7 @@ async def setup_database(req: CreateDatabaseRequest) -> dict:
     """
     _guard_catalog_database_change()
     config = load_config()
-    if config.db_configured:
+    if config.db_configured and workspace_problem() is None:
         raise HTTPException(
             status_code=409, detail="A database is already configured. Use activate instead."
         )
@@ -350,7 +380,10 @@ async def setup_database(req: CreateDatabaseRequest) -> dict:
         raise HTTPException(status_code=400, detail=f"Workspace already exists: {req.path}")
 
     ws.mkdir(parents=True, exist_ok=True)
-    _initialize_database(db_path)
+    try:
+        _initialize_database(db_path, req.name)
+    except WorkspaceRefused as exc:
+        raise _refused_response(exc) from exc
 
     config = load_config()
     config.databases[req.path] = DatabaseEntry(name=req.name)
@@ -359,6 +392,7 @@ async def setup_database(req: CreateDatabaseRequest) -> dict:
 
     # Hot-swap the runtime database path
     set_db_path(db_path)
+    set_workspace_problem(None)
     _clear_planner_visibility_cache()
 
     # Re-index the on-disk thumbnail + sky-tile caches into the newly-
@@ -1173,14 +1207,13 @@ async def wikidata_fetch() -> dict:
     """
     from nightcrate.catalog_loader.registry import user_catalogs_root
     from nightcrate.catalog_loader.wikidata import fetch_wikidata_external_refs
-    from nightcrate.main import APP_VERSION
 
     _require_configured_database()
     with _CatalogAction("fetch_wikidata", source="wikidata_external_refs") as action:
         try:
             result = await fetch_wikidata_external_refs(
                 user_catalogs_root(),
-                app_version=APP_VERSION,
+                app_version=runtime.app_version(),
                 on_progress=action.progress,
             )
         except Exception as exc:  # noqa: BLE001 — surface 502 with reason

@@ -19,8 +19,10 @@ import { useThumbnailCacheStore } from "@/stores/thumbnailCacheStore";
 import { fetchHealth } from "@/api/admin";
 import { fetchThumbnailCacheStats } from "@/api/planner";
 import { SetupWizard } from "@/components/SetupWizard";
+import { ImageViewerPage } from "@/pages/ImageViewerPage";
 
 const router = createBrowserRouter([
+  { path: "/image-viewer", element: <ImageViewerPage /> },
   {
     path: "/",
     element: <AppShell />,

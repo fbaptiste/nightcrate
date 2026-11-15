@@ -31,6 +31,7 @@ import asyncio
 import json
 import logging
 import os
+from contextlib import ExitStack
 from pathlib import Path
 from typing import get_args
 
@@ -38,7 +39,7 @@ from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import FileResponse, Response
 
 from nightcrate.api._common import bool_fields, get_or_404, row_to_dict
-from nightcrate.core import app_config
+from nightcrate.core import app_config, child_processes
 from nightcrate.core.compute import effective_worker_count
 from nightcrate.core.config import get_settings
 from nightcrate.db.session import get_db
@@ -472,25 +473,28 @@ async def _run_ingest(project_id: int, folders: list[str]) -> IngestStatus:
         # worker processes linger (which would wedge `uvicorn --reload` restarts).
         # n_workers == 1 → parse inline, no pool at all.
         pool = make_pool(n_workers) if n_workers > 1 else None
-        try:
-            for folder in folders:
-                await _ingest_folder(conn, project_id, run_id, folder, pool, errors, counters)
-            await _reclassify_dark_flats(conn, project_id)
-            # Rig + session are assigned in one post-pass rather than per file: a
-            # frame's rig depends on which bound folder *innermost* contains it,
-            # which isn't known until every folder is on the table. The pass also
-            # sweeps sessions a re-scan emptied. The user-facing project_session
-            # rows are never touched by ingest — deriving those is an explicit
-            # action on the Sessions tab.
-            await assign_rigs_and_sessions(conn, project_id, tz_name)
-            status = "completed"
-        except Exception as exc:  # noqa: BLE001 - record failure on the run, re-raise after commit
-            logger.exception("%s run %d failed", _LOG_PREFIX, run_id)
-            errors.append({"path": None, "error": f"{type(exc).__name__}: {exc}"})
-            status = "failed"
-        finally:
+        with ExitStack() as stack:
             if pool is not None:
-                pool.shutdown(wait=True, cancel_futures=True)
+                stack.enter_context(child_processes.registered_pool(pool))
+            try:
+                for folder in folders:
+                    await _ingest_folder(conn, project_id, run_id, folder, pool, errors, counters)
+                await _reclassify_dark_flats(conn, project_id)
+                # Rig + session are assigned in one post-pass rather than per file: a
+                # frame's rig depends on which bound folder *innermost* contains it,
+                # which isn't known until every folder is on the table. The pass also
+                # sweeps sessions a re-scan emptied. The user-facing project_session
+                # rows are never touched by ingest — deriving those is an explicit
+                # action on the Sessions tab.
+                await assign_rigs_and_sessions(conn, project_id, tz_name)
+                status = "completed"
+            except Exception as exc:  # noqa: BLE001 - record failure on the run
+                logger.exception("%s run %d failed", _LOG_PREFIX, run_id)
+                errors.append({"path": None, "error": f"{type(exc).__name__}: {exc}"})
+                status = "failed"
+            finally:
+                if pool is not None:
+                    pool.shutdown(wait=True, cancel_futures=True)
 
         await conn.execute(
             "UPDATE ingestion_run SET status = ?, files_scanned = ?, subs_inserted = ?, "
@@ -1383,12 +1387,13 @@ async def _analyze_in_pool(todo: list[dict], n_workers: int) -> list[dict]:
     if n_workers <= 1 or len(args) == 1:
         return [analyze_frame_file(p, s) for p, s in args]
     pool = make_pool(n_workers)
-    try:
-        loop = asyncio.get_running_loop()
-        futures = [loop.run_in_executor(pool, analyze_frame_file, p, s) for p, s in args]
-        return list(await asyncio.gather(*futures))
-    finally:
-        pool.shutdown(wait=True, cancel_futures=True)
+    with child_processes.registered_pool(pool):
+        try:
+            loop = asyncio.get_running_loop()
+            futures = [loop.run_in_executor(pool, analyze_frame_file, p, s) for p, s in args]
+            return list(await asyncio.gather(*futures))
+        finally:
+            pool.shutdown(wait=True, cancel_futures=True)
 
 
 async def _write_quality(

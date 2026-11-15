@@ -1,0 +1,10 @@
+{
+  "name": "nightcrate-shell",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Build tooling for NightCrate's desktop shell. Not shipped.",
+  "license": "GPL-3.0-or-later",
+  "devDependencies": {
+    "@tauri-apps/cli": "2.12.4"
+  }
+}

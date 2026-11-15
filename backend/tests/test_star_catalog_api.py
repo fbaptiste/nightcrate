@@ -28,8 +28,8 @@ def _configure_database(tmp_path, monkeypatch):
     database.touch()
     monkeypatch.setattr(
         star_catalog,
-        "load_config",
-        lambda: SimpleNamespace(active_db=str(workspace)),
+        "active_db_path_or_none",
+        lambda: database,
     )
     return database
 
@@ -59,8 +59,8 @@ def test_unconfigured_status_skips_database_quietly(tmp_path, monkeypatch, caplo
     legacy_db.write_bytes(b"legacy database")
     monkeypatch.setattr(
         star_catalog,
-        "load_config",
-        lambda: SimpleNamespace(active_db=None),
+        "active_db_path_or_none",
+        lambda: None,
     )
 
     def database_must_not_open(*_args, **_kwargs):
@@ -82,8 +82,8 @@ def test_configured_missing_database_warns_once_without_traceback(tmp_path, monk
     missing_db = workspace / "nightcrate.db"
     monkeypatch.setattr(
         star_catalog,
-        "load_config",
-        lambda: SimpleNamespace(active_db=str(workspace)),
+        "active_db_path_or_none",
+        lambda: missing_db,
     )
 
     def database_must_not_open(*_args, **_kwargs):
@@ -464,10 +464,9 @@ def test_rig_coverage_lists_only_my_rigs(tmp_path, monkeypatch):
     monkeypatch.setattr(app_config, "APP_DIR", tmp_path)
     monkeypatch.setattr(
         star_catalog,
-        "load_config",
-        lambda: SimpleNamespace(active_db=str(tmp_path)),
+        "active_db_path_or_none",
+        get_db_path,
     )
-    monkeypatch.setattr(star_catalog, "workspace_db_path", lambda _workspace: get_db_path())
     conn = sqlite3.connect(get_db_path())
     conn.row_factory = sqlite3.Row
     seeded = conn.execute(

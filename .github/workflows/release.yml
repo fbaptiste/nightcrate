@@ -1,0 +1,144 @@
+name: Installer build test
+
+on:
+  push:
+    branches: ["build/**"]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-15
+            bundle: dmg
+            artifact: nightcrate-macos
+          - os: ubuntu-22.04
+            bundle: appimage
+            artifact: nightcrate-linux
+          - os: windows-2022
+            bundle: nsis
+            artifact: nightcrate-windows
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: astral-sh/setup-uv@e92bafb6253dcd438e0484186d7669ea7a8ca1cc # v6.4.3
+        with:
+          version: 0.11.2
+          enable-cache: true
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: 3.14.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 25.2.1
+          cache: npm
+          cache-dependency-path: |
+            frontend/package-lock.json
+            packaging/shell/package-lock.json
+      - name: Linux packaging prerequisites
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libfuse2 xvfb
+      - name: Assert production compile options are absent
+        shell: bash
+        run: |
+          if env | grep '^NIGHTCRATE_TEST_'; then
+            echo 'NIGHTCRATE_TEST_* must not be set in an installer build' >&2
+            exit 1
+          fi
+      - name: Install backend
+        working-directory: backend
+        run: uv sync --frozen --group packaging
+      - name: Install and build frontend
+        working-directory: frontend
+        run: |
+          npm ci
+          npm run build
+      - name: Freeze backend
+        run: uv run --project backend --group packaging python packaging/freeze.py
+      - name: Check frozen backend
+        run: uv run --project backend python packaging/check_build.py packaging/build/backend
+      - name: Smoke-test frozen backend
+        run: uv run --project backend python packaging/smoke.py packaging/build/backend
+      - name: Install shell tooling
+        working-directory: packaging/shell
+        run: npm ci
+      - name: Build installer
+        working-directory: packaging/shell
+        run: npx --no-install tauri build --bundles ${{ matrix.bundle }}
+      - name: Verify macOS bundled resources
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          app=packaging/shell/src-tauri/target/release/bundle/macos/NightCrate.app
+          find "$app/Contents/Resources/backend" -type f -print | sort
+          (cd packaging/build/backend && find . -type f -print | sort) >"$RUNNER_TEMP/source-tree.txt"
+          (cd "$app/Contents/Resources/backend" && find . -type f -print | sort) >"$RUNNER_TEMP/installed-tree.txt"
+          diff -u "$RUNNER_TEMP/source-tree.txt" "$RUNNER_TEMP/installed-tree.txt"
+      - name: Install and self-test macOS app
+        if: runner.os == 'macOS'
+        timeout-minutes: 10
+        shell: bash
+        run: |
+          dmg=$(find packaging/shell/src-tauri/target/release/bundle/dmg -name '*.dmg' -print -quit)
+          mount=$(mktemp -d)
+          install=$(mktemp -d)
+          hdiutil attach -nobrowse -mountpoint "$mount" "$dmg"
+          cp -R "$mount/NightCrate.app" "$install/"
+          hdiutil detach "$mount"
+          "$install/NightCrate.app/Contents/MacOS/nightcrate-shell" --selftest-fresh "$RUNNER_TEMP/NightCrate Smoke Workspace"
+          rm -rf "$install/NightCrate.app"
+      - name: Install and self-test Windows app
+        if: runner.os == 'Windows'
+        timeout-minutes: 10
+        shell: pwsh
+        run: |
+          $installer = Get-ChildItem packaging/shell/src-tauri/target/release/bundle/nsis/*.exe | Select-Object -First 1
+          $install = Join-Path $env:RUNNER_TEMP 'NightCrate-install'
+          Start-Process $installer.FullName -ArgumentList '/S', "/D=$install" -Wait
+          $sourceRoot = (Resolve-Path packaging/build/backend).Path
+          $installedRoot = (Resolve-Path (Join-Path $install 'backend')).Path
+          Get-ChildItem -Recurse $installedRoot | Select-Object -ExpandProperty FullName
+          $source = Get-ChildItem -Recurse $sourceRoot -File | ForEach-Object { $_.FullName.Substring($sourceRoot.Length) }
+          $installed = Get-ChildItem -Recurse $installedRoot -File | ForEach-Object { $_.FullName.Substring($installedRoot.Length) }
+          $difference = Compare-Object $source $installed
+          if ($difference) { $difference; exit 1 }
+          $app = Get-ChildItem $install -Filter '*.exe' | Where-Object { $_.Name -notlike 'uninstall*' } | Select-Object -First 1
+          $workspace = Join-Path $env:RUNNER_TEMP 'NightCrate Smoke Workspace'
+          $arguments = @('--selftest-fresh', ('"{0}"' -f $workspace))
+          $p = Start-Process -FilePath $app.FullName -ArgumentList $arguments -Wait -PassThru
+          if ($p.ExitCode -ne 0) { exit $p.ExitCode }
+          $uninstaller = Get-ChildItem $install -Filter 'uninstall*.exe' | Select-Object -First 1
+          Start-Process $uninstaller.FullName -ArgumentList '/S' -Wait
+      - name: Install and self-test Linux AppImage
+        if: runner.os == 'Linux'
+        timeout-minutes: 10
+        shell: bash
+        run: |
+          appimage=$(find packaging/shell/src-tauri/target/release/bundle/appimage -name '*.AppImage' -print -quit)
+          chmod +x "$appimage"
+          "$appimage" --appimage-extract >/dev/null
+          resources=$(find squashfs-root -type f -name nightcrate-backend -path '*/backend/*' -print -quit | xargs dirname)
+          find "$resources" -type f -print | sort
+          (cd packaging/build/backend && find . -type f -print | sort) >"$RUNNER_TEMP/source-tree.txt"
+          (cd "$resources" && find . -type f -print | sort) >"$RUNNER_TEMP/installed-tree.txt"
+          diff -u "$RUNNER_TEMP/source-tree.txt" "$RUNNER_TEMP/installed-tree.txt"
+          xvfb-run -a "$appimage" --selftest-fresh "$RUNNER_TEMP/NightCrate Smoke Workspace"
+          python -m http.server 8765 --bind 127.0.0.1 >"$RUNNER_TEMP/occupied-port.log" 2>&1 &
+          occupied_pid=$!
+          trap 'kill "$occupied_pid" 2>/dev/null || true' EXIT
+          xvfb-run -a "$appimage" --selftest-configured
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ${{ matrix.artifact }}
+          path: |
+            packaging/shell/src-tauri/target/release/bundle/dmg/*.dmg
+            packaging/shell/src-tauri/target/release/bundle/nsis/*.exe
+            packaging/shell/src-tauri/target/release/bundle/appimage/*.AppImage
+          if-no-files-found: error

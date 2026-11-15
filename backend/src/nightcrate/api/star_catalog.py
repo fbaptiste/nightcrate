@@ -8,7 +8,7 @@ from pathlib import Path
 import aiosqlite
 from fastapi import APIRouter, HTTPException, status
 
-from nightcrate.core.app_config import load_config, workspace_db_path
+from nightcrate.db.session import active_db_path_or_none
 from nightcrate.services import plate_solve
 from nightcrate.services.star_catalog import fetch
 from nightcrate.services.star_catalog.ranges import (
@@ -60,10 +60,9 @@ def _translate_error(exc: Exception) -> HTTPException:
 
 async def _rig_coverage() -> list[RigCoverage]:
     result: list[RigCoverage] = []
-    active_db = load_config().active_db
-    if active_db is None:
+    db_path = active_db_path_or_none()
+    if db_path is None:
         return result
-    db_path = workspace_db_path(Path(active_db))
     if not db_path.is_file():
         logger.warning("[star_catalog] configured database is missing: %s", db_path)
         return result

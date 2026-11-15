@@ -1,6 +1,7 @@
 """Tests for the admin API endpoints."""
 
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
@@ -989,3 +990,30 @@ async def test_wikidata_fetch_network_failure_returns_502(client, tmp_path, monk
     resp = await client.post("/api/admin/catalogs/wikidata/fetch")
     assert resp.status_code == 502
     assert "Failed to fetch Wikidata SPARQL" in resp.json()["detail"]
+
+
+@pytest.mark.anyio
+async def test_wikidata_fetch_sends_app_version(client, tmp_path, monkeypatch):
+    workspace = str(tmp_path / "wikidata-version")
+    setup = await client.post(
+        "/api/admin/database/setup", json={"path": workspace, "name": "Version"}
+    )
+    assert setup.status_code == 200
+    received = None
+
+    async def fake_fetch(_root, *, app_version, on_progress):
+        nonlocal received
+        received = app_version
+        return SimpleNamespace(
+            fetched_at="2026-11-15T00:00:00Z",
+            size_bytes=1,
+            sha256="abc",
+            query_version="v3",
+        )
+
+    monkeypatch.setattr(
+        "nightcrate.catalog_loader.wikidata.fetch_wikidata_external_refs", fake_fetch
+    )
+    response = await client.post("/api/admin/catalogs/wikidata/fetch")
+    assert response.status_code == 200
+    assert received == admin.runtime.app_version()

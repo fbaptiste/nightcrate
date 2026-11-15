@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>NightCrate</title>
+    <style>
+      :root { color-scheme: light dark; font-family: system-ui, sans-serif; }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        min-height: 100vh;
+        display: grid;
+        place-items: center;
+        color: #2c2c2c;
+        background: #f5f4f2;
+      }
+      main { width: min(520px, calc(100vw - 48px)); text-align: center; }
+      h1 { margin: 0 0 18px; font-size: 28px; }
+      #status { margin: 0; font-size: 15px; }
+      #logs {
+        display: none;
+        max-height: 220px;
+        overflow: auto;
+        margin: 18px 0;
+        padding: 12px;
+        text-align: left;
+        white-space: pre-wrap;
+        font: 12px/1.4 ui-monospace, monospace;
+        border: 1px solid currentColor;
+        border-radius: 6px;
+      }
+      button { display: none; margin: 16px auto 0; padding: 8px 14px; }
+      @media (prefers-color-scheme: dark) {
+        body { color: #e2e0dd; background: #1a1c20; }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1 id="title">NightCrate</h1>
+      <p id="status">Starting NightCrate…</p>
+      <pre id="logs"></pre>
+      <button id="open-logs" type="button">Open the log folder</button>
+    </main>
+    <script>
+      window.nightcrateLoading = {
+        status(message) {
+          document.getElementById("status").textContent = message;
+        },
+        failure(title, message, lines) {
+          document.getElementById("title").textContent = title;
+          document.getElementById("status").textContent = message;
+          const logs = document.getElementById("logs");
+          if (lines) {
+            logs.textContent = lines;
+            logs.style.display = "block";
+          }
+          document.getElementById("open-logs").style.display = "block";
+        },
+      };
+      document.getElementById("open-logs").addEventListener("click", () => {
+        window.__TAURI__.core.invoke("open_log_folder");
+      });
+    </script>
+  </body>
+</html>

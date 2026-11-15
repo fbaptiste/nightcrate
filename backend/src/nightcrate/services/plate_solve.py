@@ -25,6 +25,7 @@ from uuid import uuid4
 import numpy as np
 from astropy.io import fits as astro_fits
 
+from nightcrate.core import child_processes
 from nightcrate.core.tasks import settle
 from nightcrate.services import (
     fits_io,
@@ -1030,6 +1031,7 @@ async def _run_astap_step(
     ):
         env = _private_astap_environment(Path(home))
         try:
+            child_processes.ensure_running()
             proc = await asyncio.create_subprocess_exec(
                 *args,
                 stdout=asyncio.subprocess.PIPE,
@@ -1041,66 +1043,64 @@ async def _run_astap_step(
                 f"ASTAP couldn't be started from {args[0]}. "
                 "Check the path in Settings → Plate Solving."
             ) from exc
-        _solve_process = proc
-        if operation is not None:
-            operation.process = proc
-        if stop.is_set():
-            try:
-                proc.kill()
-            except ProcessLookupError:
-                pass
-            cancelled = await _wait_for_process_exit(proc)
-            _solve_process = None
+        with child_processes.registered_subprocess(proc):
+            _solve_process = proc
             if operation is not None:
-                operation.process = None
-            if cancelled:
-                raise asyncio.CancelledError
-            return _AstapRun(
-                PlateSolveResult(solved=False, error_message="Solve cancelled."), "cancelled"
-            )
-        if proc.stdout is None or proc.stderr is None:
+                operation.process = proc
             try:
-                proc.kill()
-            except ProcessLookupError:
-                pass
-            await proc.wait()
-            _solve_process = None
-            if operation is not None:
-                operation.process = None
-            raise OSError("ASTAP process streams are unavailable.")
-        try:
-            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
-        except asyncio.CancelledError:
-            if proc.returncode is None:
+                if stop.is_set():
+                    try:
+                        proc.kill()
+                    except ProcessLookupError:
+                        pass
+                    cancelled = await _wait_for_process_exit(proc)
+                    if cancelled:
+                        raise asyncio.CancelledError
+                    return _AstapRun(
+                        PlateSolveResult(solved=False, error_message="Solve cancelled."),
+                        "cancelled",
+                    )
+                if proc.stdout is None or proc.stderr is None:
+                    raise OSError("ASTAP process streams are unavailable.")
                 try:
-                    proc.kill()
-                except ProcessLookupError:
-                    pass
-            await _wait_for_process_exit(proc)
-            raise
-        except TimeoutError:
-            if proc.returncode is None:
-                try:
-                    proc.kill()
-                except ProcessLookupError:
-                    pass
-            cancelled = await _wait_for_process_exit(proc)
-            if cancelled:
-                raise asyncio.CancelledError
-            return _AstapRun(
-                PlateSolveResult(
-                    solved=False,
-                    error_message=f"ASTAP step timed out after {timeout:.0f} seconds.",
-                    image_width=width,
-                    image_height=height,
-                    solve_time_seconds=round(time.monotonic() - started, 1),
-                ),
-                "step_timeout",
-            )
-        finally:
-            _solve_process = None
-            if operation is not None and operation.process is proc:
-                operation.process = None
+                    stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+                except asyncio.CancelledError:
+                    if proc.returncode is None:
+                        try:
+                            proc.kill()
+                        except ProcessLookupError:
+                            pass
+                    await _wait_for_process_exit(proc)
+                    raise
+                except TimeoutError:
+                    if proc.returncode is None:
+                        try:
+                            proc.kill()
+                        except ProcessLookupError:
+                            pass
+                    cancelled = await _wait_for_process_exit(proc)
+                    if cancelled:
+                        raise asyncio.CancelledError
+                    return _AstapRun(
+                        PlateSolveResult(
+                            solved=False,
+                            error_message=f"ASTAP step timed out after {timeout:.0f} seconds.",
+                            image_width=width,
+                            image_height=height,
+                            solve_time_seconds=round(time.monotonic() - started, 1),
+                        ),
+                        "step_timeout",
+                    )
+            finally:
+                if getattr(proc, "returncode", None) is None:
+                    try:
+                        proc.kill()
+                    except ProcessLookupError:
+                        pass
+                    await _wait_for_process_exit(proc)
+                _solve_process = None
+                if operation is not None and operation.process is proc:
+                    operation.process = None
 
     elapsed = time.monotonic() - started
     if stdout:

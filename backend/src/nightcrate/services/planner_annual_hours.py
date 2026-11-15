@@ -55,6 +55,7 @@ import numpy as np
 from astropy.coordinates import AltAz, SkyCoord, get_body
 from astropy.time import Time, TimeDelta
 
+from nightcrate.core import child_processes
 from nightcrate.services.astronomy import direction_only
 from nightcrate.services.horizon import resolve_horizon_altitude
 from nightcrate.services.planner_visibility import (
@@ -584,6 +585,7 @@ def _make_pool(n_workers: int) -> ProcessPoolExecutor:
     The caller owns the pool and must close it — use a ``with`` block.
     """
     ctx = mp.get_context("spawn")
+    child_processes.ensure_running()
     return ProcessPoolExecutor(max_workers=max(1, n_workers), mp_context=ctx)
 
 
@@ -816,7 +818,8 @@ def _compute_annual_hours_uncached(
         ]
         chunks = list(zip(bounds[:-1], bounds[1:], strict=True))
         # `with`, so the workers are gone before this returns — see _make_pool.
-        with _make_pool(n_workers) as pool:
+        raw_pool = _make_pool(n_workers)
+        with child_processes.registered_pool(raw_pool), raw_pool as pool:
             futures = [
                 pool.submit(
                     _compute_subrange,
