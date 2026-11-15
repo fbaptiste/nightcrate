@@ -420,7 +420,7 @@ export function AppShell() {
       </Box>
 
       <ActivityConsole open={activityOpen} onClose={() => setActivityOpen(false)} />
-      <NoticesPanel anchorEl={noticeAnchor} status={notices.status} onClose={() => setNoticeAnchor(null)} onDismiss={(id, action) => void notices.dismiss(id, action)} onInstall={(notice) => { setNoticeAnchor(null); void installFlow.start(notice); }} />
+      <NoticesPanel anchorEl={noticeAnchor} drawerWidth={drawerWidth} status={notices.status} onClose={() => setNoticeAnchor(null)} onDismiss={(id, action) => void notices.dismiss(id, action)} onInstall={(notice) => { setNoticeAnchor(null); void installFlow.start(notice); }} />
       <UpdateQuestionDialog
         open={notices.status?.check_automatically === null && !questionDismissed}
         onDismiss={() => setQuestionDismissed(true)}

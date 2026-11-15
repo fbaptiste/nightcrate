@@ -33,7 +33,7 @@ export function UpdatesAdminSection() {
         <Switch aria-label="Check for new versions automatically" checked={status?.check_automatically === true} onChange={async (event) => setData(await setCheckAutomatically(event.target.checked))} />
       </Row>
       {status?.skipped_version && <><Divider /><Row title={`You skipped ${status.skipped_version}`} description="NightCrate won't mention it again unless you ask."><Button onClick={async () => { await clearSkippedVersion(); await query.refetch(); }}>Show it again</Button></Row></>}
-      {status?.install_kind === "source" && <Box sx={{ mx: 2, mb: 2, p: 1.5, bgcolor: "background.default", borderRadius: 1 }}><Typography variant="body2">Running from source code, so NightCrate can't install updates itself. To update, pull the latest version from GitHub.</Typography></Box>}
+      {status?.install_kind === "source" && <Box sx={{ mx: 2, mb: 2, p: 1.5, bgcolor: "background.default", borderRadius: 1 }}><Typography color="text.secondary" sx={{ fontSize: 13 }}>Running from source code, so NightCrate can't install updates itself. To update, pull the latest version from GitHub.</Typography></Box>}
     </Paper>
   </>;
 }

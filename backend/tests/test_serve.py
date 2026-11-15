@@ -10,6 +10,7 @@ import sys
 import threading
 import time
 import urllib.request
+from http.server import BaseHTTPRequestHandler, HTTPServer
 
 import pytest
 from fastapi import FastAPI
@@ -184,6 +185,34 @@ def test_choose_port_all_taken():
     with pytest.raises(OSError):
         choose_port(port, 0)
     first.close()
+
+
+def test_choose_port_reuses_port_after_http_server_closes():
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.send_response(204)
+            self.end_headers()
+
+        def log_message(self, _format, *_args):
+            pass
+
+    server = HTTPServer(("127.0.0.1", 0), Handler)
+    port = server.server_address[1]
+    thread = threading.Thread(target=server.serve_forever)
+    thread.start()
+    try:
+        with urllib.request.urlopen(f"http://127.0.0.1:{port}/", timeout=2) as response:
+            assert response.status == 204
+    finally:
+        server.shutdown()
+        thread.join(timeout=2)
+        server.server_close()
+
+    chosen = choose_port(port, 0)
+    try:
+        assert chosen.getsockname()[1] == port
+    finally:
+        chosen.close()
 
 
 def test_serve_version_flag(monkeypatch, capsys):

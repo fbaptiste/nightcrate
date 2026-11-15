@@ -61,35 +61,45 @@ async def _project_name(project_id: int | None) -> str:
         return ""
 
 
-async def running_activity() -> list[RunningActivity]:
+def running_kinds() -> list[tuple[ActivityKind, object | None]]:
+    """Snapshot running work without yielding control to another request."""
     # Imported lazily to avoid a router dependency cycle: these modules import
     # ``admit_work`` for their work-starting endpoints.
     from nightcrate.api import ingest
 
-    running: list[RunningActivity] = []
+    running: list[tuple[ActivityKind, object | None]] = []
     if ingest._INGEST_LOCK.locked():
-        running.append(
-            RunningActivity(
-                kind="scan", label=await _project_name(ingest._active_ingest_project_id)
-            )
-        )
+        running.append(("scan", ingest._active_ingest_project_id))
     if ingest._ANALYZE_LOCK.locked():
-        running.append(RunningActivity(kind="frame_analysis", label=""))
+        running.append(("frame_analysis", None))
     if solve_operations.active_operation() is not None:
-        running.append(RunningActivity(kind="plate_solve", label=""))
+        running.append(("plate_solve", None))
     catalog = catalog_progress.snapshot()
     if catalog is not None and catalog["outcome"] is None:
-        source = catalog.get("source")
-        running.append(
-            RunningActivity(
-                kind="catalog",
-                label=_catalog_name(source),
-            )
-        )
+        running.append(("catalog", catalog.get("source")))
     star = star_fetch.current_operation()
     if star is not None and star.state == "running":
-        running.append(RunningActivity(kind="star_catalog", label=""))
+        running.append(("star_catalog", None))
     return running
+
+
+async def _resolve_activity(
+    running: list[tuple[ActivityKind, object | None]],
+) -> list[RunningActivity]:
+    resolved: list[RunningActivity] = []
+    for kind, source in running:
+        if kind == "scan":
+            label = await _project_name(source if isinstance(source, int) else None)
+        elif kind == "catalog":
+            label = _catalog_name(source)
+        else:
+            label = ""
+        resolved.append(RunningActivity(kind=kind, label=label))
+    return resolved
+
+
+async def running_activity() -> list[RunningActivity]:
+    return await _resolve_activity(running_kinds())
 
 
 async def admit_work() -> AsyncIterator[None]:
@@ -110,11 +120,12 @@ async def activity() -> ActivityResponse:
 
 @router.post("/install-reservation")
 async def reserve_install():
-    running = await running_activity()
+    running = running_kinds()
     if running or runtime.admitted_work > 0:
+        resolved = await _resolve_activity(running)
         return JSONResponse(
             status_code=409,
-            content={"running": [item.model_dump() for item in running]},
+            content={"running": [item.model_dump() for item in resolved]},
         )
     if runtime.install_is_reserved():
         return JSONResponse(status_code=409, content={"install_in_progress": True})
@@ -139,11 +150,10 @@ async def renew_install(token: str = Query(...)) -> Response:
 
 @router.post("/install-barrier", status_code=status.HTTP_204_NO_CONTENT)
 async def install_barrier(token: str = Query(...)) -> Response:
-    running = await running_activity()
     if (
         runtime.install_owner != token
         or not runtime.install_is_reserved()
-        or running
+        or running_kinds()
         or runtime.admitted_work > 0
     ):
         raise HTTPException(status_code=409, detail="NightCrate is still doing work.")

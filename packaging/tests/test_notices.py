@@ -17,6 +17,7 @@ from notices import (  # noqa: E402
     _interpreter_native_candidates,
     _notices_text,
     _owner_for_python_native,
+    _run,
     _system_natives,
     evaluate_licence,
     has_applied_mpl_incompatibility,
@@ -26,6 +27,29 @@ from notices import (  # noqa: E402
 
 
 POLICY = load_policy(Path(__file__).parents[1] / "licence_policy.toml")
+
+
+def test_subprocess_output_is_decoded_as_strict_utf8() -> None:
+    output = _run(
+        [
+            sys.executable,
+            "-c",
+            "import os; os.write(1, 'Ł'.encode('utf-8'))",
+        ]
+    )
+
+    assert output == "Ł"
+
+
+def test_invalid_utf8_subprocess_output_fails_with_command_name() -> None:
+    command = [
+        sys.executable,
+        "-c",
+        "import os; os.write(1, b'\\x81')",
+    ]
+
+    with pytest.raises(NoticeError, match="produced output that is not valid UTF-8"):
+        _run(command)
 
 
 def test_or_expression_accepts_one_allowed_alternative() -> None:
@@ -177,8 +201,9 @@ def test_unknown_pyd_still_fails(tmp_path: Path) -> None:
 
 
 class _FakeDistribution:
-    metadata = {"Name": "pycryptodomex"}
-    version = "3.23.0"
+    def __init__(self, name: str = "pycryptodomex", version: str = "3.23.0"):
+        self.metadata = {"Name": name}
+        self.version = version
 
 
 def test_hash_mismatched_elf_record_path_is_attributed_with_freezer_note(
@@ -224,9 +249,6 @@ def test_hash_mismatched_elf_without_record_path_falls_through_to_dpkg(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(notices.sys, "platform", "linux")
-    source = tmp_path / "installed" / "Other" / "_ARC4.abi3.so"
-    source.parent.mkdir(parents=True)
-    source.write_bytes(b"\x7fELForiginal")
     appimage = tmp_path / "appimage"
     frozen = (
         appimage
@@ -243,8 +265,6 @@ def test_hash_mismatched_elf_without_record_path_falls_through_to_dpkg(
     frozen.write_bytes(b"\x7fELFpatched-rpath")
     backend = tmp_path / "backend"
     backend.mkdir()
-    distribution = _FakeDistribution()
-    by_basename = {source.name: [(distribution, "Other/_ARC4.abi3.so", source)]}
     dpkg_calls: list[Path] = []
 
     def failing_dpkg(path: Path) -> tuple[dict[str, str], str]:
@@ -257,12 +277,78 @@ def test_hash_mismatched_elf_without_record_path_falls_through_to_dpkg(
         _system_natives(
             appimage,
             backend,
-            by_basename,
-            {str(source): notices._sha256(source)},
+            {},
+            {},
             {},
         )
 
     assert dpkg_calls == [frozen]
+
+
+def test_linux_freeze_core_relocation_is_attributed_by_basename(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(notices.sys, "platform", "linux")
+    filename = "_bz2.cpython-314-x86_64-linux-gnu.so"
+    record_path = f"freeze_core/lib/{filename}"
+    source = tmp_path / "installed" / record_path
+    source.parent.mkdir(parents=True)
+    source.write_bytes(b"\x7fELForiginal")
+    backend = tmp_path / "backend"
+    frozen = backend / "lib" / filename
+    frozen.parent.mkdir(parents=True)
+    frozen.write_bytes(b"\x7fELFpatched-rpath")
+    distribution = _FakeDistribution("freeze-core", "0.8.1")
+
+    owner = _owner_for_python_native(
+        frozen,
+        backend,
+        {filename: [(distribution, record_path, source)]},
+        {str(source): notices._sha256(source)},
+        {},
+        {},
+    )
+
+    assert owner["name"] == "freeze-core"
+    assert owner["notice"] == "binary patched by the freezer (RPATH)"
+
+
+def test_ambiguous_relocated_basename_still_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(notices.sys, "platform", "linux")
+    filename = "libshared.so"
+    first = tmp_path / "installed" / "alpha.libs" / filename
+    second = tmp_path / "installed" / "beta.libs" / filename
+    first.parent.mkdir(parents=True)
+    second.parent.mkdir(parents=True)
+    first.write_bytes(b"\x7fELFalpha")
+    second.write_bytes(b"\x7fELFbeta")
+    backend = tmp_path / "backend"
+    frozen = backend / "lib" / filename
+    frozen.parent.mkdir(parents=True)
+    frozen.write_bytes(b"\x7fELFpatched-without-owner-path")
+    alpha = _FakeDistribution("alpha")
+    beta = _FakeDistribution("beta")
+    candidates = [
+        (alpha, f"alpha.libs/{filename}", first),
+        (beta, f"beta.libs/{filename}", second),
+    ]
+
+    with pytest.raises(NoticeError, match="ambiguous owners.*alpha.*beta"):
+        _owner_for_python_native(
+            frozen,
+            backend,
+            {filename: candidates},
+            {
+                str(first): notices._sha256(first),
+                str(second): notices._sha256(second),
+            },
+            {},
+            {},
+        )
 
 
 def test_vcruntime_is_a_system_library(tmp_path: Path) -> None:

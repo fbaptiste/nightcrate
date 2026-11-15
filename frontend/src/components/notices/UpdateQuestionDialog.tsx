@@ -13,8 +13,14 @@ export function UpdateQuestionDialog({ open, onAnswer, onDismiss }: { open: bool
       <Typography color="text.secondary" sx={{ fontSize: 13, mt: 1.5 }}>You can change this later in Admin.</Typography>
     </DialogContent>
     <DialogActions>
-      <Button color="inherit" onClick={() => onAnswer(false)}>Don't check</Button>
-      <Button variant="contained" autoFocus onClick={() => onAnswer(true)}>Check daily</Button>
+      <Button sx={{ color: "text.secondary" }} onClick={() => onAnswer(false)}>Don't check</Button>
+      <Button
+        variant="contained"
+        autoFocus
+        disableFocusRipple
+        sx={{ "&.Mui-focusVisible": { outline: "2px solid", outlineColor: "primary.main", outlineOffset: "2px" } }}
+        onClick={() => onAnswer(true)}
+      >Check daily</Button>
     </DialogActions>
   </Dialog>;
 }

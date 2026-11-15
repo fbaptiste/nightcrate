@@ -1,3 +1,4 @@
+import asyncio
 from datetime import timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -133,6 +134,41 @@ async def test_scan_blocks_reservation_with_project_label(monkeypatch):
         assert response.status_code == 409
         assert response.json() == {"running": [{"kind": "scan", "label": "NGC 7000"}]}
     finally:
+        ingest._active_ingest_project_id = None
+        ingest._INGEST_LOCK.release()
+
+
+@pytest.mark.anyio
+async def test_reservation_decides_before_resolving_project_name(monkeypatch):
+    lookup_started = asyncio.Event()
+    finish_lookup = asyncio.Event()
+
+    async def paused_project_name(_project_id):
+        lookup_started.set()
+        await finish_lookup.wait()
+        return "NGC 7000"
+
+    monkeypatch.setattr(app_activity, "_project_name", paused_project_name)
+    await ingest._INGEST_LOCK.acquire()
+    ingest._active_ingest_project_id = 12
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            reservation = asyncio.create_task(client.post("/api/app/install-reservation"))
+            await lookup_started.wait()
+
+            admitted = app_activity.admit_work()
+            await anext(admitted)
+            try:
+                assert runtime.install_owner is None
+                finish_lookup.set()
+                response = await reservation
+            finally:
+                await admitted.aclose()
+
+        assert response.status_code == 409
+        assert response.json() == {"running": [{"kind": "scan", "label": "NGC 7000"}]}
+    finally:
+        finish_lookup.set()
         ingest._active_ingest_project_id = None
         ingest._INGEST_LOCK.release()
 

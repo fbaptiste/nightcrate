@@ -43,6 +43,10 @@ def choose_port(preferred: int, extra: int) -> socket.socket:
     for port in range(preferred, preferred + extra + 1):
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         try:
+            if os.name == "nt":
+                sock.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+            else:
+                sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             sock.bind(("127.0.0.1", port))
             return sock
         except OSError as exc:

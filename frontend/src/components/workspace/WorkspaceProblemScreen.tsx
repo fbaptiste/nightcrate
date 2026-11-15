@@ -5,6 +5,7 @@ import Button from "@mui/material/Button";
 import Card from "@mui/material/Card";
 import CardContent from "@mui/material/CardContent";
 import Dialog from "@mui/material/Dialog";
+import Link from "@mui/material/Link";
 import Typography from "@mui/material/Typography";
 
 import { activateDatabase, fetchAdminStatus, type WorkspaceProblem } from "@/api/admin";
@@ -60,12 +61,16 @@ function problemWarning(problem: WorkspaceProblem): string {
 }
 
 function ProblemActions({ problem, onOpenOther }: { problem: WorkspaceProblem; onOpenOther: () => void }) {
-  if (problem.kind === "newer") return <Box component="ol" sx={{ pl: 2.5 }}><li><a href={`${REPO}/releases/latest`} target="_blank" rel="noopener">Install {problem.last_opened_by ? `${problem.last_opened_by} or newer` : "a newer version"} to open it.</a></li><li>Or <Button variant="text" onClick={onOpenOther}>open another workspace</Button>.</li></Box>;
-  if (problem.kind === "backup_failed") return <><Typography>Free some space on the drive that holds this workspace, or check that NightCrate can write to its backups folder, then open NightCrate again.</Typography><Typography>Or <Button onClick={onOpenOther}>open another workspace</Button>.</Typography></>;
+  if (problem.kind === "newer") return <Box component="ol" sx={{ pl: 2.5 }}><li><Link href={`${REPO}/releases/latest`} target="_blank" rel="noopener">Install {problem.last_opened_by ? `${problem.last_opened_by} or newer` : "a newer version"} to open it.</Link></li><li>Or <OpenAnotherLink onClick={onOpenOther} />.</li></Box>;
+  if (problem.kind === "backup_failed") return <><Typography>Free some space on the drive that holds this workspace, or check that NightCrate can write to its backups folder, then open NightCrate again.</Typography><Typography>Or <OpenAnotherLink onClick={onOpenOther} />.</Typography></>;
   return <Box><Typography fontWeight={600} sx={{ mb: 1 }}>What you can do</Typography><Box component="ol" sx={{ pl: 2.5 }}>
-    {problem.kind === "upgrade_failed" && <li>Keep working with the previous version: <a href={problem.last_opened_by ? `${REPO}/releases/tag/v${problem.last_opened_by}` : `${REPO}/releases`} target="_blank" rel="noopener">{problem.last_opened_by ? `download NightCrate ${problem.last_opened_by}` : "download the previous version"}</a> and install it over this one.</li>}
+    {problem.kind === "upgrade_failed" && <li>Keep working with the previous version: <Link href={problem.last_opened_by ? `${REPO}/releases/tag/v${problem.last_opened_by}` : `${REPO}/releases`} target="_blank" rel="noopener">{problem.last_opened_by ? `download NightCrate ${problem.last_opened_by}` : "download the previous version"}</Link> and install it over this one.</li>}
     {problem.kind === "restore_failed" && <><li>Quit NightCrate, then copy {problem.backup_path} over {problem.workspace_path}/nightcrate.db.</li><li>NightCrate will also try again the next time it opens.</li></>}
-    <li>Tell us what happened: <a href={`${REPO}/issues/new`} target="_blank" rel="noopener">report it on GitHub</a>.{problem.kind !== "unreadable" && " The details below help."}</li>
-    <li>Or <Button onClick={onOpenOther}>open another workspace</Button>.</li>
+    <li>Tell us what happened: <Link href={`${REPO}/issues/new`} target="_blank" rel="noopener">report it on GitHub</Link>.{problem.kind !== "unreadable" && " The details below help."}</li>
+    <li>Or <OpenAnotherLink onClick={onOpenOther} />.</li>
   </Box></Box>;
+}
+
+function OpenAnotherLink({ onClick }: { onClick: () => void }) {
+  return <Link component="button" type="button" variant="inherit" onClick={onClick} sx={{ p: 0, border: 0, bgcolor: "transparent", cursor: "pointer", verticalAlign: "baseline" }}>open another workspace</Link>;
 }

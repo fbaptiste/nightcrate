@@ -226,6 +226,8 @@ def _run(command: list[str], *, cwd: Path | None = None) -> str:
             cwd=cwd,
             check=True,
             text=True,
+            encoding="utf-8",
+            errors="strict",
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
         )
@@ -234,6 +236,10 @@ def _run(command: list[str], *, cwd: Path | None = None) -> str:
     except subprocess.CalledProcessError as exc:
         detail = exc.stderr.strip() or exc.stdout.strip() or f"exit {exc.returncode}"
         raise NoticeError(f"{' '.join(command)} failed: {detail}") from exc
+    except UnicodeError as exc:
+        raise NoticeError(
+            f"{' '.join(command)} produced output that is not valid UTF-8: {exc}"
+        ) from exc
     return result.stdout
 
 
@@ -524,19 +530,8 @@ def _gcc_runtime_version(
 
 def _elf_gcc_version(library: Path) -> str | None:
     """Read the compiler release from an ELF .comment section when available."""
-    try:
-        result = subprocess.run(
-            ["readelf", "--string-dump=.comment", str(library)],
-            check=False,
-            text=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
-        )
-    except FileNotFoundError:
-        return None
-    if result.returncode != 0:
-        return None
-    match = re.search(r"GCC: \(GNU\)\s+([^\s]+)", result.stdout)
+    output = _run(["readelf", "--string-dump=.comment", str(library)])
+    match = re.search(r"GCC: \(GNU\)\s+([^\s]+)", output)
     return match.group(1) if match else None
 
 
@@ -579,25 +574,35 @@ def _distribution_native_owner(
         candidates = matching
     elif sys.platform.startswith("linux") or sys.platform == "darwin":
         expected_kind = "elf" if sys.platform.startswith("linux") else "macho"
-        path_matches = [
+        target_kind = _native_binary_kind(path)
+        binary_candidates = [
             candidate
             for candidate in candidates
-            if (
-                candidate[1] == record_relative
-                or (
-                    expected_kind == "macho"
-                    and candidate[1].endswith(f"/{record_relative}")
-                )
-            )
-            and _native_binary_kind(path) == expected_kind
+            if target_kind == expected_kind
             and _native_binary_kind(candidate[2]) == expected_kind
         ]
-        if expected_kind == "macho" and len(path_matches) > 1:
+        path_matches = [
+            candidate
+            for candidate in binary_candidates
+            if candidate[1] == record_relative
+            or candidate[1].endswith(f"/{record_relative}")
+        ]
+        if not path_matches:
+            path_matches = [
+                candidate
+                for candidate in binary_candidates
+                if PurePosixPath(candidate[1]).name
+                == PurePosixPath(record_relative).name
+            ]
+        path_owners = {
+            _canonical(candidate[0].metadata["Name"]) for candidate in path_matches
+        }
+        if len(path_owners) > 1:
             binary = path.read_bytes()
             embedded_owner = [
                 candidate
                 for candidate in path_matches
-                if f"/{candidate[1].split('/', 1)[0]}/".encode() in binary
+                if candidate[1].split("/", 1)[0].encode() in binary
             ]
             if embedded_owner:
                 path_matches = embedded_owner

@@ -14,6 +14,7 @@ import ListItem from "@mui/material/ListItem";
 import ListItemButton from "@mui/material/ListItemButton";
 import ListItemIcon from "@mui/material/ListItemIcon";
 import ListItemText from "@mui/material/ListItemText";
+import Link from "@mui/material/Link";
 import Paper from "@mui/material/Paper";
 import Snackbar from "@mui/material/Snackbar";
 import TextField from "@mui/material/TextField";
@@ -705,7 +706,7 @@ export function AdminPage() {
             {info.licences_dir && (
               <Box sx={{ display: "flex", gap: 2, py: 0.75, alignItems: "baseline" }}>
                 <Typography variant="body2" color="text.secondary" sx={{ minWidth: 160 }}>Licences</Typography>
-                <Typography variant="body2" sx={{ fontFamily: "monospace", wordBreak: "break-all" }}>{info.licences_dir} · <a href={`https://github.com/fbaptiste/nightcrate/tree/v${appVersion}`} target="_blank" rel="noopener">source</a></Typography>
+                <Typography variant="body2" sx={{ fontFamily: "monospace", wordBreak: "break-all" }}>{info.licences_dir} · <Link href={`https://github.com/fbaptiste/nightcrate/tree/v${appVersion}`} target="_blank" rel="noopener">source</Link></Typography>
               </Box>
             )}
           </Box>
