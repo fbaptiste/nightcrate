@@ -30,8 +30,6 @@ jobs:
             exit 1
           fi
           python - <<'PY'
-          import base64
-          import binascii
           import json
           import os
           import pathlib
@@ -147,8 +145,11 @@ jobs:
             --backend-dir packaging/build/backend \
             --shell-dir packaging/shell/src-tauri \
             --out "$notices/inventory.json"
-          render_args=()
-          if [ "$GITHUB_EVENT_NAME" = push ]; then render_args+=(--allow-unresolved-gcc); fi
+          # Fred, 2026-11-15: GCC runtimes whose exact release can't be determined
+          # (numpy's and scipy's Linux wheels record none) point to upstream GCC with
+          # the wheel's own licence file, in releases too. Every other unresolved or
+          # unowned library still fails the build.
+          render_args=(--allow-unresolved-gcc)
           uv run --project backend python packaging/notices.py render \
             --inventory "$notices/inventory.json" \
             --out "$notices" \
@@ -183,8 +184,11 @@ jobs:
             --shell-dir packaging/shell/src-tauri \
             --appimage "$first/squashfs-root" \
             --out "$notices/inventory-first.json"
-          render_args=()
-          if [ "$GITHUB_EVENT_NAME" = push ]; then render_args+=(--allow-unresolved-gcc); fi
+          # Fred, 2026-11-15: GCC runtimes whose exact release can't be determined
+          # (numpy's and scipy's Linux wheels record none) point to upstream GCC with
+          # the wheel's own licence file, in releases too. Every other unresolved or
+          # unowned library still fails the build.
+          render_args=(--allow-unresolved-gcc)
           uv run --project backend python packaging/notices.py render \
             --inventory "$notices/inventory-first.json" \
             --out "$notices" \
@@ -294,7 +298,7 @@ jobs:
           mkdir -p "$destination"
           find packaging/shell/src-tauri/target/release/bundle -type f \
             \( -name '*.dmg' -o -name '*-setup.exe' -o -name '*.AppImage' \
-               -o -name '*.app.tar.gz' -o -name '*.AppImage.tar.gz' -o -name '*.nsis.zip' \
+               -o -name '*.app.tar.gz' \
                -o -name '*.sig' \) -exec cp {} "$destination/" \;
           cp packaging/build/notices/licences/THIRD_PARTY_NOTICES.txt \
             "$destination/nightcrate-${VERSION_INPUT}-third-party-notices-${RELEASE_PLATFORM}.txt"
@@ -324,6 +328,10 @@ jobs:
         with:
           pattern: nightcrate-*
           path: artifacts
+      - name: Install minisign
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y minisign
       - name: Assemble, verify and draft release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -333,16 +341,36 @@ jobs:
           mkdir release
           find artifacts -path '*/build/release/*' -type f -exec cp {} release/ \;
           python - <<'PY'
+          import base64
+          import binascii
           import json
           import os
           import pathlib
+          import subprocess
 
           version = os.environ["VERSION_INPUT"]
           release = pathlib.Path("release")
+          temporary = pathlib.Path(os.environ["RUNNER_TEMP"])
+          config = json.loads(
+              pathlib.Path("packaging/shell/src-tauri/tauri.conf.json").read_text(
+                  encoding="utf-8"
+              )
+          )
+          encoded_public_key = config["plugins"]["updater"]["pubkey"]
+          public_key = temporary / "nightcrate-updater.pub"
+          try:
+              public_key.write_bytes(
+                  base64.b64decode(encoded_public_key, validate=True)
+              )
+          except (binascii.Error, TypeError) as exc:
+              raise SystemExit(f"invalid updater public key: {exc}") from exc
+          # Tauri 2 updater artifacts (createUpdaterArtifacts: true): macOS ships a
+          # signed .app.tar.gz; Linux and Windows sign the AppImage and the NSIS
+          # installer themselves (the .tar.gz/.zip forms were Tauri 1's).
           targets = {
               "darwin-aarch64": "*.app.tar.gz",
-              "linux-x86_64": "*.AppImage.tar.gz",
-              "windows-x86_64": "*.nsis.zip",
+              "linux-x86_64": "*.AppImage",
+              "windows-x86_64": "*-setup.exe",
           }
           platforms = {}
           for target, pattern in targets.items():
@@ -355,9 +383,31 @@ jobs:
                   raise SystemExit(f"missing signature for {archive.name}")
               signature_text = signature.read_text(encoding="utf-8").strip()
               try:
-                  signed_payload = base64.b64decode(signature_text, validate=True).decode("utf-8")
+                  signature_bytes = base64.b64decode(signature_text, validate=True)
+                  signed_payload = signature_bytes.decode("utf-8")
               except (binascii.Error, UnicodeDecodeError) as exc:
                   raise SystemExit(f"invalid signature file {signature.name}: {exc}") from exc
+              decoded_signature = temporary / f"{target}.minisig"
+              decoded_signature.write_bytes(signature_bytes)
+              verification = subprocess.run(
+                  [
+                      "minisign",
+                      "-V",
+                      "-p",
+                      str(public_key),
+                      "-m",
+                      str(archive),
+                      "-x",
+                      str(decoded_signature),
+                  ],
+                  capture_output=True,
+                  text=True,
+              )
+              if verification.returncode != 0:
+                  detail = verification.stderr.strip() or verification.stdout.strip()
+                  raise SystemExit(
+                      f"signature verification failed for {archive.name}: {detail}"
+                  )
               trusted = next(
                   (line for line in signed_payload.splitlines() if line.startswith("trusted comment:")),
                   None,

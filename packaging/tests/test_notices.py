@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 import sys
+import zipfile
 
 import pytest
 
@@ -12,11 +13,15 @@ import notices  # noqa: E402
 from notices import (  # noqa: E402
     NoticeError,
     _check_mpl_tree,
+    _frozen_distribution_versions,
+    _frozen_python_inventory,
     _gcc_runtime_version,
     _gcc_source_versions,
+    _installed_distributions,
     _interpreter_native_candidates,
     _notices_text,
     _owner_for_python_native,
+    _python_components,
     _run,
     _system_natives,
     evaluate_licence,
@@ -27,6 +32,54 @@ from notices import (  # noqa: E402
 
 
 POLICY = load_policy(Path(__file__).parents[1] / "licence_policy.toml")
+
+
+def test_library_zip_modules_are_attributed_to_python_components(
+    tmp_path: Path,
+) -> None:
+    backend = tmp_path / "backend"
+    library = backend / "lib"
+    library.mkdir(parents=True)
+    distributions = _installed_distributions()
+    aiofiles_version = distributions["aiofiles"].version
+    with zipfile.ZipFile(library / "library.zip", "w") as frozen_zip:
+        frozen_zip.writestr("typing_extensions.pyc", b"third party")
+        frozen_zip.writestr("json/__init__.pyc", b"stdlib")
+        frozen_zip.writestr(
+            f"aiofiles-{aiofiles_version}.dist-info/METADATA",
+            f"Metadata-Version: 2.4\nName: aiofiles\nVersion: {aiofiles_version}\n",
+        )
+    frozen_versions = _frozen_distribution_versions(backend)
+
+    components, modules = _python_components(
+        backend,
+        [],
+        distributions,
+        POLICY,
+        frozen_versions,
+    )
+
+    assert any(component["name"] == "typing_extensions" for component in components)
+    assert any(component["name"] == "aiofiles" for component in components)
+    module_owners = {item["path"]: item["owner"] for item in modules}
+    assert module_owners["lib/library.zip!typing_extensions.pyc"]["name"] == (
+        "typing_extensions"
+    )
+    assert module_owners["lib/library.zip!json/__init__.pyc"] == {
+        "kind": "cpython",
+        "name": "CPython",
+        "version": notices.platform.python_version(),
+    }
+
+
+def test_unknown_library_zip_module_fails_with_its_name(tmp_path: Path) -> None:
+    library = tmp_path / "backend" / "lib"
+    library.mkdir(parents=True)
+    with zipfile.ZipFile(library / "library.zip", "w") as frozen_zip:
+        frozen_zip.writestr("mystery.pyc", b"unknown")
+
+    with pytest.raises(NoticeError, match="mystery.pyc.*no distribution owner"):
+        _frozen_python_inventory(tmp_path / "backend", _installed_distributions())
 
 
 def test_subprocess_output_is_decoded_as_strict_utf8() -> None:
@@ -235,6 +288,7 @@ def test_hash_mismatched_elf_record_path_is_attributed_with_freezer_note(
         by_basename,
         {str(source): notices._sha256(source)},
         {},
+        [],
     )
 
     assert system_components == []
@@ -273,16 +327,69 @@ def test_hash_mismatched_elf_without_record_path_falls_through_to_dpkg(
 
     monkeypatch.setattr(notices, "_dpkg_owner", failing_dpkg)
 
-    with pytest.raises(NoticeError, match="dpkg lookup failed"):
+    with pytest.raises(
+        NoticeError,
+        match=r"usr/lib/NightCrate/backend/lib/Cryptodome/Cipher/"
+        r"_ARC4\.abi3\.so.*dpkg lookup failed",
+    ):
         _system_natives(
             appimage,
             backend,
             {},
             {},
             {},
+            [],
         )
 
     assert dpkg_calls == [frozen]
+
+
+def test_appimage_copy_inherits_frozen_backend_owner(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    backend = tmp_path / "backend"
+    backend_library = backend / "lib" / "pkg.libs" / "libX-abc.so"
+    backend_library.parent.mkdir(parents=True)
+    backend_library.write_bytes(b"same bundled library")
+    owner = {"kind": "python", "name": "pkg", "version": "1.0"}
+    backend_natives = [
+        {
+            "path": "lib/pkg.libs/libX-abc.so",
+            "sha256": notices._sha256(backend_library),
+            "owner": owner,
+        }
+    ]
+    appimage = tmp_path / "appimage"
+    copied = appimage / "usr" / "lib" / "libX-abc.so"
+    copied.parent.mkdir(parents=True)
+    copied.write_bytes(backend_library.read_bytes())
+    monkeypatch.setattr(
+        notices,
+        "_dpkg_owner",
+        lambda _path: pytest.fail("backend copy reached dpkg"),
+    )
+
+    natives, system_components = _system_natives(
+        appimage,
+        backend,
+        {},
+        {},
+        {},
+        backend_natives,
+    )
+
+    assert system_components == []
+    assert natives == [
+        {
+            "path": "usr/lib/libX-abc.so",
+            "sha256": notices._sha256(copied),
+            "owner": {
+                **owner,
+                "notice": "copied by the AppImage bundler",
+            },
+        }
+    ]
 
 
 def test_linux_freeze_core_relocation_is_attributed_by_basename(

@@ -87,6 +87,10 @@ fn is_expected_version(available: Option<&str>, expected: &str) -> bool {
     available == Some(expected)
 }
 
+fn should_release_reservation(owns_install_guard: bool, install_failed: bool) -> bool {
+    owns_install_guard && install_failed
+}
+
 pub fn allowed_test_url(value: &str) -> bool {
     tauri::Url::parse(value).is_ok_and(|url| {
         matches!(url.scheme(), "https")
@@ -232,16 +236,13 @@ pub async fn install_update(
         .as_ref()
         .and_then(|backend| backend.port())
         .ok_or_else(|| failure(InstallStage::Busy, "The NightCrate backend is unavailable."))?;
-    let _guard = match InstallGuard::acquire() {
-        Ok(guard) => guard,
-        Err(error) => {
-            release(port, &token);
-            return Err(error);
-        }
-    };
+    let _guard = InstallGuard::acquire()?;
 
     let result = install_inner(&app, port, &expected_version, &token).await;
-    if let Err(error) = &result {
+    if should_release_reservation(true, result.is_err()) {
+        let error = result
+            .as_ref()
+            .expect_err("a failed install must have an error");
         if let Some(backend) = app.state::<BackendSlot>().0.lock().unwrap().clone() {
             backend.log_shell_event(&format!(
                 "install_update failed at {:?}: {}",
@@ -391,5 +392,13 @@ mod tests {
         assert!(!is_expected_version(None, "0.0.2"));
         assert!(!is_expected_version(Some("0.0.3"), "0.0.2"));
         assert!(is_expected_version(Some("0.0.2"), "0.0.2"));
+    }
+
+    #[test]
+    fn releases_only_a_failed_install_owned_by_the_guard_holder() {
+        assert!(!should_release_reservation(false, false));
+        assert!(!should_release_reservation(false, true));
+        assert!(!should_release_reservation(true, false));
+        assert!(should_release_reservation(true, true));
     }
 }

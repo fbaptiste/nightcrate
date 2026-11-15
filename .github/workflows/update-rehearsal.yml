@@ -53,7 +53,14 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libfuse2 xvfb
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libfuse2 xvfb minisign
+      - name: Install minisign on macOS
+        if: runner.os == 'macOS'
+        run: brew install minisign
+      - name: Install minisign on Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: choco install minisign --no-progress -y
       - name: Install build tooling
         shell: bash
         run: |
@@ -118,17 +125,85 @@ jobs:
           (cd packaging/shell && npx --no-install tauri build --bundles "${{ matrix.bundle }}" --config "$RUNNER_TEMP/tauri-test-config.json")
           cp -R packaging/shell/src-tauri/target/release/bundle "$RUNNER_TEMP/B-bundle"
           archive=$(find "$RUNNER_TEMP/B-bundle" -type f \
-            \( -name '*.app.tar.gz' -o -name '*.AppImage.tar.gz' -o -name '*.nsis.zip' \) -print -quit)
+            \( -name '*.app.tar.gz' -o -name '*.AppImage' -o -name '*-setup.exe' \) -print -quit)
           test -n "$archive"
           test -f "$archive.sig"
           cp "$archive" "$RUNNER_TEMP/bad-update.bin"
-          packaging/shell/node_modules/.bin/tauri signer sign \
+          # TAURI_SIGNING_PRIVATE_KEY (exported above for B's build) would clash
+          # with --private-key-path, so drop it for this one command.
+          env -u TAURI_SIGNING_PRIVATE_KEY packaging/shell/node_modules/.bin/tauri signer sign \
             --private-key-path "$RUNNER_TEMP/wrong.key" \
             --password rehearsal \
             --app-version 0.0.2 \
             "$RUNNER_TEMP/bad-update.bin"
           printf 'B_ARCHIVE=%s\nB_GOOD_SIG=%s\nB_BAD_SIG=%s\n' \
             "$archive" "$archive.sig" "$RUNNER_TEMP/bad-update.bin.sig" >> "$GITHUB_ENV"
+      - name: Cryptographically verify updater signatures
+        shell: bash
+        run: |
+          python - <<'PY'
+          import base64
+          import binascii
+          import os
+          import pathlib
+          import subprocess
+
+          temporary = pathlib.Path(os.environ["RUNNER_TEMP"])
+
+          def decode(source, destination, label):
+              try:
+                  payload = base64.b64decode(
+                      pathlib.Path(source).read_text(encoding="utf-8").strip(),
+                      validate=True,
+                  )
+              except (binascii.Error, UnicodeDecodeError) as exc:
+                  raise SystemExit(f"invalid {label}: {exc}") from exc
+              destination.write_bytes(payload)
+              return payload
+
+          public_key = temporary / "updater-decoded.pub"
+          decode(temporary / "updater.key.pub", public_key, "updater public key")
+          signature = temporary / "good-update.minisig"
+          signature_payload = decode(
+              os.environ["B_GOOD_SIG"], signature, "good updater signature"
+          ).decode("utf-8")
+          trusted = next(
+              (
+                  line
+                  for line in signature_payload.splitlines()
+                  if line.startswith("trusted comment:")
+              ),
+              None,
+          )
+          if trusted is None or "version:0.0.2" not in trusted.split():
+              raise SystemExit(f"wrong trusted comment in good signature: {trusted!r}")
+
+          command = [
+              "minisign",
+              "-V",
+              "-p",
+              str(public_key),
+              "-m",
+              os.environ["B_ARCHIVE"],
+              "-x",
+              str(signature),
+          ]
+          verification = subprocess.run(command, capture_output=True, text=True)
+          if verification.returncode != 0:
+              detail = verification.stderr.strip() or verification.stdout.strip()
+              raise SystemExit(f"good updater signature was rejected: {detail}")
+
+          wrong_signature = temporary / "wrong-update.minisig"
+          decode(
+              os.environ["B_BAD_SIG"],
+              wrong_signature,
+              "wrong-key updater signature",
+          )
+          command[-1] = str(wrong_signature)
+          rejection = subprocess.run(command, capture_output=True, text=True)
+          if rejection.returncode == 0:
+              raise SystemExit("wrong-key updater signature was accepted")
+          PY
       - name: Make the 20-file fixture
         shell: bash
         run: uv run --project backend python packaging/make_test_data.py "$RUNNER_TEMP/rehearsal-images"

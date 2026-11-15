@@ -171,6 +171,18 @@ fn create_main(app: &AppHandle, port: u16, selftest: bool) -> Result<(), String>
     Ok(())
 }
 
+fn stop_backend(app: &AppHandle, backend: &Arc<Backend>) {
+    backend.stop();
+    let state = app.state::<BackendSlot>();
+    let mut slot = state.0.lock().unwrap();
+    if slot
+        .as_ref()
+        .is_some_and(|current| Arc::ptr_eq(current, backend))
+    {
+        slot.take();
+    }
+}
+
 fn launch_backend(
     app: &AppHandle,
     requested_port: Option<u16>,
@@ -183,7 +195,7 @@ fn launch_backend(
             reason,
         })?;
     *app.state::<BackendSlot>().0.lock().unwrap() = Some(Arc::clone(&backend));
-    let port = backend.wait_until_ready(&receiver, |output| {
+    let result = backend.wait_until_ready(&receiver, |output| {
         if let Output::Step(step) = output {
             let message = match step.step.as_str() {
                 "backing_up" => format!(
@@ -198,12 +210,19 @@ fn launch_backend(
             };
             loading_status(app, &message);
         }
-    })?;
+    });
+    let port = match result {
+        Ok(port) => port,
+        Err(failure) => {
+            stop_backend(app, &backend);
+            return Err(failure);
+        }
+    };
     Ok((backend, port))
 }
 
 fn start_backend(app: AppHandle) {
-    let (_, port) = match launch_backend(&app, None) {
+    let (backend, port) = match launch_backend(&app, None) {
         Ok(value) => value,
         Err(failure) => {
             loading_failure(&app, &failure);
@@ -212,6 +231,7 @@ fn start_backend(app: AppHandle) {
     };
     let selftest = app.state::<SelfTest>().enabled();
     if let Err(reason) = create_main(&app, port, selftest) {
+        stop_backend(&app, &backend);
         loading_failure(
             &app,
             &StartFailure {

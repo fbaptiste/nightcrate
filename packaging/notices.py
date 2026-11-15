@@ -20,6 +20,7 @@ import tempfile
 import tomllib
 import urllib.error
 import urllib.request
+import zipfile
 from collections import defaultdict
 from importlib import metadata
 from pathlib import Path, PurePosixPath
@@ -351,11 +352,19 @@ def _is_native(path: Path) -> bool:
 
 
 def _installed_distributions() -> dict[str, metadata.Distribution]:
-    return {
+    distributions = {
         _canonical(dist.metadata["Name"]): dist
         for dist in metadata.distributions()
         if dist.metadata.get("Name")
     }
+    roots = {Path(dist.locate_file("")) for dist in distributions.values()}
+    for root in sorted(roots):
+        for metadata_path in sorted(root.rglob("*.dist-info/METADATA")):
+            dist = metadata.Distribution.at(metadata_path.parent)
+            name = dist.metadata.get("Name")
+            if name:
+                distributions.setdefault(_canonical(name), dist)
+    return distributions
 
 
 def _native_distribution_indices(
@@ -466,19 +475,34 @@ def _interpreter_native_owner(
 
 def _frozen_distribution_versions(backend_dir: Path) -> dict[str, str]:
     versions: dict[str, str] = {}
-    for metadata_path in backend_dir.rglob("*.dist-info/METADATA"):
-        with metadata_path.open("r", encoding="utf-8", errors="replace") as handle:
-            message = email.parser.Parser().parse(handle)
+
+    def add(message: email.message.Message, source: str) -> None:
         name = message.get("Name")
         version = message.get("Version")
         if not name or not version:
-            raise NoticeError(
-                f"{metadata_path}: frozen distribution metadata is incomplete"
-            )
+            raise NoticeError(f"{source}: frozen distribution metadata is incomplete")
         canonical = _canonical(name)
         if canonical in versions and versions[canonical] != version:
             raise NoticeError(f"{name}: frozen build contains conflicting versions")
         versions[canonical] = version
+
+    for metadata_path in backend_dir.rglob("*.dist-info/METADATA"):
+        with metadata_path.open("r", encoding="utf-8", errors="replace") as handle:
+            message = email.parser.Parser().parse(handle)
+        add(message, str(metadata_path))
+    archive = backend_dir / "lib" / "library.zip"
+    if archive.is_file():
+        try:
+            with zipfile.ZipFile(archive) as frozen_zip:
+                for entry in frozen_zip.namelist():
+                    if not entry.endswith(".dist-info/METADATA"):
+                        continue
+                    text = frozen_zip.read(entry).decode("utf-8", errors="replace")
+                    add(email.parser.Parser().parsestr(text), f"{archive}!{entry}")
+        except (OSError, zipfile.BadZipFile) as exc:
+            raise NoticeError(
+                f"cannot inspect frozen Python archive {archive}: {exc}"
+            ) from exc
     return versions
 
 
@@ -754,26 +778,169 @@ def _owner_for_python_native(
     return owner
 
 
+def _python_distribution_index(
+    distributions: dict[str, metadata.Distribution],
+) -> dict[str, set[str]]:
+    """Map importable top-level names to build-environment distributions."""
+    result: dict[str, set[str]] = defaultdict(set)
+    for canonical, dist in distributions.items():
+        top_levels = {
+            line.strip()
+            for line in (dist.read_text("top_level.txt") or "").splitlines()
+            if line.strip()
+        }
+        for item in dist.files or []:
+            item_text = str(item).replace("\\", "/")
+            parts = PurePosixPath(item_text).parts
+            if (
+                not parts
+                or item_text.startswith("../")
+                or parts[0].endswith((".dist-info", ".egg-info", ".data"))
+                or parts[0] == "licenses"
+            ):
+                continue
+            top_level = parts[0]
+            if len(parts) == 1:
+                match = re.match(
+                    r"^(.+?)(?:\.pyc?|\.(?:cpython-[^.]+|abi3)\.(?:so|pyd))$",
+                    top_level,
+                )
+                if match:
+                    top_level = match.group(1)
+                else:
+                    continue
+            if re.fullmatch(r"[A-Za-z_]\w*", top_level):
+                top_levels.add(top_level)
+        for top_level in top_levels:
+            if re.fullmatch(r"[A-Za-z_]\w*", top_level):
+                result[top_level].add(canonical)
+    return result
+
+
+def _module_top_level(path: str) -> str | None:
+    parts = PurePosixPath(path).parts
+    if not parts or any(part.endswith(".dist-info") for part in parts):
+        return None
+    top_level = parts[0]
+    if len(parts) == 1:
+        match = re.fullmatch(r"(.+?)\.pyc?", top_level)
+        if not match:
+            return None
+        top_level = match.group(1)
+    return top_level if re.fullmatch(r"[A-Za-z_]\w*", top_level) else None
+
+
+def _python_module_owner(
+    top_level: str,
+    path: str,
+    distribution_index: dict[str, set[str]],
+    distributions: dict[str, metadata.Distribution],
+) -> tuple[dict[str, Any], set[str]]:
+    if top_level in sys.stdlib_module_names or top_level.startswith("_sysconfigdata_"):
+        return (
+            {
+                "kind": "cpython",
+                "name": "CPython",
+                "version": platform.python_version(),
+            },
+            set(),
+        )
+    if top_level == "BUILD_CONSTANTS":
+        name = _canonical("cx-Freeze")
+        dist = distributions.get(name)
+        if dist is None:
+            raise NoticeError(f"{path}: cx_Freeze distribution metadata is missing")
+        return (
+            {"kind": "python", "name": dist.metadata["Name"], "version": dist.version},
+            {name},
+        )
+    if re.fullmatch(r"__(?:init|main)__nightcrate_backend", top_level):
+        return ({"kind": "project", "name": "NightCrate"}, set())
+    names = distribution_index.get(top_level, set())
+    if not names:
+        raise NoticeError(
+            f"{path}: shipped Python module {top_level!r} has no distribution owner"
+        )
+    if len(names) != 1:
+        detail = ", ".join(sorted(names))
+        raise NoticeError(
+            f"{path}: shipped Python module {top_level!r} has ambiguous "
+            f"distribution owners ({detail})"
+        )
+    name = next(iter(names))
+    dist = distributions[name]
+    return (
+        {"kind": "python", "name": dist.metadata["Name"], "version": dist.version},
+        {name},
+    )
+
+
+def _frozen_python_inventory(
+    backend_dir: Path,
+    distributions: dict[str, metadata.Distribution],
+) -> tuple[list[dict[str, Any]], set[str]]:
+    distribution_index = _python_distribution_index(distributions)
+    modules: list[dict[str, Any]] = []
+    names: set[str] = set()
+    library = backend_dir / "lib"
+    archive = library / "library.zip"
+    if archive.is_file():
+        try:
+            with zipfile.ZipFile(archive) as frozen_zip:
+                entries = sorted(
+                    entry for entry in frozen_zip.namelist() if not entry.endswith("/")
+                )
+        except (OSError, zipfile.BadZipFile) as exc:
+            raise NoticeError(
+                f"cannot inspect frozen Python archive {archive}: {exc}"
+            ) from exc
+        for entry in entries:
+            top_level = _module_top_level(entry)
+            if top_level is None:
+                continue
+            module_path = f"lib/library.zip!{entry}"
+            owner, component_names = _python_module_owner(
+                top_level,
+                module_path,
+                distribution_index,
+                distributions,
+            )
+            modules.append({"path": module_path, "owner": owner})
+            names.update(component_names)
+    if library.is_dir():
+        for child in sorted(library.iterdir()):
+            if child == archive or child.name.endswith(".dist-info"):
+                continue
+            top_level = child.name if child.is_dir() else _module_top_level(child.name)
+            if top_level is None or top_level in sys.stdlib_module_names:
+                continue
+            if top_level == "nightcrate":
+                continue
+            component_names = distribution_index.get(top_level, set())
+            if not component_names:
+                raise NoticeError(
+                    f"{child.relative_to(backend_dir).as_posix()}: shipped Python "
+                    f"module {top_level!r} has no distribution owner"
+                )
+            names.update(component_names)
+    return modules, names
+
+
 def _python_components(
     backend_dir: Path,
     native_owners: list[dict[str, Any]],
     distributions: dict[str, metadata.Distribution],
     policy: dict[str, Any],
-) -> list[dict[str, Any]]:
+    frozen_versions: dict[str, str],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     names = {
         _canonical(owner["name"])
         for owner in native_owners
         if owner["kind"] == "python"
     }
-    package_map = metadata.packages_distributions()
-    library = backend_dir / "lib"
-    if library.is_dir():
-        for child in library.iterdir():
-            top_level = child.name
-            if child.is_file():
-                top_level = re.split(r"\.(?:cpython-|abi3|pyc$)", top_level)[0]
-            for dist_name in package_map.get(top_level, []):
-                names.add(_canonical(dist_name))
+    modules, frozen_names = _frozen_python_inventory(backend_dir, distributions)
+    names.update(frozen_names)
+    names.update(frozen_versions)
     names.update({_canonical("cx-Freeze"), _canonical("freeze-core")})
     names.discard("nightcrate")
     result: list[dict[str, Any]] = []
@@ -782,6 +949,12 @@ def _python_components(
         if dist is None:
             raise NoticeError(
                 f"{name}: shipped Python distribution metadata is missing"
+            )
+        frozen_version = frozen_versions.get(name)
+        if frozen_version is not None and dist.version != frozen_version:
+            raise NoticeError(
+                f"{dist.metadata['Name']}: build-environment version {dist.version} "
+                f"does not match frozen version {frozen_version}"
             )
         display_name = dist.metadata["Name"]
         expression = _metadata_expression(dist.metadata)
@@ -808,7 +981,7 @@ def _python_components(
                 "licence_files": licences,
             }
         )
-    return result
+    return result, modules
 
 
 def _frontend_package_name(lock_path: str, item: dict[str, Any]) -> str:
@@ -988,48 +1161,107 @@ def _appimage_backend_record_path(path: Path, appimage: Path) -> str | None:
     return PurePosixPath(*tail).as_posix() if tail else None
 
 
+def _appimage_backend_relative_path(path: Path, appimage: Path) -> str | None:
+    parts = path.relative_to(appimage).parts
+    backend_indices = [
+        index for index, part in enumerate(parts) if part.lower() == "backend"
+    ]
+    if not backend_indices:
+        return None
+    tail = parts[backend_indices[-1] + 1 :]
+    return PurePosixPath(*tail).as_posix() if tail else None
+
+
+def _appimage_copy_owner(owner: dict[str, Any]) -> dict[str, Any]:
+    inherited = dict(owner)
+    copy_note = "copied by the AppImage bundler"
+    if inherited.get("notice"):
+        inherited["notice"] = f"{inherited['notice']}; {copy_note}"
+    else:
+        inherited["notice"] = copy_note
+    return inherited
+
+
 def _system_natives(
     appimage: Path,
     backend_dir: Path,
     by_basename: dict[str, list[tuple[metadata.Distribution, str, Path]]],
     source_hashes: dict[str, str],
     frozen_versions: dict[str, str],
+    backend_natives: list[dict[str, Any]],
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    backend_hashes = {
-        _sha256(path)
-        for path in backend_dir.rglob("*")
-        if path.is_file() and _is_native(path)
-    }
+    backend_by_path = {item["path"]: item for item in backend_natives}
+    backend_by_hash: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for item in backend_natives:
+        backend_by_hash[item["sha256"]].append(item)
     natives: list[dict[str, Any]] = []
     packages: dict[tuple[str, str], dict[str, Any]] = {}
     for path in sorted(appimage.rglob("*")):
         if not path.is_file() or not _is_native(path):
             continue
+        relative = path.relative_to(appimage).as_posix()
         digest = _sha256(path)
-        if digest in backend_hashes:
+        backend_relative = _appimage_backend_relative_path(path, appimage)
+        backend_match = (
+            backend_by_path.get(backend_relative)
+            if backend_relative is not None
+            else None
+        )
+        if backend_match is not None:
+            natives.append(
+                {
+                    "path": relative,
+                    "sha256": digest,
+                    "owner": _appimage_copy_owner(backend_match["owner"]),
+                }
+            )
+            continue
+        hash_matches = backend_by_hash.get(digest, [])
+        if hash_matches:
+            owners = {
+                json.dumps(item["owner"], sort_keys=True) for item in hash_matches
+            }
+            if len(owners) != 1:
+                raise NoticeError(
+                    f"{relative}: byte-identical frozen backend libraries have "
+                    "ambiguous owners"
+                )
+            natives.append(
+                {
+                    "path": relative,
+                    "sha256": digest,
+                    "owner": _appimage_copy_owner(hash_matches[0]["owner"]),
+                }
+            )
             continue
         record_relative = _appimage_backend_record_path(path, appimage)
         if record_relative is not None:
-            python_owner = _distribution_native_owner(
-                path,
-                record_relative,
-                by_basename,
-                source_hashes,
-                frozen_versions,
-            )
+            try:
+                python_owner = _distribution_native_owner(
+                    path,
+                    record_relative,
+                    by_basename,
+                    source_hashes,
+                    frozen_versions,
+                )
+            except NoticeError as exc:
+                raise NoticeError(f"{relative}: {exc}") from exc
             if python_owner is not None:
                 natives.append(
                     {
-                        "path": path.relative_to(appimage).as_posix(),
+                        "path": relative,
                         "sha256": digest,
                         "owner": python_owner,
                     }
                 )
                 continue
-        owner, copyright_text = _dpkg_owner(path)
+        try:
+            owner, copyright_text = _dpkg_owner(path)
+        except NoticeError as exc:
+            raise NoticeError(f"{relative}: {exc}") from exc
         natives.append(
             {
-                "path": path.relative_to(appimage).as_posix(),
+                "path": relative,
                 "sha256": digest,
                 "owner": owner,
             }
@@ -1090,23 +1322,33 @@ def inventory(
     for path in sorted(backend_dir.rglob("*")):
         if not path.is_file() or not _is_native(path):
             continue
-        owner = _owner_for_python_native(
-            path,
-            backend_dir,
-            by_basename,
-            source_hashes,
-            frozen_versions,
-            interpreter_candidates,
-        )
+        relative = path.relative_to(backend_dir).as_posix()
+        try:
+            owner = _owner_for_python_native(
+                path,
+                backend_dir,
+                by_basename,
+                source_hashes,
+                frozen_versions,
+                interpreter_candidates,
+            )
+        except NoticeError as exc:
+            raise NoticeError(f"{relative}: {exc}") from exc
         owners.append(owner)
         natives.append(
             {
-                "path": path.relative_to(backend_dir).as_posix(),
+                "path": relative,
                 "sha256": _sha256(path),
                 "owner": owner,
             }
         )
-    python_components = _python_components(backend_dir, owners, distributions, policy)
+    python_components, python_modules = _python_components(
+        backend_dir,
+        owners,
+        distributions,
+        policy,
+        frozen_versions,
+    )
     frontend_components = _frontend_components(policy)
     rust_components = _rust_components(shell_dir.resolve(), policy)
     system_components: list[dict[str, Any]] = []
@@ -1119,6 +1361,7 @@ def inventory(
             by_basename,
             source_hashes,
             frozen_versions,
+            natives,
         )
         natives.extend(appimage_natives)
     project = tomllib.loads(
@@ -1152,6 +1395,7 @@ def inventory(
         "python_version": platform.python_version(),
         "cpython_licence": cpython_licence.read_text(encoding="utf-8"),
         "cx_freeze_licence": cx_freeze_licences[0]["text"],
+        "python_modules": python_modules,
         "native_libraries": sorted(natives, key=lambda item: item["path"]),
         "components": sorted(
             python_components
