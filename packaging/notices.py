@@ -1194,6 +1194,30 @@ def _appimage_copy_owner(
     return inherited
 
 
+def _appimage_copy_of(
+    matches: list[dict[str, Any]], relative: str, copy_note: str
+) -> dict[str, Any]:
+    """Owner of an AppImage copy of a library the frozen backend ships.
+
+    numpy and scipy ship byte-identical GCC runtimes; the bundler copies one
+    of them, so identical originals may have several owners.
+    """
+    if len({item["sha256"] for item in matches}) != 1:
+        raise NoticeError(
+            f"{relative}: same-named frozen backend libraries differ, so the "
+            "copy's owner is ambiguous"
+        )
+    owners = sorted(
+        {json.dumps(item["owner"], sort_keys=True) for item in matches},
+        key=lambda value: json.loads(value)["name"],
+    )
+    owner = _appimage_copy_owner(json.loads(owners[0]), copy_note)
+    if len(owners) > 1:
+        others = ", ".join(json.loads(value)["name"] for value in owners[1:])
+        owner["notice"] = f"{owner['notice']}; identical copies also ship with {others}"
+    return owner
+
+
 def _system_natives(
     appimage: Path,
     backend_dir: Path,
@@ -1234,19 +1258,13 @@ def _system_natives(
             continue
         hash_matches = backend_by_hash.get(digest, [])
         if hash_matches:
-            owners = {
-                json.dumps(item["owner"], sort_keys=True) for item in hash_matches
-            }
-            if len(owners) != 1:
-                raise NoticeError(
-                    f"{relative}: byte-identical frozen backend libraries have "
-                    "ambiguous owners"
-                )
             natives.append(
                 {
                     "path": relative,
                     "sha256": digest,
-                    "owner": _appimage_copy_owner(hash_matches[0]["owner"]),
+                    "owner": _appimage_copy_of(
+                        hash_matches, relative, "copied by the AppImage bundler"
+                    ),
                 }
             )
             continue
@@ -1254,20 +1272,13 @@ def _system_natives(
         # of a wheel-vendored library no longer matches the backend's bytes.
         name_matches = backend_by_wheel_name.get(path.name, [])
         if name_matches:
-            owners = {
-                json.dumps(item["owner"], sort_keys=True) for item in name_matches
-            }
-            if len(owners) != 1:
-                raise NoticeError(
-                    f"{relative}: same-named frozen backend libraries have "
-                    "ambiguous owners"
-                )
             natives.append(
                 {
                     "path": relative,
                     "sha256": digest,
-                    "owner": _appimage_copy_owner(
-                        name_matches[0]["owner"],
+                    "owner": _appimage_copy_of(
+                        name_matches,
+                        relative,
                         "copied by the AppImage bundler, which rewrote its "
                         "library path",
                     ),

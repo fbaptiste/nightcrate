@@ -496,6 +496,67 @@ def test_appimage_library_without_wheel_tag_is_not_matched_by_name(
         _system_natives(appimage, backend, {}, {}, {}, backend_natives)
 
 
+def _shared_runtime_backend(
+    tmp_path: Path, scipy_bytes: bytes
+) -> tuple[Path, Path, list[dict[str, object]]]:
+    name = "libgfortran-040039e1-0352e75f.so.5.0.0"
+    backend = tmp_path / "backend"
+    natives: list[dict[str, object]] = []
+    for package, content in (("numpy", b"\x7fELF gfortran"), ("scipy", scipy_bytes)):
+        library = backend / "lib" / f"{package}.libs" / name
+        library.parent.mkdir(parents=True)
+        library.write_bytes(content)
+        natives.append(
+            {
+                "path": f"lib/{package}.libs/{name}",
+                "sha256": notices._sha256(library),
+                "owner": {"kind": "python", "name": package, "version": "2.0"},
+            }
+        )
+    appimage = tmp_path / "appimage"
+    copied = appimage / "usr" / "lib" / name
+    copied.parent.mkdir(parents=True)
+    copied.write_bytes(b"\x7fELF gfortran, RPATH rewritten")
+    return appimage, backend, natives
+
+
+def test_appimage_copy_of_runtime_shipped_identically_by_two_wheels(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    appimage, backend, backend_natives = _shared_runtime_backend(
+        tmp_path, b"\x7fELF gfortran"
+    )
+    monkeypatch.setattr(
+        notices,
+        "_dpkg_owner",
+        lambda _path: pytest.fail("wheel library copy reached dpkg"),
+    )
+
+    natives, _ = _system_natives(appimage, backend, {}, {}, {}, backend_natives)
+
+    assert natives[0]["owner"] == {
+        "kind": "python",
+        "name": "numpy",
+        "version": "2.0",
+        "notice": (
+            "copied by the AppImage bundler, which rewrote its library path; "
+            "identical copies also ship with scipy"
+        ),
+    }
+
+
+def test_appimage_copy_of_differing_same_named_libraries_fails(
+    tmp_path: Path,
+) -> None:
+    appimage, backend, backend_natives = _shared_runtime_backend(
+        tmp_path, b"\x7fELF a different gfortran build"
+    )
+
+    with pytest.raises(NoticeError, match="libgfortran-040039e1.*differ"):
+        _system_natives(appimage, backend, {}, {}, {}, backend_natives)
+
+
 def test_linux_freeze_core_relocation_is_attributed_by_basename(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
