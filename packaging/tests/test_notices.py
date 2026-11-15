@@ -557,6 +557,42 @@ def test_appimage_copy_of_differing_same_named_libraries_fails(
         _system_natives(appimage, backend, {}, {}, {}, backend_natives)
 
 
+def test_source_archive_fetches_a_shared_ubuntu_source_once(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[str] = []
+
+    def fake_apt_source(component: dict[str, object], directory: Path) -> list[Path]:
+        calls.append(str(component["name"]))
+        path = directory / "avahi_0.8.orig.tar.gz"
+        path.write_bytes(b"source")
+        return [path]
+
+    monkeypatch.setattr(notices, "_download_apt_source", fake_apt_source)
+    system = {
+        "kind": "system",
+        "source_required": True,
+        "source_package": "avahi",
+        "source_version": "0.8-5ubuntu5.5",
+    }
+    inventory_data = {
+        "project": {"version": "0.54.0"},
+        "platform": "linux",
+        "components": [
+            {**system, "name": "libavahi-client3", "version": "0.8-5ubuntu5.5"},
+            {**system, "name": "libavahi-common3", "version": "0.8-5ubuntu5.5"},
+        ],
+        "native_libraries": [],
+    }
+
+    archive = notices._source_archive(inventory_data, tmp_path)
+
+    assert calls == ["libavahi-client3"]
+    with notices.tarfile.open(archive) as tar:
+        assert tar.getnames() == ["ubuntu/avahi-0.8-5ubuntu5.5/avahi_0.8.orig.tar.gz"]
+
+
 def test_linux_freeze_core_relocation_is_attributed_by_basename(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

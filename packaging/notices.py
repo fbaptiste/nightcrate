@@ -1548,6 +1548,10 @@ def _source_archive(inventory_data: dict[str, Any], out: Path) -> Path:
                     / "ubuntu"
                     / (f"{component['source_package']}-{component['source_version']}")
                 )
+                # Several binary packages (libavahi-client3, libavahi-common3)
+                # come from one source package; fetch it once.
+                if directory.exists():
+                    continue
                 directory.mkdir(parents=True)
                 for path in _download_apt_source(component, directory):
                     members.append((path, f"ubuntu/{directory.name}/{path.name}"))

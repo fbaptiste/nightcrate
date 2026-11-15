@@ -15,7 +15,10 @@ use tauri::ipc::CapabilityBuilder;
 use tauri::ipc::RuntimeCapability;
 use tauri::menu::{MenuBuilder, SubmenuBuilder};
 use tauri::webview::PageLoadEvent;
-use tauri::{AppHandle, Manager, RunEvent, WebviewUrl, WebviewWindowBuilder, WindowEvent};
+use tauri::{
+    AppHandle, LogicalSize, Manager, RunEvent, WebviewUrl, WebviewWindowBuilder, WindowEvent,
+};
+use tauri_plugin_window_state::{StateFlags, WindowExt};
 
 struct BackendSlot(Mutex<Option<Arc<Backend>>>);
 
@@ -140,30 +143,64 @@ fn loading_failure(app: &AppHandle, failure: &StartFailure) {
     }
 }
 
-fn create_main(app: &AppHandle, port: u16, selftest: bool) -> Result<(), String> {
-    app.add_capability(main_capability(port, selftest))
-        .map_err(|error| error.to_string())?;
-    let suffix = if cfg!(nightcrate_test_auto_install) {
+const MAIN_SIZE: (f64, f64) = (1400.0, 900.0);
+const MAIN_MIN_SIZE: (f64, f64) = (1024.0, 700.0);
+
+/// Whether a remembered window size (in logical pixels) is usable.
+fn remembered_size_usable(width: f64, height: f64) -> bool {
+    width >= MAIN_MIN_SIZE.0 && height >= MAIN_MIN_SIZE.1
+}
+
+/// Restore the main window's remembered size and place, but never a size below
+/// the minimum: the plugin restores whatever was saved, and a 1400 x 100
+/// window once came back from a test run (Fred, 2026-11-15).
+fn restore_main_size(window: &tauri::WebviewWindow) {
+    let _ = window.restore_state(StateFlags::all());
+    let usable = window
+        .inner_size()
+        .and_then(|size| Ok(size.to_logical::<f64>(window.scale_factor()?)))
+        .map(|size| remembered_size_usable(size.width, size.height))
+        .unwrap_or(true);
+    if !usable {
+        let _ = window.set_size(LogicalSize::new(MAIN_SIZE.0, MAIN_SIZE.1));
+        let _ = window.center();
+    }
+}
+
+/// The main window's page: the backend's root, plus the flag that lets the
+/// frontend start the rehearsal's install in auto-install test builds.
+fn main_page_url(origin: &str, test_auto_install: bool) -> String {
+    let suffix = if test_auto_install {
         "?nc-test-autoinstall=1"
     } else {
         ""
     };
-    let url = format!("http://127.0.0.1:{port}/{suffix}")
-        .parse()
+    format!("{origin}/{suffix}")
+}
+
+fn create_main(app: &AppHandle, port: u16, selftest: bool) -> Result<(), String> {
+    app.add_capability(main_capability(port, selftest))
+        .map_err(|error| error.to_string())?;
+    let url = main_page_url(
+        &format!("http://127.0.0.1:{port}"),
+        cfg!(nightcrate_test_auto_install),
+    )
+    .parse()
         .map_err(|error| format!("invalid backend URL: {error}"))?;
     let builder = WebviewWindowBuilder::new(app, "main", WebviewUrl::External(url))
         .title("NightCrate")
-        .inner_size(1400.0, 900.0)
-        .min_inner_size(1024.0, 700.0)
+        .inner_size(MAIN_SIZE.0, MAIN_SIZE.1)
+        .min_inner_size(MAIN_MIN_SIZE.0, MAIN_MIN_SIZE.1)
         .disable_drag_drop_handler()
         .zoom_hotkeys_enabled(true);
-    let _window =
+    let window =
         links::configure_main(builder, app, port, option_env!("NIGHTCRATE_TEST_PROBE_URL"))
             .build()
             .map_err(|error| error.to_string())?;
+    restore_main_size(&window);
     #[cfg(feature = "test-devtools")]
     {
-        _window.open_devtools();
+        window.open_devtools();
     }
     if let Some(loading) = app.get_webview_window("loading") {
         let _ = loading.hide();
@@ -287,6 +324,15 @@ fn main() {
         .plugin(
             tauri_plugin_window_state::Builder::default()
                 .with_denylist(&["loading"])
+                // Restored by `restore_main_size`, which refuses a too-small size.
+                .skip_initial_state("main")
+                // Test builds keep their own file, so they can't change the size
+                // a real install restores.
+                .with_filename(if option_env!("NIGHTCRATE_TEST_APP_DIR").is_some() {
+                    ".window-state-test.json"
+                } else {
+                    tauri_plugin_window_state::DEFAULT_FILENAME
+                })
                 .build(),
         )
         .plugin(tauri_plugin_single_instance::init(|app, _, _| {
@@ -338,7 +384,13 @@ fn main() {
                     }
                 } else if option_env!("NIGHTCRATE_TEST_PROBE_URL") == Some(loaded) {
                     if let Some(origin) = backend_origin {
-                        let target = serde_json::to_string(&format!("{origin}/")).unwrap();
+                        // Back to the same page the window started on, test flag
+                        // included, or the frontend never starts the test install.
+                        let target = serde_json::to_string(&main_page_url(
+                            &origin,
+                            cfg!(nightcrate_test_auto_install),
+                        ))
+                        .unwrap();
                         let _ = webview.eval(format!(
                             "window.__nightcrateProbeReturn=setInterval(()=>{{if(window.__nightcrateProbeReported){{clearInterval(window.__nightcrateProbeReturn);window.location.replace({target});}}}},50)"
                         ));
@@ -380,6 +432,26 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn remembered_size_below_the_minimum_is_not_usable() {
+        assert!(remembered_size_usable(1400.0, 900.0));
+        assert!(remembered_size_usable(1024.0, 700.0));
+        assert!(!remembered_size_usable(1400.0, 100.0));
+        assert!(!remembered_size_usable(800.0, 900.0));
+    }
+
+    #[test]
+    fn main_page_url_keeps_the_test_install_flag() {
+        assert_eq!(
+            main_page_url("http://127.0.0.1:48125", true),
+            "http://127.0.0.1:48125/?nc-test-autoinstall=1"
+        );
+        assert_eq!(
+            main_page_url("http://127.0.0.1:8765", false),
+            "http://127.0.0.1:8765/"
+        );
+    }
 
     #[test]
     fn main_capability_has_exact_origin_and_permissions() {
