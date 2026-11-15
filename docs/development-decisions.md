@@ -1889,6 +1889,18 @@ archived in [imaging-quality-model.md](archive/imaging-quality-model.md).
   row for each of ECMWF, GFS and ICON, unticked ones marked "Not used for the
   cloud decision"; with one ticked, only that row, plus a "Show each model's
   cloud" toggle.
+- **Night-detail hour cells.** A cell fits three characters ("-74", "8.3")
+  at 12 px: hour columns are at least 26 px, the hours track grows with the
+  number of columns (so the darkness band, which spans the track, stays
+  aligned), and a narrower window scrolls the panel sideways. Decimal values
+  keep one decimal only while they fit in three characters ("4.5", but "16"
+  for 16.1); the night summary and checklist keep the exact figure. Longer
+  text ("fair", inches like "1.25") uses 10 px; inches drop the leading zero
+  (".02"). Transparency's "no aerosol data" note is in the cell's tooltip.
+  On a daylight-saving fall-back night one clock column holds two hours, so
+  every column widens to fit two cells. Wind and gusts have a row each even
+  when the wind rule is off ("12/34" in one cell couldn't fit). At 28 px
+  columns, "16.1" ran into the next hour (Fred, 2026-11-15).
 - **Darkness band.** The Tonight card and the night-detail grid draw darkness
   from each night's `darkness_intervals` (exact −6°/−12°/−18° crossings), not
   from the per-hour `darkness_category`: one label per hour hides the half-hour
@@ -2192,7 +2204,21 @@ these are the constraints and traps found while building it.
     `lib/dragClickGuard.ts` cancels it (the sidebar is the only sortable
     list with links);
   - `<main>` is `position: relative`, or an absolutely positioned hidden
-    element escapes it and the whole window scrolls.
+    element escapes it and the whole window scrolls;
+  - "Use My Location": WebKit asks the app through
+    `_webView:requestGeolocationPermissionForOrigin:initiatedByFrame:decisionHandler:`
+    (WebKit's private UI-delegate interface), which wry 0.57 doesn't
+    implement, so every request was refused without a prompt.
+    `shell/src-tauri/src/location.rs` adds that method to wry's delegate
+    class (`class_addMethod` adds nothing if a later wry has its own) and
+    grants only `http://127.0.0.1:{port}`; macOS then asks the user. WebKit
+    records the delegate's methods when the delegate is set, so the shell
+    sets the same delegate again afterwards. The bundle needs the
+    `NSLocation…UsageDescription` strings (`Info.plist`) and, under the
+    hardened runtime, the location entitlement (`Entitlements.plist`).
+    Windows and Linux grant the same origin through `on_permission_request`
+    (WebKitGTK refuses by default). The page's timeout is 30 s because it
+    includes the first macOS prompt (Fred, 2026-11-15).
 - **Test hooks**, read only when set: `NIGHTCRATE_TEST_STARTUP_DELAY`,
   `NIGHTCRATE_TEST_BUSY_POOL` and `NIGHTCRATE_TEST_BASE_PORT` (backend);
   the `NIGHTCRATE_TEST_*` compile-time options (shell), which

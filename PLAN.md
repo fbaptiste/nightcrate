@@ -91,7 +91,17 @@ after v0.53.0 merged.
   CI build 18 ran the candidate tree: installers and the update rehearsal pass
   on all three systems. An independent Codex re-check of the last fixes found
   nothing.
-- [ ] Fred's acceptance test.
+- [ ] Fred's acceptance test (with the installed app from build 18, from
+  2026-11-15). Fixed from it so far:
+  - "Use My Location" was refused in the app window without a prompt
+    (WebKit on macOS, WebKitGTK on Linux); the shell now lets the
+    backend's page ask, and macOS asks the user (Fred chose making it
+    work, 2026-11-15);
+  - the night-detail grid's numbers ran together at the default window
+    width; cells now fit their text at every width;
+  - the GitHub Actions used are now their Node 24 releases (GitHub's Node 20
+    deprecation warnings), and the rehearsal's Windows minisign comes from
+    its signed release, as on Linux, after Chocolatey's feed failed.
 
 ### Packaging test results (Claude, 2026-11-14)
 
