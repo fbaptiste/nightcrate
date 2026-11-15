@@ -89,6 +89,30 @@ def test_forecast_location_ranking_rules_and_caps():
     assert rank_forecast_locations([], {}) == []
 
 
+def test_spare_forecast_rows_go_to_other_locations_by_name():
+    """A location no active project uses still gets a spare row (Fred, 2026-11-14)."""
+    locations = [
+        (1, "Backyard", True),
+        (2, "Remote site", False),
+        (3, "Beta", False),
+        (4, "alpha", False),
+        (5, "Used", False),
+    ]
+    ranked = rank_forecast_locations(locations, {5: 2})
+    assert [item.location_id for item in ranked] == [1, 5, 4, 3]
+    assert [item.note for item in ranked] == ["default", "used", None, None]
+    assert [item.active_projects for item in ranked] == [0, 2, 0, 0]
+
+    default_and_unused = rank_forecast_locations(locations[:2], {1: 3})
+    assert [(item.name, item.note) for item in default_and_unused] == [
+        ("Backyard", "default"),
+        ("Remote site", None),
+    ]
+
+    no_default = rank_forecast_locations([(1, "Zed", False), (2, "Alpha", False)], {1: 2})
+    assert [(item.name, item.note) for item in no_default] == [("Zed", "used"), ("Alpha", None)]
+
+
 def test_stage_and_panel_ranking():
     assert stage_of("active", 0) == "not_started"
     assert stage_of("active", 0.1 / 60) == "capturing"

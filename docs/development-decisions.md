@@ -175,6 +175,24 @@ Shared architecture, checks, and privacy rules live in [CLAUDE.md](../CLAUDE.md)
   browser's clock, before local noon counting the night that began
   yesterday. Rows match cells by ISO date, so a location in another time
   zone, or a missing night, leaves an empty cell instead of shifting the row.
+- **The darkness line** (Fred, 2026-11-14) spans each night's own deepest
+  darkness, astronomical, else nautical, else civil
+  (`NightSummary.deepest_darkness_reached`), from start to end. It is not a
+  fixed clock, so line lengths don't compare between cells; the figures do.
+  - `NightSummary.moon_runs` splits that darkness where the Moon crosses
+    −0.833°, interpolated between 5-minute samples (weather algorithms
+    §2.7). It matches the rise/set search to within seconds and is cached
+    with the summary, so the fortnight never computes it twice.
+  - `NightSummary.moonless_dark_hours` is the Moon-down total of the same
+    runs, so the figure, the line and Tonight at a Glance agree. (A separate
+    5-minute sampler showed 5.8 h beside a 5.9 h line.) The Moon is up only
+    strictly above the horizon.
+  - The midnight tick is the first display-local midnight after darkness
+    begins. The night's date belongs to the site's time zone, so a location
+    shown in another zone can start its darkness a day earlier there.
+- **Forecast rows** (at most four): the default, then the locations active
+  projects use, then the rest by name (Fred, 2026-11-14). Without the last
+  step, a location no project used never appeared, even with rows to spare.
 - **Freshness:** each row carries `evaluated_at` and `stale_since`, the
   oldest fetch time among the sources the forecast marks stale. The grid
   says when it was updated, offers Refresh, and marks a stale row.

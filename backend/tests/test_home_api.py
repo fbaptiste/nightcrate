@@ -321,5 +321,17 @@ async def test_home_rig_location_ordering_retirement_and_caps(client: AsyncClien
     assert body["locations"][0]["location_id"] == location_ids[0]
     assert body["locations"][0]["minutes"] == 160
     assert all(item["location_id"] != retired_location for item in body["locations"])
-    assert len(body["forecast_locations"]) == 2
-    assert body["forecast_locations"][0]["note"] == "default"
+    # The default, the location an active project uses, then spare rows by name.
+    assert [item["location_id"] for item in body["forecast_locations"]] == [
+        location_ids[0],
+        location_ids[1],
+        location_ids[2],
+        location_ids[3],
+    ]
+    assert [item["note"] for item in body["forecast_locations"]] == [
+        "default",
+        "used",
+        None,
+        None,
+    ]
+    assert all(item["location_id"] != retired_location for item in body["forecast_locations"])

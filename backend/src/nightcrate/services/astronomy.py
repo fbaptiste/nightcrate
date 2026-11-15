@@ -79,6 +79,8 @@ class NightSummary:
     moon: MoonInfo
     deepest_darkness_reached: str  # "astro" | "nautical" | "civil" | "none"
     no_imaging_window: bool  # True when no supported darkness threshold is reached
+    # The deepest darkness split where the Moon rises or sets: (start, end, up), UTC.
+    moon_runs: tuple[tuple[datetime, datetime, bool], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -468,25 +470,6 @@ def _moon_rise_set(
     return rise_str, set_str, rise_dt, set_dt
 
 
-def _compute_moonless_dark_hours(
-    dark_start: datetime,
-    dark_end: datetime,
-    location: EarthLocation,
-) -> float:
-    """Count hours of darkness with moon below horizon.
-
-    Samples moon altitude every _MOONLESS_INTERVAL_MIN minutes.
-    """
-    total_minutes = (dark_end - dark_start).total_seconds() / 60.0
-    n_samples = max(1, int(total_minutes / _MOONLESS_INTERVAL_MIN) + 1)
-
-    sample_times = _make_time_grid(dark_start, dark_end, n_samples)
-    moon_alts = _moon_altitudes(sample_times, location)
-    below_horizon = np.sum(moon_alts < _HORIZON)
-
-    return float(below_horizon / n_samples * total_minutes / 60.0)
-
-
 def _classify_darkness(sun_alt: float) -> str:
     """Classify the darkness category from sun altitude."""
     if sun_alt > _HORIZON:
@@ -532,6 +515,60 @@ def dark_intervals_for(
 ) -> list[tuple[datetime, datetime]]:
     """Return the darkness intervals selected by an imaging rule."""
     return summary.dark_intervals[threshold]
+
+
+def moon_down_hours(runs: Sequence[tuple[datetime, datetime, bool]]) -> float:
+    """Hours of the runs with the Moon down."""
+    return sum((end - start).total_seconds() for start, end, up in runs if not up) / 3600.0
+
+
+def _moon_runs(
+    intervals: Sequence[tuple[datetime, datetime]],
+    location: EarthLocation,
+) -> list[tuple[datetime, datetime, bool]]:
+    """The one definition of Moon up and down within darkness.
+
+    Samples the Moon's altitude every ``_MOONLESS_INTERVAL_MIN`` minutes and at
+    each interval's end, in one vectorised call, and places each rise or set at
+    the linearly interpolated crossing of ``_HORIZON``. The Moon is up only
+    strictly above ``_HORIZON``. Runs cover each interval exactly; zero-length
+    runs are dropped. ``NightSummary.moonless_dark_hours`` is derived from these
+    runs, so the figure and the Home page's line always agree.
+    """
+    step = timedelta(minutes=_MOONLESS_INTERVAL_MIN)
+    grids: list[list[datetime]] = []
+    for start, end in intervals:
+        times: list[datetime] = []
+        cursor = start
+        while cursor < end:
+            times.append(cursor)
+            cursor += step
+        times.append(end)
+        grids.append(times)
+    if not grids:
+        return []
+
+    altitudes = _moon_altitudes(Time([t for grid in grids for t in grid]), location)
+    runs: list[tuple[datetime, datetime, bool]] = []
+    offset = 0
+    for times in grids:
+        alts = altitudes[offset : offset + len(times)]
+        offset += len(times)
+        run_start = times[0]
+        up = bool(alts[0] > _HORIZON)
+        for index in range(1, len(times)):
+            now_up = bool(alts[index] > _HORIZON)
+            if now_up == up:
+                continue
+            before, after = float(alts[index - 1]), float(alts[index])
+            fraction = (before - _HORIZON) / (before - after)
+            crossing = times[index - 1] + (times[index] - times[index - 1]) * fraction
+            if crossing > run_start:
+                runs.append((run_start, crossing, up))
+            run_start, up = crossing, now_up
+        if times[-1] > run_start:
+            runs.append((run_start, times[-1], up))
+    return runs
 
 
 # ── Public API ───────────────────────────────────────────────────────────────
@@ -663,10 +700,9 @@ def compute_night_summary(
         moonset_utc=moonset_utc,
     )
 
-    # Moonless dark hours
-    moonless_dark_hours = sum(
-        _compute_moonless_dark_hours(start, end, location) for start, end in deepest_intervals
-    )
+    # Moonless dark hours, from the same runs the Home page draws
+    moon_runs = tuple(_moon_runs(deepest_intervals, location))
+    moonless_dark_hours = moon_down_hours(moon_runs)
 
     return NightSummary(
         sunset=sunset,
@@ -678,6 +714,7 @@ def compute_night_summary(
         moon=moon_info,
         deepest_darkness_reached=deepest,
         no_imaging_window=no_imaging_window,
+        moon_runs=moon_runs,
     )
 
 

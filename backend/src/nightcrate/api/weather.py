@@ -8,7 +8,7 @@ import threading
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from functools import lru_cache
-from typing import Any
+from typing import Any, Literal
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, HTTPException
@@ -23,6 +23,7 @@ from nightcrate.api.weather_models import (
     ForecastResponse,
     FortnightNight,
     FortnightResponse,
+    FortnightRun,
     HourResponse,
     IntervalResponse,
     MethodologyResponse,
@@ -1410,25 +1411,85 @@ def _run_build(
         return _build_forecast(inputs, request, now)
 
 
+_DARKNESS_NAMES: dict[str, Literal["astronomical", "nautical", "civil", "none"]] = {
+    "astro": "astronomical",
+    "nautical": "nautical",
+    "civil": "civil",
+    "none": "none",
+}
+
+
+def _display_midnight(
+    night_date: date,
+    runs: tuple[tuple[datetime, datetime, bool], ...],
+    display_timezone: ZoneInfo,
+) -> datetime:
+    """The first display-local midnight after darkness begins.
+
+    The night's date belongs to the site's time zone; a location displayed in
+    another zone can see its darkness start a day earlier or later there.
+    """
+    if runs:
+        start = runs[0][0].astimezone(display_timezone)
+        day = start.date() + timedelta(days=1)
+    else:
+        day = night_date + timedelta(days=1)
+    return datetime.combine(day, datetime.min.time(), tzinfo=display_timezone)
+
+
+def _fortnight_night(loc: dict, night: NightResponse) -> FortnightNight:
+    night_date = date.fromisoformat(night.date)
+    display_timezone = ZoneInfo(loc["timezone"])
+    summary = _night_summary_cached(
+        loc["latitude"],
+        loc["longitude"],
+        loc.get("elevation_m"),
+        night_date,
+        loc.get("geo_timezone") or loc["timezone"],
+    )
+    midnight = _display_midnight(night_date, summary.moon_runs, display_timezone)
+    return FortnightNight(
+        date=night.date,
+        verdict=night.verdict,
+        darkness=_DARKNESS_NAMES[summary.deepest_darkness_reached],
+        dark_hours=summary.darkness_hours,
+        moonless_dark_hours=night.moonless_dark_hours,
+        midnight_utc=midnight.astimezone(UTC),
+        runs=[
+            FortnightRun(
+                start=_fmt_time(start, display_timezone) or "",
+                end=_fmt_time(end, display_timezone) or "",
+                start_utc=start,
+                end_utc=end,
+                moon_up=moon_up,
+            )
+            for start, end, moon_up in summary.moon_runs
+        ],
+    )
+
+
+def _run_fortnight(
+    inputs: ForecastInputs,
+    request: ForecastRequest,
+    now: datetime,
+) -> FortnightResponse:
+    """CPU phase of the fortnight: the forecast plus each night's Moon runs."""
+    with _BUILD_LOCK:
+        response = _build_forecast(inputs, request, now)
+        return FortnightResponse(
+            location_id=request.location_id,
+            evaluated_at=response.evaluated_at,
+            stale_since=_stale_since(inputs, response),
+            nights=[_fortnight_night(inputs.loc, night) for night in response.nights],
+        )
+
+
 @router.get("/fortnight", response_model=FortnightResponse)
 async def fortnight(location_id: int) -> FortnightResponse:
     request = ForecastRequest(location_id=location_id)
     try:
         inputs = await _forecast_inputs(request)
-        response = await asyncio.to_thread(_run_build, inputs, request, _now())
-        return FortnightResponse(
-            location_id=location_id,
-            evaluated_at=response.evaluated_at,
-            stale_since=_stale_since(inputs, response),
-            nights=[
-                FortnightNight(
-                    date=night.date,
-                    verdict=night.verdict,
-                    moonless_dark_hours=night.moonless_dark_hours,
-                )
-                for night in response.nights
-            ],
-        )
+        return await asyncio.to_thread(_run_fortnight, inputs, request, _now())
     except HTTPException:
         raise
     except Exception as exc:

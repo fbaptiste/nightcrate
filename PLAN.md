@@ -58,6 +58,19 @@ doing this in the next version"). Started on 2026-11-14 from `main` at
 - [x] Rendered checks on desktop, docs, and the candidate (2026-11-14).
 - [x] Fred's acceptance test, including Claude's calls listed in the spec
   (accepted 2026-11-14).
+- [x] After acceptance, Fred asked for the forecast grid's darkness line
+  (one line per night, Moon up and down), a legend fix, and spare forecast
+  rows for locations no project uses. Committed
+  separately after his review; the `v0.53.0` tag stays on the first
+  release commit.
+  - Moon-down hours now come from the same interpolated Moon runs
+    everywhere (Tonight at a Glance included), after Codex's review.
+  - Verified (Claude, 2026-11-14): full backend suite 4,185 passed,
+    4 skipped, 0 failed; ruff, format and bandit (0 findings) clean;
+    build, `check:home`, `check:sky` and ESLint pass; two fresh Codex
+    reviews, no blocker or major finding, every minor fixed; rendered
+    checks in both themes, with stubbed nautical, civil and no-darkness
+    nights.
 
 ### Candidate verification (Claude, 2026-11-14)
 

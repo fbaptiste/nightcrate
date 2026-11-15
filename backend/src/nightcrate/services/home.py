@@ -136,16 +136,17 @@ def rank_forecast_locations(
     locations: list[tuple[int, str, bool]],
     active_counts: dict[int, int],
 ) -> list[ForecastLocation]:
-    defaults = [row for row in locations if row[2]]
+    """The default, then locations active projects use, then the rest by name; at most 4."""
+
+    def by_name(row: tuple[int, str, bool]) -> tuple[str, int]:
+        return (row[1].casefold(), row[0])
+
+    defaults = sorted((row for row in locations if row[2]), key=by_name)
     used = [row for row in locations if active_counts.get(row[0], 0) > 0 and not row[2]]
-    used.sort(key=lambda row: (-active_counts[row[0]], row[1].casefold(), row[0]))
-    if defaults:
-        defaults.sort(key=lambda row: (row[1].casefold(), row[0]))
-        selected = [defaults[0], *used]
-    elif used:
-        selected = used
-    else:
-        selected = sorted(locations, key=lambda row: (row[1].casefold(), row[0]))
+    used.sort(key=lambda row: (-active_counts[row[0]], *by_name(row)))
+    selected = [*defaults[:1], *used]
+    chosen = {row[0] for row in selected}
+    selected += sorted((row for row in locations if row[0] not in chosen), key=by_name)
 
     result = []
     for location_id, name, is_default in selected[:4]:

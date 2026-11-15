@@ -4,6 +4,7 @@ import sys
 from datetime import UTC, date, datetime, timedelta
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+import numpy as np
 import pytest
 
 from nightcrate.services import astronomy
@@ -437,3 +438,79 @@ class TestBundledTimezoneData:
         monkeypatch.setitem(sys.modules, "tzdata", None)
         with pytest.raises(ZoneInfoNotFoundError):
             ZoneInfo.no_cache("Europe/Rome")
+
+
+# ── Moon runs within the night's darkness ───────────────────────────────────
+
+_PHOENIX = (33.4484, -112.0740, None)
+
+
+def _phoenix_runs(night_date: date):
+    summary = astronomy.compute_night_summary(*_PHOENIX, night_date, "America/Phoenix")
+    return summary, summary.dark_intervals["astronomical"], summary.moon_runs
+
+
+def _runs(intervals):
+    return astronomy._moon_runs(intervals, astronomy._make_location(*_PHOENIX))
+
+
+def test_moon_runs_place_the_moonset_where_the_rise_set_search_finds_it():
+    """Phoenix, 14 November 2026: a waxing Moon sets at 21:47 MST, inside darkness."""
+    summary, intervals, runs = _phoenix_runs(date(2026, 11, 14))
+    assert [up for _, _, up in runs] == [True, False]
+    assert runs[0][0] == intervals[0][0]
+    assert runs[-1][1] == intervals[-1][1]
+    assert runs[0][1] == runs[1][0]
+    assert abs((runs[0][1] - summary.moon.moonset_utc).total_seconds()) < 5
+    assert runs[0][1].astimezone(ZoneInfo("America/Phoenix")).strftime("%H:%M") == "21:47"
+    assert astronomy.moon_down_hours(runs) == pytest.approx(summary.moonless_dark_hours, abs=0.006)
+
+
+def test_moonless_hours_and_the_line_round_alike():
+    """Phoenix, 16 November 2026: 5.86 h. A separate 5-minute sampler gave
+    5.83 h, so the figure read 5.8 h beside a 5.9 h line."""
+    summary, _, runs = _phoenix_runs(date(2026, 11, 16))
+    assert summary.moonless_dark_hours == pytest.approx(5.86, abs=0.005)
+    assert f"{astronomy.moon_down_hours(runs):.1f}" == f"{summary.moonless_dark_hours:.1f}"
+
+
+def test_a_moon_exactly_on_the_horizon_counts_as_down(monkeypatch):
+    start = datetime(2026, 11, 15, 6, tzinfo=UTC)
+    altitudes = np.array([1.0, -0.833, -2.0, -3.0])
+    monkeypatch.setattr(astronomy, "_moon_altitudes", lambda _times, _location: altitudes)
+    runs = _runs([(start, start + timedelta(minutes=15))])
+    assert runs == [
+        (start, start + timedelta(minutes=5), True),
+        (start + timedelta(minutes=5), start + timedelta(minutes=15), False),
+    ]
+    assert astronomy.moon_down_hours(runs) == pytest.approx(10 / 60)
+
+
+def test_moon_runs_place_the_moonrise_for_a_waning_moon():
+    """Phoenix, 26 November 2026: the Moon rises at 19:31 MST, after dark."""
+    summary, _, runs = _phoenix_runs(date(2026, 11, 26))
+    assert [up for _, _, up in runs] == [False, True]
+    assert abs((runs[1][0] - summary.moon.moonrise_utc).total_seconds()) < 5
+
+
+def test_moon_runs_without_darkness_are_empty():
+    assert _runs([]) == []
+    instant = datetime(2026, 11, 15, 6, tzinfo=UTC)
+    assert _runs([(instant, instant)]) == []
+
+
+def test_moon_runs_follow_the_deepest_darkness_reached():
+    """78° S in late October: no darkness; 65° S: nautical only."""
+    none = astronomy.compute_night_summary(
+        -78.0, 166.7, None, date(2026, 10, 25), "Antarctica/McMurdo"
+    )
+    assert none.deepest_darkness_reached == "none"
+    assert none.moon_runs == ()
+    assert none.moonless_dark_hours == 0.0
+    nautical = astronomy.compute_night_summary(
+        -65.0, -64.0, None, date(2026, 10, 17), "America/Argentina/Ushuaia"
+    )
+    assert nautical.deepest_darkness_reached == "nautical"
+    intervals = nautical.dark_intervals["nautical"]
+    assert nautical.moon_runs[0][0] == intervals[0][0]
+    assert nautical.moon_runs[-1][1] == intervals[-1][1]

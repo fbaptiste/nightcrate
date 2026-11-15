@@ -1,4 +1,4 @@
-import type { MonthSummary, StageCounts, YearSummary } from "@/api/home";
+import type { FortnightNight, MonthSummary, StageCounts, YearSummary } from "@/api/home";
 import type { Stage } from "@/api/projects";
 import type { Verdict } from "@/api/weather";
 import { PROJECT_STATUS_DISPLAY } from "@/lib/projectStatus";
@@ -109,18 +109,73 @@ export function formatDate(value: string, options?: Intl.DateTimeFormatOptions):
   }).format(localDate(value));
 }
 
-export function forecastCellLabel(
-  name: string,
-  date: string,
-  verdict: Verdict,
-  hours: number,
-): string {
-  const night = formatDate(date, {
+const SHALLOW_NOTE = {
+  nautical: "the Sun never gets 18° below the horizon",
+  civil: "the Sun never gets 12° below the horizon",
+} as const;
+
+/** The figure under a night's line: "of 10.7", or "of 4.2 naut." for shallower darkness. */
+export function darknessFigure(night: Pick<FortnightNight, "darkness" | "dark_hours">): string {
+  const hours = night.dark_hours.toFixed(1);
+  if (night.darkness === "nautical") return `of ${hours} naut.`;
+  if (night.darkness === "civil") return `of ${hours} civil`;
+  return `of ${hours}`;
+}
+
+export function forecastCellLabel(name: string, night: FortnightNight): string {
+  const day = formatDate(night.date, {
     weekday: "long",
     day: "numeric",
     month: "long",
   });
-  return `${name}, ${night}: ${VERDICT_LABELS[verdict]}; ${hours.toFixed(1)} h of dark sky with the Moon down`;
+  const lead = `${name}, ${day}: ${VERDICT_LABELS[night.verdict]}`;
+  if (night.darkness === "none" || night.runs.length === 0) {
+    return `${lead}; no darkness: the Sun stays within 6° of the horizon`;
+  }
+  // Runs are contiguous within a darkness interval; a gap means the Sun came back up.
+  const spans: { start: string; end: string }[] = [];
+  night.runs.forEach((run, index) => {
+    const previous = night.runs[index - 1];
+    if (previous && previous.end_utc === run.start_utc) {
+      spans[spans.length - 1].end = run.end;
+    } else {
+      spans.push({ start: run.start, end: run.end });
+    }
+  });
+  const range = spans.map((span) => `${span.start}–${span.end}`).join(" and ");
+  const note = night.darkness === "astronomical" ? "" : ` (${SHALLOW_NOTE[night.darkness]})`;
+  const moon =
+    night.runs
+      .filter((run) => run.moon_up)
+      .map((run) => `Moon up ${run.start}–${run.end}`)
+      .join("; ") || "Moon down throughout";
+  return `${lead}; ${night.dark_hours.toFixed(1)} h of ${night.darkness} darkness, ${range}${note}; ${moon}; ${night.moonless_dark_hours.toFixed(1)} h with the Moon down`;
+}
+
+export interface DarknessLine {
+  /** Percent of the line from its start, for each run. */
+  segments: { left: number; width: number; moonUp: boolean }[];
+  /** Percent of the line at local midnight; null when midnight falls outside it. */
+  midnight: number | null;
+}
+
+/** Positions along one night's line, which runs from the start to the end of its darkness. */
+export function darknessLine(night: Pick<FortnightNight, "runs" | "midnight_utc">): DarknessLine | null {
+  if (night.runs.length === 0) return null;
+  const start = Date.parse(night.runs[0].start_utc);
+  const end = Date.parse(night.runs[night.runs.length - 1].end_utc);
+  const span = end - start;
+  if (!(span > 0)) return null;
+  const percent = (value: number) => ((value - start) / span) * 100;
+  const midnight = Date.parse(night.midnight_utc);
+  return {
+    segments: night.runs.map((run) => ({
+      left: percent(Date.parse(run.start_utc)),
+      width: percent(Date.parse(run.end_utc)) - percent(Date.parse(run.start_utc)),
+      moonUp: run.moon_up,
+    })),
+    midnight: midnight > start && midnight < end ? percent(midnight) : null,
+  };
 }
 
 function isoLocal(date: Date): string {

@@ -5,10 +5,13 @@ import Button from "@mui/material/Button";
 import Skeleton from "@mui/material/Skeleton";
 import Tooltip from "@mui/material/Tooltip";
 import Typography from "@mui/material/Typography";
+import { alpha, type Theme } from "@mui/material/styles";
 import { Link } from "react-router-dom";
 import { fetchFortnight, type ForecastLocation, type FortnightNight } from "@/api/home";
 import type { Verdict } from "@/api/weather";
 import {
+  darknessFigure,
+  darknessLine,
   fortnightDates,
   forecastCellLabel,
   formatDate,
@@ -17,6 +20,26 @@ import {
   type ForecastRowStatus,
 } from "@/lib/home";
 import { weatherPalette } from "@/lib/weatherPalette";
+
+/** The darkness line's colours: solid where the Moon is down, quiet stripes where it is up. */
+function darknessColors(theme: Theme) {
+  const dark = theme.palette.mode === "dark";
+  return {
+    moonDown: dark ? "#6c7ea3" : "#5a6c8f",
+    moonUpFill: dark ? "#30353f" : "#e4e7ed",
+    moonUpLine: dark ? "#4c5465" : "#b9c0cd",
+    midnight: dark ? alpha(theme.palette.common.white, 0.5) : alpha(theme.palette.common.black, 0.45),
+  };
+}
+
+function runBackground(theme: Theme, moonUp: boolean): string {
+  const colors = darknessColors(theme);
+  return moonUp
+    ? `repeating-linear-gradient(135deg, ${colors.moonUpLine} 0 1px, transparent 1px 4px), ${colors.moonUpFill}`
+    : colors.moonDown;
+}
+
+const SHALLOW_OUTLINE = { outline: "1px dashed", outlineColor: "text.secondary", outlineOffset: "1px" } as const;
 
 const MARKS: Record<Verdict, string> = {
   go: "✓",
@@ -71,33 +94,78 @@ function locationNote(location: ForecastLocation): string | null {
   return null;
 }
 
-function ForecastCell({ location, night }: { location: ForecastLocation; night: FortnightNight }) {
-  const label = forecastCellLabel(
-    location.name,
-    night.date,
-    night.verdict,
-    night.moonless_dark_hours,
+/** One night's darkness, start on the left and end on the right. */
+function DarknessLineBar({ night }: { night: FortnightNight }) {
+  const line = darknessLine(night);
+  if (!line) return null;
+  return (
+    <Box sx={{ position: "relative", height: 9, mt: "2px" }}>
+      <Box
+        sx={{
+          position: "absolute",
+          inset: 0,
+          borderRadius: "3px",
+          overflow: "hidden",
+          ...(night.darkness !== "astronomical" && SHALLOW_OUTLINE),
+        }}
+      >
+        {line.segments.map((segment) => (
+          <Box
+            key={segment.left}
+            sx={(theme) => ({
+              position: "absolute",
+              top: 0,
+              bottom: 0,
+              left: `${segment.left}%`,
+              width: `${segment.width}%`,
+              background: runBackground(theme, segment.moonUp),
+            })}
+          />
+        ))}
+      </Box>
+      {line.midnight !== null && (
+        <Box
+          sx={(theme) => ({
+            position: "absolute",
+            top: -3,
+            bottom: -3,
+            left: `${line.midnight}%`,
+            width: "1px",
+            bgcolor: darknessColors(theme).midnight,
+          })}
+        />
+      )}
+    </Box>
   );
+}
+
+function ForecastCell({ location, night }: { location: ForecastLocation; night: FortnightNight }) {
+  const label = forecastCellLabel(location.name, night);
+  const hasDarkness = night.darkness !== "none" && night.runs.length > 0;
   return (
     <Tooltip title={label} arrow>
       <Box
         component={Link}
         to={`/weather?location=${location.location_id}&date=${night.date}`}
         aria-label={label}
-        sx={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "3px", color: "text.secondary", textDecoration: "none", fontSize: 11, py: "2px" }}
+        sx={{ display: "flex", flexDirection: "column", alignItems: "stretch", gap: "5px", color: "text.secondary", textDecoration: "none", fontSize: 11, lineHeight: 1.2, textAlign: "center", whiteSpace: "nowrap", px: "4px", py: "2px" }}
       >
-        <VerdictMark verdict={night.verdict} />
-        <Box sx={{ width: 14, height: 30, display: "flex", alignItems: "flex-end" }}>
-          <Box
-            sx={(theme) => ({
-              width: "100%",
-              height: `${Math.min(30, (night.moonless_dark_hours / 11) * 30)}px`,
-              bgcolor: theme.palette.mode === "dark" ? "#6c7ea3" : "#5a6c8f",
-              borderRadius: "2px 2px 0 0",
-            })}
-          />
+        <Box sx={{ alignSelf: "center" }}>
+          <VerdictMark verdict={night.verdict} />
         </Box>
-        {night.moonless_dark_hours.toFixed(1)} h
+        {hasDarkness ? (
+          <>
+            <DarknessLineBar night={night} />
+            <Box>
+              <Box sx={{ color: "text.primary", fontWeight: 500, fontSize: "11.5px" }}>
+                {night.moonless_dark_hours.toFixed(1)} h
+              </Box>
+              {darknessFigure(night)}
+            </Box>
+          </>
+        ) : (
+          <Box sx={{ fontSize: "11.5px", pt: "2px" }}>0 h</Box>
+        )}
       </Box>
     </Tooltip>
   );
@@ -147,6 +215,11 @@ export function FortnightForecast({ locations }: { locations: ForecastLocation[]
     window.addEventListener("focus", handleFocus);
     return () => window.removeEventListener("focus", handleFocus);
   }, [forecasts, refreshSequentially]);
+  const anyShallow = forecasts.some((forecast) =>
+    forecast.data?.nights.some(
+      (night) => dates.includes(night.date) && (night.darkness === "nautical" || night.darkness === "civil"),
+    ),
+  );
   const evaluated = forecasts
     .map((forecast) => forecast.data?.evaluated_at)
     .filter((value): value is string => Boolean(value));
@@ -171,7 +244,7 @@ export function FortnightForecast({ locations }: { locations: ForecastLocation[]
       ) : (
         <>
           <Box sx={{ overflowX: "auto" }}>
-            <Box sx={{ minWidth: 900, display: "grid", gridTemplateColumns: "170px repeat(14, minmax(0, 1fr))", gap: "6px 4px", alignItems: "center", mt: "12px" }}>
+            <Box sx={{ display: "grid", gridTemplateColumns: "fit-content(240px) repeat(14, minmax(max-content, 1fr))", gap: "6px 4px", alignItems: "center", mt: "12px" }}>
               <Box />
               {dates.map((date, index) => (
                 <Box key={date} sx={{ textAlign: "center", color: "text.secondary", fontSize: 12 }}>
@@ -210,21 +283,22 @@ export function FortnightForecast({ locations }: { locations: ForecastLocation[]
                       </Box>
                     ) : forecast.isPending ? (
                       dates.map((date) => (
-                        <Box key={date} sx={{ borderTop: 1, borderColor: "divider", pt: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: "3px" }}>
+                        <Box key={date} sx={{ alignSelf: "stretch", borderTop: 1, borderColor: "divider", pt: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: "3px" }}>
                           <Skeleton variant="circular" width={20} height={20} />
-                          <Skeleton variant="rounded" width={14} height={30} />
+                          <Skeleton variant="rounded" width="100%" height={9} />
+                          <Skeleton variant="rounded" width={34} height={26} />
                         </Box>
                       ))
                     ) : (
                       dates.map((date) => {
                         const night = nights.get(date);
                         return (
-                          <Box key={date} sx={{ borderTop: 1, borderColor: "divider", pt: 1 }}>
+                          <Box key={date} sx={{ alignSelf: "stretch", borderTop: 1, borderColor: "divider", pt: 1 }}>
                             {night ? (
                               <ForecastCell location={location} night={night} />
                             ) : (
                               <Tooltip title="No forecast for this night" arrow>
-                                <Box aria-label="No forecast for this night" sx={{ height: 70, display: "grid", placeItems: "start center", pt: "2px", color: "text.secondary", fontSize: 13 }}>
+                                <Box aria-label="No forecast for this night" sx={{ height: 68, display: "grid", placeItems: "start center", pt: "2px", color: "text.secondary", fontSize: 13 }}>
                                   –
                                 </Box>
                               </Tooltip>
@@ -244,7 +318,24 @@ export function FortnightForecast({ locations }: { locations: ForecastLocation[]
                 <VerdictMark verdict={verdict} small /> {VERDICT_LABELS[verdict]}
               </Box>
             ))}
-            <Box>Dark hours with the Moon down, for each location</Box>
+            <Box sx={{ display: "inline-flex", alignItems: "center", gap: "6px" }}>
+              <Box aria-hidden sx={(theme) => ({ width: 16, height: 9, borderRadius: "2px", background: runBackground(theme, false) })} />
+              Dark, Moon down
+            </Box>
+            <Box sx={{ display: "inline-flex", alignItems: "center", gap: "6px" }}>
+              <Box aria-hidden sx={(theme) => ({ width: 16, height: 9, borderRadius: "2px", background: runBackground(theme, true) })} />
+              Dark, Moon up
+            </Box>
+            <Box sx={{ display: "inline-flex", alignItems: "center", gap: "6px" }}>
+              <Box aria-hidden sx={(theme) => ({ width: "1px", height: 15, bgcolor: darknessColors(theme).midnight })} />
+              Midnight
+            </Box>
+            {anyShallow && (
+              <Box sx={{ display: "inline-flex", alignItems: "center", gap: "6px" }}>
+                <Box aria-hidden sx={{ width: 10, height: 12, mx: "2px", borderRadius: "2px", ...SHALLOW_OUTLINE }} />
+                The Sun never gets 18° down: nautical or civil darkness
+              </Box>
+            )}
             <Box sx={{ ml: "auto", display: "flex", alignItems: "center", gap: 1 }}>
               {oldestEvaluation && <>Updated {formatTime(oldestEvaluation)}</>}
               <Button

@@ -103,10 +103,29 @@ export interface HomeSummary {
   workspace_key: string;
 }
 
+/** The deepest darkness a night reaches: astronomical, else nautical, else civil. */
+export type FortnightDarkness = "astronomical" | "nautical" | "civil" | "none";
+
+/** A stretch of the night's darkness with the Moon up or down. */
+export interface FortnightRun {
+  start: string; // display time, HH:MM
+  end: string;
+  start_utc: string;
+  end_utc: string;
+  moon_up: boolean;
+}
+
 export interface FortnightNight {
   date: string;
   verdict: Verdict;
+  darkness: FortnightDarkness;
+  /** Hours of that darkness. */
+  dark_hours: number;
   moonless_dark_hours: number;
+  /** Local midnight that night, for the line's tick. */
+  midnight_utc: string;
+  /** That darkness from start to end; empty when there is none. */
+  runs: FortnightRun[];
 }
 
 export interface FortnightResponse {

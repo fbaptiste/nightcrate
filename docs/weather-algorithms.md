@@ -246,10 +246,19 @@ How many hours of the deepest darkness reached have the Moon below the
 horizon. "Deepest" is astronomical where reached, otherwise nautical or civil.
 
 1. For each interval in `dark_intervals[deepest]` (§2.3), sample the Moon's
-   altitude every 5 minutes.
-2. Count the samples where the altitude is < −0.833°.
-3. `moonless_hours = Σ (below_count / total_samples) × interval_minutes / 60`,
-   summed over the intervals.
+   exact altitude every 5 minutes and at the interval's end (one vectorised
+   call for all intervals).
+2. Where two neighbouring samples fall on opposite sides of −0.833°, place
+   the rise or set at the linearly interpolated crossing. The Moon is up only
+   strictly above −0.833°; exactly on it counts as down.
+3. This splits each interval into runs with the Moon up or down
+   (`NightSummary.moon_runs`, UTC). `moonless_hours` is the total length of
+   the Moon-down runs.
+
+The Home page draws these same runs, so its figure and line always agree.
+The crossings match the rise/set search (§2.6) to within seconds. Before
+v0.53.0, step 2 counted samples below the horizon, which could be about
+5 minutes off per crossing.
 
 ### 2.8 Hourly Darkness Classification
 

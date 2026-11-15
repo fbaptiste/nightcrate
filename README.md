@@ -15,8 +15,9 @@ forecasts and survey imagery are fetched from external services when needed.
   - Projects by stage: Not started, Capturing, Ready to process, Complete,
     Paused, Abandoned. Each stage opens the Projects page filtered to it.
   - The three most recently imaged projects, with hours per filter.
-  - The next two weeks' weather verdict and moon-free dark hours for your
-    default location and those your active projects use.
+  - The next two weeks' weather verdict for up to four of your locations
+    (the default, then those your active projects use, then the rest by
+    name), with each night's darkness and when the Moon is up.
   - Your latest picture.
   - The last 12 months (hours, nights, new pictures, your best night).
   - Your rigs and locations, with their use.
