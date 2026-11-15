@@ -166,6 +166,7 @@ def backup_database(
             os.fsync(stream.fileno())
         os.replace(temp, destination)
         fsync_dir(folder)
+        logger.info("[workspace] backed up %s to %s", db_path.name, destination)
         return destination
     finally:
         try:

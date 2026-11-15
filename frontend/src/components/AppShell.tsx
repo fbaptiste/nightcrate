@@ -3,6 +3,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import Box from "@mui/material/Box";
 import Divider from "@mui/material/Divider";
 import Drawer from "@mui/material/Drawer";
+import Button from "@mui/material/Button";
 import IconButton from "@mui/material/IconButton";
 import List from "@mui/material/List";
 import ListItem from "@mui/material/ListItem";
@@ -66,6 +67,8 @@ import { fetchHealth } from "@/api/files";
 import { fetchAdminStatus } from "@/api/admin";
 import { setActivity } from "@/api/client";
 import { useSettingsStore } from "@/stores/settingsStore";
+import { resetZoom, resetZoomShortcut, useDesktopZoom } from "@/lib/desktopZoom";
+import { createDragClickGuard } from "@/lib/dragClickGuard";
 import { ActivityConsole } from "@/components/ActivityConsole";
 import type { Theme } from "@/api/settings";
 import { EasterEggWand } from "@/components/EasterEggWand";
@@ -213,6 +216,7 @@ export function AppShell() {
   const [updatedToastVersion, setUpdatedToastVersion] = useState<string | null>(null);
   const updateSeen = useRef<string | null>(null);
   const { settings, update } = useSettingsStore();
+  const zoom = useDesktopZoom();
   const currentTheme: Theme = settings?.theme ?? "browser";
 
   const cycleTheme = () => {
@@ -277,6 +281,7 @@ export function AppShell() {
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
   );
 
+  const dragClickGuard = useMemo(() => createDragClickGuard(), []);
   const handleDragEnd = (event: DragEndEvent) => {
     const { active, over } = event;
     if (!over || active.id === over.id) return;
@@ -359,8 +364,10 @@ export function AppShell() {
         )}
         <Divider />
 
-        {/* Navigation */}
-        <List dense>
+        {/* Navigation: scrolls on its own between the header and the bottom
+            bar, so a zoomed-in or short window keeps the bottom bar (and the
+            zoom reset) reachable. */}
+        <List dense sx={{ flex: "1 1 auto", minHeight: 0, overflowY: "auto" }}>
           {/* Home stays pinned at the top, never reorderable. */}
           <NavItemRow item={HOME_ITEM} navOpen={navOpen} />
           {isTablet ? (
@@ -373,7 +380,12 @@ export function AppShell() {
             <DndContext
               sensors={sensors}
               collisionDetection={closestCenter}
-              onDragEnd={handleDragEnd}
+              onDragStart={dragClickGuard.start}
+              onDragEnd={(event) => {
+                dragClickGuard.stop();
+                handleDragEnd(event);
+              }}
+              onDragCancel={dragClickGuard.stop}
             >
               <SortableContext items={reorderableRoutes} strategy={verticalListSortingStrategy}>
                 {reorderableRoutes.map((route) => {
@@ -386,11 +398,10 @@ export function AppShell() {
           )}
         </List>
 
-        <Box sx={{ flexGrow: 1 }} />
-
         {/* Bottom controls */}
         <Box
           sx={{
+            flexShrink: 0,
             borderTop: 1,
             borderColor: "divider",
             bgcolor: "action.hover",
@@ -413,13 +424,27 @@ export function AppShell() {
               <TimelineIcon sx={{ fontSize: 16 }} />
             </IconButton>
           </Tooltip>
+          {zoom !== 1 && (
+            <Tooltip title={`Back to 100% (${resetZoomShortcut()})`} arrow placement={navOpen ? "top" : "right"}>
+              <Button
+                size="small"
+                onClick={resetZoom}
+                sx={{ minWidth: 0, px: 0.75, py: 0, fontSize: 12, lineHeight: "24px", color: "text.secondary" }}
+              >
+                {Math.round(zoom * 100)}%
+              </Button>
+            </Tooltip>
+          )}
           <Box sx={{ ml: navOpen ? "auto" : 0 }}>
             <EasterEggWand lines={ASTRO_JOKES} tooltip="Words of wisdom" size={16} />
           </Box>
         </Box>
       </Drawer>
 
-      <Box component="main" sx={{ flexGrow: 1, overflow: "auto", display: "flex", flexDirection: "column" }}>
+      {/* `position: relative` keeps absolutely positioned content (such as a
+          visually hidden live region) inside this scroll area; otherwise it is
+          placed against the page and the whole window scrolls as well. */}
+      <Box component="main" sx={{ flexGrow: 1, overflow: "auto", display: "flex", flexDirection: "column", position: "relative" }}>
         <PersistentPages pathname={pathname} />
       </Box>
 
@@ -519,9 +544,16 @@ function SortableNavItemRow({ item, navOpen }: { item: NavItem; navOpen: boolean
       <NavLink
         to={item.to}
         end={item.to === "/"}
-        // dnd-kit does the reordering; a native link drag would start too.
+        // dnd-kit does the reordering; a native drag of the link or its
+        // selected text would start too, and WebKit loads a dropped link.
         draggable={false}
-        style={{ textDecoration: "none", width: "100%", color: "inherit" }}
+        style={{
+          textDecoration: "none",
+          width: "100%",
+          color: "inherit",
+          userSelect: "none",
+          WebkitUserDrag: "none",
+        } as React.CSSProperties}
       >
         {({ isActive }) => (
           <Tooltip title={navOpen ? "" : item.label} placement="right" arrow>

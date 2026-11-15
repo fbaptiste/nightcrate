@@ -47,8 +47,8 @@ fn capability_spec(port: u16, selftest: bool) -> (String, Vec<&'static str>) {
     let mut permissions = vec![
         "core:event:allow-listen",
         "core:event:allow-unlisten",
-        // On macOS and Linux, the zoom shortcuts (Cmd/Ctrl +, -, 0) are a script
-        // in the page that calls this; without it they do nothing.
+        // The page's zoom shortcuts (Cmd/Ctrl +, -, 0; `lib/desktopZoom.ts`)
+        // call this; it only sets the page's own zoom.
         "core:webview:allow-set-webview-zoom",
         "allow-install-update",
     ];
@@ -154,16 +154,19 @@ fn remembered_size_usable(width: f64, height: f64) -> bool {
 }
 
 /// The window-state plugin restores whatever size was saved, and a 1400 x 100
-/// window once came back from a test run (Fred, 2026-11-15). Put a too-small
-/// window back to the default size, centred. The plugin restores during
-/// `build()`; restoring by hand here instead deadlocked on its state lock.
-fn restore_main_size(window: &tauri::WebviewWindow) {
-    let usable = window
-        .inner_size()
-        .and_then(|size| Ok(size.to_logical::<f64>(window.scale_factor()?)))
-        .map(|size| remembered_size_usable(size.width, size.height))
-        .unwrap_or(true);
-    if !usable {
+/// window once came back from a test run (Fred, 2026-11-15). The minimum size
+/// stops anyone dragging the window that small, so a too-small size can only
+/// come from that restore, which happens after the window is built: put it
+/// back to the default size, centred.
+fn reset_if_too_small(window: &tauri::Window, size: tauri::PhysicalSize<u32>) {
+    if window.is_minimized().unwrap_or(false) {
+        return;
+    }
+    let Ok(scale) = window.scale_factor() else {
+        return;
+    };
+    let logical = size.to_logical::<f64>(scale);
+    if !remembered_size_usable(logical.width, logical.height) {
         let _ = window.set_size(LogicalSize::new(MAIN_SIZE.0, MAIN_SIZE.1));
         let _ = window.center();
     }
@@ -194,15 +197,16 @@ fn create_main(app: &AppHandle, port: u16, selftest: bool) -> Result<(), String>
         .inner_size(MAIN_SIZE.0, MAIN_SIZE.1)
         .min_inner_size(MAIN_MIN_SIZE.0, MAIN_MIN_SIZE.1)
         .disable_drag_drop_handler()
-        .zoom_hotkeys_enabled(true);
-    let window =
+        // The page handles Cmd/Ctrl +, - and 0 itself (`lib/desktopZoom.ts`) so
+        // it can show the level; Tauri's own shortcuts would zoom twice.
+        .zoom_hotkeys_enabled(false);
+    let _window =
         links::configure_main(builder, app, port, option_env!("NIGHTCRATE_TEST_PROBE_URL"))
             .build()
             .map_err(|error| error.to_string())?;
-    restore_main_size(&window);
     #[cfg(feature = "test-devtools")]
     {
-        window.open_devtools();
+        _window.open_devtools();
     }
     if let Some(loading) = app.get_webview_window("loading") {
         let _ = loading.hide();
@@ -403,6 +407,9 @@ fn main() {
                 && matches!(event, WindowEvent::CloseRequested { .. })
             {
                 window.app_handle().exit(0);
+            }
+            if let (WindowEvent::Resized(size), "main") = (event, window.label()) {
+                reset_if_too_small(window, *size);
             }
         })
         .setup(|app| {
