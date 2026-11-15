@@ -2142,6 +2142,12 @@ these are the constraints and traps found while building it.
   lose its `localStorage` origin.
 - **The Host check compares the full `host:port`.** Starlette's
   `TrustedHostMiddleware` ignores the port.
+- **The page is served with `Cache-Control: no-cache`** (`serve.py`), as
+  are the other unhashed files; `/assets` names carry a content hash. The
+  app keeps its origin across updates, so without it the window reused
+  the previous version's `index.html`, and with it the old scripts, for a
+  tenth of that file's age at download: in Fred's acceptance test, build
+  24's backend ran build 21's page (2026-11-15).
 - **`APP_DIR/updates.json`, not `config.json`,** holds the update answers,
   because older versions rewrite `config.json` and drop unknown keys.
   Automatic checks run only when the frontend asks and 24 h have passed

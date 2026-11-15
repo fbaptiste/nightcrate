@@ -168,6 +168,31 @@ async def test_spa_fallback_and_host_check(tmp_path):
         assert (await client.get("/", headers={"host": "127.0.0.1:9124"})).status_code == 400
 
 
+@pytest.mark.anyio
+async def test_page_is_revalidated_after_an_update(tmp_path):
+    # The app window reused a cached index.html from the previous build,
+    # which loaded the previous build's scripts against the new backend
+    # (acceptance test, 2026-11-15). Pages and other unhashed files must be
+    # checked with the backend each time; hashed assets may be reused.
+    app = FastAPI()
+    frontend = _frontend(tmp_path)
+    (frontend / "favicon.svg").write_text("NC-ICON", encoding="utf-8")
+    configure_production(app, frontend, 9123)
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://127.0.0.1:9123") as client:
+        for path in ("/", "/locations", "/projects/12", "/favicon.svg"):
+            response = await client.get(path)
+            assert response.status_code == 200, path
+            assert response.headers["cache-control"] == "no-cache", path
+            assert response.headers["etag"], path
+        asset = await client.get("/assets/app.js")
+        assert asset.text == "NC-ASSET"
+        assert "no-cache" not in asset.headers.get("cache-control", "")
+        page = await client.get("/")
+        unchanged = await client.get("/", headers={"if-none-match": page.headers["etag"]})
+        assert unchanged.status_code == 304
+
+
 def test_choose_port_falls_back():
     occupied, base = _occupied_with_free_next()
     chosen = choose_port(base, 1)

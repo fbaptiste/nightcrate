@@ -15,9 +15,9 @@ import webbrowser
 from pathlib import Path
 
 import uvicorn
-from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse, PlainTextResponse
-from starlette.staticfiles import StaticFiles
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import FileResponse, PlainTextResponse, Response
+from starlette.staticfiles import NotModifiedResponse, StaticFiles
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from nightcrate.core import child_processes, runtime
@@ -76,15 +76,28 @@ def configure_production(app: FastAPI, frontend_dir: Path, port: int) -> None:
     root = frontend_dir.resolve()
     app.add_middleware(_ExactHostMiddleware, port=port)
     app.mount("/assets", StaticFiles(directory=root / "assets"), name="assets")
+    pages = StaticFiles(directory=root)
+
+    def revalidated(file: Path, request: Request) -> Response:
+        # Scripts in /assets have content-hashed names, so a cached copy is
+        # always the right one. index.html and the other unhashed files keep
+        # their names across versions: without no-cache, the app window
+        # reused the previous version's page after an update (2026-11-15).
+        response = FileResponse(
+            file, stat_result=file.stat(), headers={"Cache-Control": "no-cache"}
+        )
+        if pages.is_not_modified(response.headers, request.headers):
+            return NotModifiedResponse(response.headers)
+        return response
 
     @app.get("/{path:path}", include_in_schema=False)
-    async def spa_fallback(path: str):
+    async def spa_fallback(path: str, request: Request):
         if path.startswith(("api/", "docs", "redoc", "openapi.json")):
             raise HTTPException(status_code=404)
         candidate = (root / path).resolve()
         if candidate.is_relative_to(root) and candidate.is_file():
-            return FileResponse(candidate)
-        return FileResponse(root / "index.html")
+            return revalidated(candidate, request)
+        return revalidated(root / "index.html", request)
 
 
 def _default_frontend_dir() -> Path:

@@ -105,15 +105,25 @@ after v0.53.0 merged.
     one click (Fred, 2026-11-15);
   - the night-detail grid's numbers ran together at the default window
     width; cells now fit their text at every width;
+  - after installing build 24, the app window ran build 21's cached page
+    (its old location code), because the backend served the page without
+    cache headers. Pages and other unhashed files are now revalidated each
+    time; after a real update, the window would otherwise have shown the
+    previous version's page against the new backend;
   - the GitHub Actions used are now their Node 24 releases (GitHub's Node 20
     deprecation warnings), and the rehearsal's Windows minisign comes from
     its signed release, as on Linux, after Chocolatey's feed failed.
-  - Verified (Claude): 18 shell tests; frontend type check, lint and build;
+  - Verified (Claude): 25 shell tests; frontend type check, lint and build;
     the grid measured in headless Chrome at 1024, 1400 and 1920 px, plus a
-    simulated fall-back night; CI build 21 ran this tree: installers and the
-    update rehearsal pass on all three systems, with no Node 20 warnings; its
-    Mac app carries the location strings and entitlement. An independent
-    Codex review found two minor grid cases (fixed) and nothing else.
+    simulated fall-back night; the location button against a stand-in app
+    (success, each failure message, the Windows/Linux fallback). CI build 24
+    ran this tree: installers and the update rehearsal pass on all three
+    systems, with no Node 20 warnings; its one-click Mac `.dmg` carries the
+    location strings, the entitlement and macOS 11 as the minimum, and its
+    signature verifies. Codex reviews: two minor grid cases, then for the
+    native location a stale-fix issue and three minor ones, all fixed; the
+    last re-check found nothing. Not yet run: the location command inside the
+    installed app (Fred's retest).
 
 ### Packaging test results (Claude, 2026-11-14)
 
