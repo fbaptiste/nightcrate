@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 import os
 import queue
+import signal
 import socket
 import sqlite3
 import subprocess
@@ -160,6 +161,82 @@ def check_database(workspace: Path) -> None:
         )
 
 
+def check_shell_gone(executable: Path, app_dir: Path) -> None:
+    """A force-quit shell closes stdin and stdout together; nothing may survive.
+
+    The frozen interpreter leaves SIGPIPE at its default; before v0.54.0's fix
+    the backend died logging its shutdown and left its workers running.
+    """
+    env = os.environ.copy()
+    env["NIGHTCRATE_TEST_BUSY_POOL"] = "2"
+    group = {} if sys.platform == "win32" else {"process_group": 0}
+    process = subprocess.Popen(
+        [
+            str(executable),
+            "--shell",
+            "--app-dir",
+            str(app_dir),
+            "--port",
+            str(free_port()),
+        ],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        bufsize=1,
+        env=env,
+        **group,
+    )
+    pids: list[int] = []
+    try:
+        assert process.stdout is not None and process.stdin is not None
+        ready = False
+        deadline = time.monotonic() + 90
+        while time.monotonic() < deadline and not (pids and ready):
+            line = process.stdout.readline()
+            if not line:
+                break
+            print(line.rstrip())
+            if line.startswith("NIGHTCRATE_TEST_POOL_PIDS "):
+                pids = json.loads(line.split(" ", 1)[1])
+            ready = ready or line.startswith("NIGHTCRATE_READY ")
+        if not (pids and ready):
+            raise RuntimeError("backend did not become ready with its test workers")
+        process.stdout.close()
+        process.stdin.close()
+        exit_code = process.wait(timeout=15)
+        if exit_code != 0:
+            raise RuntimeError(
+                f"backend exited with {exit_code} after its shell went away"
+            )
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline and _survivors(process.pid, pids):
+            time.sleep(0.1)
+        survivors = _survivors(process.pid, pids)
+        if survivors:
+            raise RuntimeError(f"processes survived the shell going away: {survivors}")
+    finally:
+        if process.poll() is None:
+            process.kill()
+        if sys.platform != "win32":
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+
+
+def _survivors(group_id: int, pids: list[int]) -> list[object]:
+    survivors: list[object] = [pid for pid in pids if process_exists(pid)]
+    if sys.platform != "win32":
+        try:
+            os.killpg(group_id, 0)
+        except ProcessLookupError:
+            pass
+        else:
+            survivors.append(f"process group {group_id}")
+    return survivors
+
+
 def run(build_dir: Path) -> None:
     executable = build_dir / (
         "nightcrate-backend.exe" if sys.platform == "win32" else "nightcrate-backend"
@@ -239,6 +316,7 @@ def run(build_dir: Path) -> None:
                 raise RuntimeError("bad Host header was accepted")
         finally:
             backend.stop()
+        check_shell_gone(executable, app_dir)
 
 
 def main() -> int:

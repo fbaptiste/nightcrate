@@ -6,6 +6,7 @@ import argparse
 import json
 import multiprocessing
 import os
+import signal
 import socket
 import sys
 import threading
@@ -105,8 +106,35 @@ def _parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _ignore_sigpipe() -> None:
+    """Make writes to a vanished reader fail instead of killing the process.
+
+    The standard interpreter does this at start-up; the frozen one leaves
+    SIGPIPE at its default. A force-quit shell then killed the backend as it
+    logged its shutdown, before it could stop its workers.
+    """
+    if hasattr(signal, "SIGPIPE"):
+        signal.signal(signal.SIGPIPE, signal.SIG_IGN)
+
+
+def _detach_output() -> None:
+    """Send stdout and stderr to the null device once the shell has gone."""
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.flush()
+        except OSError, ValueError:
+            pass
+    devnull = os.open(os.devnull, os.O_WRONLY)
+    try:
+        os.dup2(devnull, 1)
+        os.dup2(devnull, 2)
+    finally:
+        os.close(devnull)
+
+
 def main(argv: list[str] | None = None) -> int:
     multiprocessing.freeze_support()
+    _ignore_sigpipe()
     runtime.production = True
     args = _parser().parse_args(argv)
     if args.shell:
@@ -200,6 +228,9 @@ def main(argv: list[str] | None = None) -> int:
     def watch_stdin() -> None:
         nonlocal deadline
         sys.stdin.buffer.read()
+        # Stdin closes when the shell stops the backend or has itself died;
+        # either way nobody reads the output pipe any more.
+        _detach_output()
         server.should_exit = True
         deadline = threading.Timer(10, _deadline_exit)
         deadline.daemon = True

@@ -2139,7 +2139,13 @@ these are the constraints and traps found while building it.
   - on macOS it moves `libmlx.dylib` without `mlx.metallib`, and the first
     GPU call then kills the process;
   - on Linux it rewrites RPATHs, so the frozen files' hashes differ from
-    their wheels' `RECORD` entries.
+    their wheels' `RECORD` entries;
+  - its interpreter leaves SIGPIPE at the default, unlike standard
+    Python. A force-quit shell closes the backend's stdin and stdout
+    together, and the backend died logging "Shutting down", leaving its
+    workers running. `serve.py` ignores SIGPIPE and sends its output to the
+    null device when stdin closes; `smoke.py` checks the force-quit case
+    on the frozen build.
 - **Tauri:**
   - on macOS it refuses to run from a path with a symlink in any ancestor
     (`/var` → `/private/var` breaks CI temp folders);

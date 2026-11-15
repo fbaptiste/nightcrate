@@ -206,7 +206,7 @@ def database_facts(database: Path) -> dict[str, object]:
             "locations": connection.execute("SELECT COUNT(*) FROM location").fetchone()[
                 0
             ],
-            "subs": connection.execute("SELECT COUNT(*) FROM sub_exposure").fetchone()[
+            "subs": connection.execute("SELECT COUNT(*) FROM sub_frame").fetchone()[
                 0
             ],
             "images": connection.execute(

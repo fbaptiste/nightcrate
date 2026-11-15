@@ -346,3 +346,72 @@ def test_shell_eof_kills_busy_workers(tmp_path):
                     os.kill(pid, signal.SIGKILL)
                 except ProcessLookupError:
                     pass
+
+
+def _process_group_members(pgid):
+    result = subprocess.run(["pgrep", "-g", str(pgid)], capture_output=True, text=True, check=False)
+    return [int(pid) for pid in result.stdout.split()]
+
+
+@pytest.mark.skipif(os.name == "nt", reason="SIGPIPE is POSIX-only")
+def test_shell_gone_with_default_sigpipe_still_stops_workers(tmp_path):
+    """A force-quit shell closes stdin and stdout together (v0.54.0 Mac check).
+
+    The frozen interpreter leaves SIGPIPE at its default, so the backend
+    used to die writing "Shutting down" to the dead pipe, before stopping
+    its workers; they lived on under launchd.
+    """
+    frontend = _frontend(tmp_path)
+    code = (
+        "import signal, sys; signal.signal(signal.SIGPIPE, signal.SIG_DFL); "
+        "from nightcrate.serve import main; raise SystemExit(main(sys.argv[1:]))"
+    )
+    env = os.environ.copy()
+    env.update({"PYTHONUNBUFFERED": "1", "NIGHTCRATE_TEST_BUSY_POOL": "2"})
+    process = subprocess.Popen(
+        [
+            sys.executable,
+            "-c",
+            code,
+            "--shell",
+            "--app-dir",
+            str(tmp_path / "app-data"),
+            "--frontend-dir",
+            str(frontend),
+            "--port",
+            str(_free_port()),
+        ],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        env=env,
+        process_group=0,
+    )
+    pids = []
+    try:
+        assert process.stdout is not None
+        deadline = time.monotonic() + 30
+        ready = False
+        while time.monotonic() < deadline and not (pids and ready):
+            line = process.stdout.readline()
+            if not line:
+                break
+            if line.startswith("NIGHTCRATE_TEST_POOL_PIDS"):
+                pids = json.loads(line.split(" ", 1)[1])
+            ready = ready or line.startswith("NIGHTCRATE_READY")
+        assert pids and ready
+        assert len(_process_group_members(process.pid)) >= 5
+
+        process.stdout.close()
+        _close_stdin(process)
+
+        assert process.wait(timeout=20) == 0
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline and _process_group_members(process.pid):
+            time.sleep(0.05)
+        assert _process_group_members(process.pid) == []
+    finally:
+        _cleanup(process)
+        for pid in _process_group_members(process.pid):
+            os.kill(pid, signal.SIGKILL)

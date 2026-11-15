@@ -1178,9 +1178,15 @@ def _appimage_backend_relative_path(path: Path, appimage: Path) -> str | None:
     return PurePosixPath(*tail).as_posix() if tail else None
 
 
-def _appimage_copy_owner(owner: dict[str, Any]) -> dict[str, Any]:
+# auditwheel renames each library it vendors with an 8-hex-digit content hash,
+# for example ``libLerc-d21eeb01.so.4``; no system library carries such a name.
+_WHEEL_VENDORED_NAME = re.compile(r"-[0-9a-f]{8}\.so(?:\.\d+)*$")
+
+
+def _appimage_copy_owner(
+    owner: dict[str, Any], copy_note: str = "copied by the AppImage bundler"
+) -> dict[str, Any]:
     inherited = dict(owner)
-    copy_note = "copied by the AppImage bundler"
     if inherited.get("notice"):
         inherited["notice"] = f"{inherited['notice']}; {copy_note}"
     else:
@@ -1198,8 +1204,12 @@ def _system_natives(
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     backend_by_path = {item["path"]: item for item in backend_natives}
     backend_by_hash: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    backend_by_wheel_name: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for item in backend_natives:
         backend_by_hash[item["sha256"]].append(item)
+        name = PurePosixPath(item["path"]).name
+        if _WHEEL_VENDORED_NAME.search(name):
+            backend_by_wheel_name[name].append(item)
     natives: list[dict[str, Any]] = []
     packages: dict[tuple[str, str], dict[str, Any]] = {}
     for path in sorted(appimage.rglob("*")):
@@ -1237,6 +1247,30 @@ def _system_natives(
                     "path": relative,
                     "sha256": digest,
                     "owner": _appimage_copy_owner(hash_matches[0]["owner"]),
+                }
+            )
+            continue
+        # linuxdeploy rewrites the RPATH of each library it copies, so the copy
+        # of a wheel-vendored library no longer matches the backend's bytes.
+        name_matches = backend_by_wheel_name.get(path.name, [])
+        if name_matches:
+            owners = {
+                json.dumps(item["owner"], sort_keys=True) for item in name_matches
+            }
+            if len(owners) != 1:
+                raise NoticeError(
+                    f"{relative}: same-named frozen backend libraries have "
+                    "ambiguous owners"
+                )
+            natives.append(
+                {
+                    "path": relative,
+                    "sha256": digest,
+                    "owner": _appimage_copy_owner(
+                        name_matches[0]["owner"],
+                        "copied by the AppImage bundler, which rewrote its "
+                        "library path",
+                    ),
                 }
             )
             continue

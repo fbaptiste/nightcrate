@@ -129,6 +129,9 @@ jobs:
         env:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: rehearsal
         run: |
+          # A's installer and AppImage carry its version in their names, so
+          # clear A's bundle output before building B.
+          rm -rf packaging/shell/src-tauri/target/release/bundle
           python packaging/rehearsal/set_version.py 0.0.2
           uv sync --project backend --group packaging
           (cd frontend && npm ci && npm run build)

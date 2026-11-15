@@ -433,6 +433,69 @@ def test_appimage_copy_inherits_frozen_backend_owner(
     ]
 
 
+def _patched_appimage_copy(tmp_path: Path, name: str) -> tuple[Path, Path, list]:
+    backend = tmp_path / "backend"
+    backend_library = backend / "lib" / "imagecodecs.libs" / name
+    backend_library.parent.mkdir(parents=True)
+    backend_library.write_bytes(b"\x7fELF wheel library, RPATH $ORIGIN")
+    backend_natives = [
+        {
+            "path": f"lib/imagecodecs.libs/{name}",
+            "sha256": notices._sha256(backend_library),
+            "owner": {"kind": "python", "name": "imagecodecs", "version": "2025.8.2"},
+        }
+    ]
+    appimage = tmp_path / "appimage"
+    copied = appimage / "usr" / "lib" / name
+    copied.parent.mkdir(parents=True)
+    copied.write_bytes(b"\x7fELF wheel library, RPATH $ORIGIN/../lib")
+    return appimage, backend, backend_natives
+
+
+def test_appimage_copy_with_rewritten_rpath_keeps_wheel_owner(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    appimage, backend, backend_natives = _patched_appimage_copy(
+        tmp_path, "libLerc-d21eeb01.so.4"
+    )
+    monkeypatch.setattr(
+        notices,
+        "_dpkg_owner",
+        lambda _path: pytest.fail("wheel library copy reached dpkg"),
+    )
+
+    natives, system_components = _system_natives(
+        appimage, backend, {}, {}, {}, backend_natives
+    )
+
+    assert system_components == []
+    assert [item["path"] for item in natives] == ["usr/lib/libLerc-d21eeb01.so.4"]
+    assert natives[0]["owner"] == {
+        "kind": "python",
+        "name": "imagecodecs",
+        "version": "2025.8.2",
+        "notice": "copied by the AppImage bundler, which rewrote its library path",
+    }
+
+
+def test_appimage_library_without_wheel_tag_is_not_matched_by_name(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    appimage, backend, backend_natives = _patched_appimage_copy(
+        tmp_path, "libLerc.so.4"
+    )
+
+    def dpkg_owner(_path: Path) -> tuple[dict[str, str], str]:
+        raise NoticeError("reached dpkg")
+
+    monkeypatch.setattr(notices, "_dpkg_owner", dpkg_owner)
+
+    with pytest.raises(NoticeError, match=r"usr/lib/libLerc\.so\.4: reached dpkg"):
+        _system_natives(appimage, backend, {}, {}, {}, backend_natives)
+
+
 def test_linux_freeze_core_relocation_is_attributed_by_basename(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
