@@ -499,7 +499,9 @@ export default function LocationsPage() {
       const pos = await new Promise<GeolocationPosition>((resolve, reject) =>
         navigator.geolocation.getCurrentPosition(resolve, reject, {
           enableHighAccuracy: true,
-          timeout: 10000,
+          // In the Mac app this includes the first-time "allow location"
+          // prompt, so leave time to answer it.
+          timeout: 30000,
         }),
       );
       const lat = pos.coords.latitude;
@@ -510,9 +512,9 @@ export default function LocationsPage() {
     } catch (err) {
       const geoErr = err as GeolocationPositionError;
       const msgs: Record<number, string> = {
-        1: "Location access denied",
-        2: "Location unavailable",
-        3: "Location request timed out",
+        1: "Location access was refused. Allow it in your system or browser settings, or use Lookup Coordinates from Address.",
+        2: "Your location isn't available. Check that Location Services is on, or use Lookup Coordinates from Address.",
+        3: "Finding your location took too long. Try again, or use Lookup Coordinates from Address.",
       };
       setSnack({ msg: msgs[geoErr.code] || "Could not detect location", severity: "error" });
     } finally {
@@ -1453,7 +1455,7 @@ export default function LocationsPage() {
 
       <Snackbar
         open={snack !== null}
-        autoHideDuration={3000}
+        autoHideDuration={snack?.severity === "error" ? 8000 : 3000}
         onClose={() => setSnack(null)}
         anchorOrigin={{ vertical: "bottom", horizontal: "center" }}
       >

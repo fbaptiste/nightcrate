@@ -2,6 +2,7 @@
 
 mod backend;
 mod links;
+mod location;
 mod selftest;
 mod update;
 
@@ -199,11 +200,16 @@ fn create_main(app: &AppHandle, port: u16, selftest: bool) -> Result<(), String>
         .disable_drag_drop_handler()
         // The page handles Cmd/Ctrl +, - and 0 itself (`lib/desktopZoom.ts`) so
         // it can show the level; Tauri's own shortcuts would zoom twice.
-        .zoom_hotkeys_enabled(false);
+        .zoom_hotkeys_enabled(false)
+        .on_permission_request(move |webview, kind| {
+            location::permission(kind, webview.url().ok().as_ref(), port)
+        });
     let _window =
         links::configure_main(builder, app, port, option_env!("NIGHTCRATE_TEST_PROBE_URL"))
             .build()
             .map_err(|error| error.to_string())?;
+    #[cfg(target_os = "macos")]
+    location::allow_on_macos(&_window, port);
     #[cfg(feature = "test-devtools")]
     {
         _window.open_devtools();
