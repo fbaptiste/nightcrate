@@ -4,7 +4,7 @@
 
 **Branch:** `v0.54.0/installers-and-updates`
 
-**Status:** In progress
+**Status:** Candidate ready — awaiting Fred's acceptance
 
 **Next version** (Fred, 2026-11-14): LAN mode as v0.55.0, the second half
 of Distribution.
@@ -84,7 +84,14 @@ after v0.53.0 merged.
     backup failed (a read-only flush), fixed in build 17.
   - An independent Codex review of the changes since the move found no
     blockers; its three findings are resolved.
-- [ ] Candidate verification and Fred's acceptance test.
+- [x] Candidate verification (Claude, 2026-11-15): version 0.54.0 in all four
+  places; backend suite 4281 passed, 4 skipped; ruff, format and bandit clean
+  (no findings at any severity); frontend production build; 42 packaging
+  tests; 14 shell tests and a warning-free release build; docs links checked.
+  CI build 18 ran the candidate tree: installers and the update rehearsal pass
+  on all three systems. An independent Codex re-check of the last fixes found
+  nothing.
+- [ ] Fred's acceptance test.
 
 ### Packaging test results (Claude, 2026-11-14)
 
