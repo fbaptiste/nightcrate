@@ -16,6 +16,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from contextlib import closing
 from pathlib import Path
 
 from make_test_data import make_data
@@ -136,7 +137,9 @@ class Client:
 
 def check_database(workspace: Path) -> None:
     database = workspace / "nightcrate.db"
-    with sqlite3.connect(database) as connection:
+    # closing(): sqlite3's own context manager only commits; an open handle
+    # keeps Windows from deleting the temporary workspace afterwards.
+    with closing(sqlite3.connect(database)) as connection:
         integrity = connection.execute("PRAGMA integrity_check").fetchone()[0]
         foreign_keys = connection.execute("PRAGMA foreign_key_check").fetchall()
         applied = {

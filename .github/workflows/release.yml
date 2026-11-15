@@ -15,7 +15,8 @@ jobs:
       matrix:
         include:
           - os: macos-15
-            bundle: dmg
+            # app as well: building only the dmg deletes the .app the next step checks.
+            bundle: app,dmg
             artifact: nightcrate-macos
           - os: ubuntu-22.04
             bundle: appimage
