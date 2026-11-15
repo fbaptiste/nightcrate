@@ -315,6 +315,23 @@ jobs:
             packaging/build/notices/nightcrate-*-lgpl-sources-*.tar.gz
             packaging/build/release/*
           if-no-files-found: error
+      # The installer by itself, unzipped, so a tester downloads it in one
+      # click from the run page (Fred, 2026-11-15). The artifact above keeps
+      # the build folders. Releases list each installer directly. Named after
+      # the file, so draft-release's nightcrate-* pattern doesn't pick it up.
+      - name: Find the installer
+        id: installer
+        shell: bash
+        run: |
+          installer=$(find packaging/shell/src-tauri/target/release/bundle -type f \
+            \( -name '*.dmg' -o -name '*-setup.exe' -o -name '*.AppImage' \) -print)
+          test "$(printf '%s\n' "$installer" | grep -c .)" -eq 1
+          echo "path=$installer" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          path: ${{ steps.installer.outputs.path }}
+          archive: false
+          if-no-files-found: error
 
   draft-release:
     if: github.event_name == 'workflow_dispatch'

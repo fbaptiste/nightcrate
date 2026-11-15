@@ -2220,8 +2220,9 @@ checksum = "650eef8c711430f1a879fdd01d4745a7deea475becfb90269c06775983bbf086"
 name = "nightcrate-shell"
 version = "0.54.0"
 dependencies = [
- "block2",
  "objc2",
+ "objc2-core-location",
+ "objc2-foundation",
  "rfd",
  "serde",
  "serde_json",

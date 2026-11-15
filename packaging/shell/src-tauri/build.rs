@@ -44,10 +44,16 @@ fn main() {
                 "selftest_report",
                 "open_log_folder",
                 "install_update",
+                "current_location",
                 "test_auto_install_enabled",
             ]
         } else {
-            &["selftest_report", "open_log_folder", "install_update"]
+            &[
+                "selftest_report",
+                "open_log_folder",
+                "install_update",
+                "current_location",
+            ]
         };
     let manifest = tauri_build::AppManifest::new().commands(commands);
     tauri_build::try_build(tauri_build::Attributes::new().app_manifest(manifest))

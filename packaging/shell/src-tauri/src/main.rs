@@ -52,6 +52,8 @@ fn capability_spec(port: u16, selftest: bool) -> (String, Vec<&'static str>) {
         // call this; it only sets the page's own zoom.
         "core:webview:allow-set-webview-zoom",
         "allow-install-update",
+        // "Use My Location" on macOS (`location.rs`).
+        "allow-current-location",
     ];
     if selftest {
         permissions.push("allow-selftest-report");
@@ -208,8 +210,6 @@ fn create_main(app: &AppHandle, port: u16, selftest: bool) -> Result<(), String>
         links::configure_main(builder, app, port, option_env!("NIGHTCRATE_TEST_PROBE_URL"))
             .build()
             .map_err(|error| error.to_string())?;
-    #[cfg(target_os = "macos")]
-    location::allow_on_macos(&_window, port);
     #[cfg(feature = "test-devtools")]
     {
         _window.open_devtools();
@@ -358,13 +358,15 @@ fn main() {
     let builder = builder.invoke_handler(tauri::generate_handler![
         selftest::selftest_report,
         open_log_folder,
-        update::install_update
+        update::install_update,
+        location::current_location
     ]);
     #[cfg(nightcrate_test_auto_install)]
     let builder = builder.invoke_handler(tauri::generate_handler![
         selftest::selftest_report,
         open_log_folder,
         update::install_update,
+        location::current_location,
         test_auto_install_enabled
     ]);
     let app = builder
@@ -476,7 +478,8 @@ mod tests {
                 "core:event:allow-listen",
                 "core:event:allow-unlisten",
                 "core:webview:allow-set-webview-zoom",
-                "allow-install-update"
+                "allow-install-update",
+                "allow-current-location"
             ]
         );
         let (_, selftest_permissions) = capability_spec(8766, true);
@@ -487,6 +490,7 @@ mod tests {
                 "core:event:allow-unlisten",
                 "core:webview:allow-set-webview-zoom",
                 "allow-install-update",
+                "allow-current-location",
                 "allow-selftest-report"
             ]
         );

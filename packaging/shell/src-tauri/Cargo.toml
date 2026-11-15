@@ -22,10 +22,22 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 rfd = { version = "=0.15.4", default-features = false, features = ["gtk3"] }
 
-# "Use my location" on macOS (`src/location.rs`): the versions wry already uses.
+# "Use My Location" on macOS (`src/location.rs`): the versions wry already uses.
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "=0.6.5"
-block2 = "=0.6.2"
+objc2-foundation = { version = "=0.3.2", default-features = false, features = [
+    "std",
+    "NSArray",
+    "NSError",
+    "NSObject",
+] }
+objc2-core-location = { version = "=0.3.2", default-features = false, features = [
+    "std",
+    "CLError",
+    "CLLocation",
+    "CLLocationManager",
+    "CLLocationManagerDelegate",
+] }
 
 [profile.release]
 codegen-units = 1

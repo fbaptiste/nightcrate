@@ -54,6 +54,7 @@ import {
   toReplaceItems,
   type StagedHorizon,
 } from "@/components/locations/horizonStaging";
+import { currentLocation, LocationError } from "@/lib/currentLocation";
 import { parseOptionalFloat, parseOptionalInt } from "@/lib/formUtils";
 import type { WeatherUnits } from "@/api/settings";
 import { useSettingsStore } from "@/stores/settingsStore";
@@ -488,35 +489,17 @@ export default function LocationsPage() {
     }
   }
 
-  /** Use browser geolocation → reverse geocode → elevation. */
+  /** Current position (`lib/currentLocation.ts`) → reverse geocode → elevation. */
   const detectLocation = async () => {
-    if (!navigator.geolocation) {
-      setSnack({ msg: "Geolocation not supported by this browser", severity: "error" });
-      return;
-    }
     setDetecting(true);
     try {
-      const pos = await new Promise<GeolocationPosition>((resolve, reject) =>
-        navigator.geolocation.getCurrentPosition(resolve, reject, {
-          enableHighAccuracy: true,
-          // In the Mac app this includes the first-time "allow location"
-          // prompt, so leave time to answer it.
-          timeout: 30000,
-        }),
-      );
-      const lat = pos.coords.latitude;
-      const lon = pos.coords.longitude;
+      const { latitude: lat, longitude: lon } = await currentLocation();
       set("latitude", String(lat));
       set("longitude", String(lon));
       await Promise.all([reverseGeocode(lat, lon), fetchElevation(lat, lon)]);
     } catch (err) {
-      const geoErr = err as GeolocationPositionError;
-      const msgs: Record<number, string> = {
-        1: "Location access was refused. Allow it in your system or browser settings, or use Lookup Coordinates from Address.",
-        2: "Your location isn't available. Check that Location Services is on, or use Lookup Coordinates from Address.",
-        3: "Finding your location took too long. Try again, or use Lookup Coordinates from Address.",
-      };
-      setSnack({ msg: msgs[geoErr.code] || "Could not detect location", severity: "error" });
+      const msg = err instanceof LocationError ? err.message : "Could not detect location";
+      if (msg) setSnack({ msg, severity: "error" });
     } finally {
       setDetecting(false);
     }

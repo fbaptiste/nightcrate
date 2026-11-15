@@ -358,7 +358,7 @@ the full licence notices for every component it ships.
 | [Tauri](https://tauri.app/) | MIT or Apache 2.0 | Copyright (c) 2017 - Present Tauri Apps Contributors |
 | Tauri plugins: single-instance, window-state, updater | MIT or Apache 2.0 | Copyright (c) 2017 - Present Tauri Apps Contributors; The Tauri Programme in the Commons Conservancy |
 | [rfd](https://github.com/PolyMeilex/rfd) (the Save dialog) | MIT | Copyright (c) 2022 Bartłomiej Maryńczak |
-| [objc2 and block2](https://github.com/madsmtm/objc2) (location in the Mac app window) | MIT | Copyright Mads Marquart |
+| [objc2, objc2-foundation, objc2-core-location](https://github.com/madsmtm/objc2) (location in the Mac app) | MIT; objc2-core-location: MIT, Apache 2.0 or Zlib | Copyright Mads Marquart |
 | [cx_Freeze](https://cx-freeze.readthedocs.io/) | PSF-2.0 | Copyright © 2020-2026, Marcelo Duarte; © 2007-2019, Anthony Tuininga; © 2001-2006, Computronix (Canada) Ltd. |
 
 ### External Programs

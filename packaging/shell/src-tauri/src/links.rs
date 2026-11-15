@@ -189,8 +189,21 @@ fn same_origin(url: &tauri::Url, origin: &str) -> bool {
     url.as_str() == origin || url.as_str().starts_with(&format!("{origin}/"))
 }
 
+/// Pages the app shows in a frame: the Locations map. wry asks
+/// `on_navigation` about frame loads as well as the window's own, so these
+/// would otherwise open in the browser and leave the frame blank (Fred,
+/// 2026-11-15). Only the embed page itself; its links still go out.
+fn embedded_frame(url: &tauri::Url) -> bool {
+    url.scheme() == "https"
+        && url.host_str() == Some("www.openstreetmap.org")
+        && url.port().is_none()
+        && url.path() == "/export/embed.html"
+}
+
 fn navigation_allowed(url: &tauri::Url, origin: &str, probe_url: Option<&str>) -> bool {
-    same_origin(url, origin) || probe_url.is_some_and(|probe| url.as_str() == probe)
+    same_origin(url, origin)
+        || probe_url.is_some_and(|probe| url.as_str() == probe)
+        || embedded_frame(url)
 }
 
 fn classify(url: &tauri::Url) -> Classification {
@@ -356,5 +369,27 @@ mod tests {
             Some(probe)
         ));
         assert!(!navigation_allowed(&allowed, "http://127.0.0.1:8765", None));
+    }
+
+    #[test]
+    fn allows_the_embedded_map_page_only() {
+        let allowed = |url: &str| {
+            navigation_allowed(
+                &tauri::Url::parse(url).unwrap(),
+                "http://127.0.0.1:8765",
+                None,
+            )
+        };
+        assert!(allowed(
+            "https://www.openstreetmap.org/export/embed.html?bbox=1,2,3,4&layer=mapnik&marker=2,3"
+        ));
+        assert!(!allowed("https://www.openstreetmap.org/"));
+        assert!(!allowed("https://www.openstreetmap.org/copyright"));
+        assert!(!allowed("http://www.openstreetmap.org/export/embed.html"));
+        assert!(!allowed("https://openstreetmap.org/export/embed.html"));
+        assert!(!allowed(
+            "https://www.openstreetmap.org.example.com/export/embed.html"
+        ));
+        assert!(!allowed("https://www.openstreetmap.org:8443/export/embed.html"));
     }
 }

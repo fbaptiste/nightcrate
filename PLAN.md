@@ -94,14 +94,26 @@ after v0.53.0 merged.
 - [ ] Fred's acceptance test (with the installed app from build 18, from
   2026-11-15). Fixed from it so far:
   - "Use My Location" was refused in the app window without a prompt
-    (WebKit on macOS, WebKitGTK on Linux); the shell now lets the
-    backend's page ask, and macOS asks the user (Fred chose making it
-    work, 2026-11-15);
+    (WebKit on macOS, WebKitGTK on Linux). Fred chose making it work
+    (2026-11-15). Build 21's fix (letting WebKit ask) never prompted: WebKit
+    on macOS has no location source in an app. The Mac app now asks macOS
+    itself; Fred confirmed with a test app that macOS prompts and returns a
+    position for an app signed like NightCrate;
+  - the Locations map opened in the browser and left a blank box; it now
+    loads in the dialog;
+  - test builds also upload each installer on its own, so it downloads in
+    one click (Fred, 2026-11-15);
   - the night-detail grid's numbers ran together at the default window
     width; cells now fit their text at every width;
   - the GitHub Actions used are now their Node 24 releases (GitHub's Node 20
     deprecation warnings), and the rehearsal's Windows minisign comes from
     its signed release, as on Linux, after Chocolatey's feed failed.
+  - Verified (Claude): 18 shell tests; frontend type check, lint and build;
+    the grid measured in headless Chrome at 1024, 1400 and 1920 px, plus a
+    simulated fall-back night; CI build 21 ran this tree: installers and the
+    update rehearsal pass on all three systems, with no Node 20 warnings; its
+    Mac app carries the location strings and entitlement. An independent
+    Codex review found two minor grid cases (fixed) and nothing else.
 
 ### Packaging test results (Claude, 2026-11-14)
 

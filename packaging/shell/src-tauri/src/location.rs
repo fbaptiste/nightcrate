@@ -1,15 +1,18 @@
-//! "Use my location" in the app window (Fred, 2026-11-15).
+//! "Use My Location" in the app window (Fred, 2026-11-15).
 //!
-//! WebKit on macOS asks the app whether a page may have the location, through
-//! a delegate method wry doesn't implement (wry 0.57 lists geolocation as
-//! unsupported there), so WebKit refused every request without asking anyone.
-//! `allow_on_macos` adds that method to wry's delegate class. It grants the
-//! backend's page, and macOS then shows its own location prompt.
+//! macOS: WebKit only fetches a location for a page when the app gives it a
+//! location provider, and wry doesn't, so the page's own request can never
+//! succeed. The page calls `current_location` instead, which asks Core
+//! Location directly; macOS shows its usual "allow location?" prompt the
+//! first time. Verified on macOS 26.6 with an app signed like NightCrate
+//! (ad hoc, hardened runtime, the location entitlement).
 //!
-//! WebKitGTK refuses unless the app allows, and WebView2 would add its own
-//! prompt. `permission` allows the backend's page on both, so the system's
-//! location settings are the one gate everywhere.
+//! Windows and Linux: the page keeps the browser's request (the command
+//! answers "unsupported"). WebKitGTK refuses unless the app allows, and
+//! WebView2 would add its own prompt; `permission` allows the backend's page
+//! on both, so the system's location settings decide.
 
+use serde::Serialize;
 use tauri::webview::{PermissionKind, PermissionResponse};
 
 /// Whether a page's scheme, host and port are the backend's.
@@ -38,110 +41,332 @@ pub fn permission(
     }
 }
 
-#[cfg(target_os = "macos")]
-pub use macos::allow_on_macos;
+/// A position for the page. Coordinates are never logged.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
+pub struct Fix {
+    latitude: f64,
+    longitude: f64,
+    accuracy_m: f64,
+}
+
+/// Why no position came back; the page words each one.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Failure {
+    /// The user refused, now or earlier.
+    Denied,
+    /// A device policy forbids location.
+    Restricted,
+    /// Location Services is off for the whole computer.
+    ServicesOff,
+    /// macOS never reported an answer to the authorization request.
+    NoAnswer,
+    /// Authorized, but no position before the deadline.
+    Timeout,
+    /// Core Location couldn't determine a position.
+    Unavailable,
+    /// A newer request replaced this one.
+    Cancelled,
+    /// Not macOS: the page uses the browser's request.
+    Unsupported,
+}
+
+impl Failure {
+    fn code(self) -> &'static str {
+        match self {
+            Self::Denied => "denied",
+            Self::Restricted => "restricted",
+            Self::ServicesOff => "services_off",
+            Self::NoAnswer => "no_answer",
+            Self::Timeout => "timeout",
+            Self::Unavailable => "unavailable",
+            Self::Cancelled => "cancelled",
+            Self::Unsupported => "unsupported",
+        }
+    }
+}
+
+/// A Core Location reading as a `Fix`, or `Unavailable` when it isn't a
+/// usable position (a negative accuracy means the reading is invalid).
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+fn fix_from(latitude: f64, longitude: f64, accuracy_m: f64) -> Result<Fix, Failure> {
+    let usable = latitude.is_finite()
+        && longitude.is_finite()
+        && accuracy_m.is_finite()
+        && (-90.0..=90.0).contains(&latitude)
+        && (-180.0..=180.0).contains(&longitude)
+        && accuracy_m >= 0.0;
+    if usable {
+        Ok(Fix {
+            latitude,
+            longitude,
+            accuracy_m,
+        })
+    } else {
+        Err(Failure::Unavailable)
+    }
+}
+
+/// What a request that hit its deadline reports.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+fn timed_out(still_undecided: bool) -> Failure {
+    if still_undecided {
+        Failure::NoAnswer
+    } else {
+        Failure::Timeout
+    }
+}
+
+/// The computer's position, asking the user the first time (macOS only).
+#[tauri::command]
+pub async fn current_location(app: tauri::AppHandle) -> Result<Fix, String> {
+    #[cfg(target_os = "macos")]
+    let result = macos::locate(app).await;
+    #[cfg(not(target_os = "macos"))]
+    let result = {
+        let _ = app;
+        Err(Failure::Unsupported)
+    };
+    result.map_err(|failure| failure.code().to_owned())
+}
 
 #[cfg(target_os = "macos")]
 mod macos {
-    use super::is_backend;
-    use block2::Block;
-    use objc2::ffi::class_addMethod;
-    use objc2::runtime::{AnyClass, AnyObject, Imp, Sel};
-    use objc2::{msg_send, sel};
-    use std::ffi::{c_char, CStr};
-    use std::sync::atomic::{AtomicU16, Ordering};
+    use super::{fix_from, timed_out, Failure, Fix};
+    use objc2::rc::Retained;
+    use objc2::runtime::ProtocolObject;
+    use objc2::{define_class, msg_send, DefinedClass, MainThreadMarker, MainThreadOnly};
+    use objc2_core_location::{
+        kCLLocationAccuracyHundredMeters, CLAuthorizationStatus, CLError, CLLocation,
+        CLLocationManager, CLLocationManagerDelegate,
+    };
+    use objc2_foundation::{NSArray, NSError, NSObject, NSObjectProtocol};
+    use std::cell::{Cell, RefCell};
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::sync::mpsc::{self, RecvTimeoutError, Sender};
+    use std::sync::Mutex;
+    use std::time::Duration;
 
-    static BACKEND_PORT: AtomicU16 = AtomicU16::new(0);
+    /// Covers the first-time prompt too: answering it took Fred about a
+    /// minute in the 2026-11-15 test, with an explanation to read first.
+    const DEADLINE: Duration = Duration::from_secs(120);
 
-    // WKPermissionDecision values.
-    const GRANT: isize = 1;
-    const DENY: isize = 2;
+    struct Pending {
+        id: u64,
+        sender: Sender<Result<Fix, Failure>>,
+        undecided: bool,
+    }
 
-    type Decide = unsafe extern "C-unwind" fn(
-        *mut AnyObject,
-        Sel,
-        *mut AnyObject,
-        *mut AnyObject,
-        *mut AnyObject,
-        *mut Block<dyn Fn(isize)>,
+    /// The request the command is waiting on. A newer request replaces it,
+    /// which drops the older sender: that command then reports `Cancelled`.
+    static PENDING: Mutex<Option<Pending>> = Mutex::new(None);
+    static NEXT_ID: AtomicU64 = AtomicU64::new(1);
+
+    struct Active {
+        id: u64,
+        manager: Retained<CLLocationManager>,
+        _delegate: Retained<LocationDelegate>,
+    }
+
+    thread_local! {
+        /// Core Location objects live on the main thread, where they were
+        /// made and where their callbacks arrive.
+        static ACTIVE: RefCell<Option<Active>> = const { RefCell::new(None) };
+    }
+
+    fn finish(id: u64, outcome: Result<Fix, Failure>) {
+        let mut pending = PENDING.lock().unwrap();
+        if pending.as_ref().is_some_and(|request| request.id == id) {
+            if let Some(request) = pending.take() {
+                let _ = request.sender.send(outcome);
+            }
+        }
+    }
+
+    fn note_undecided(id: u64, undecided: bool) {
+        if let Some(request) = PENDING.lock().unwrap().as_mut() {
+            if request.id == id {
+                request.undecided = undecided;
+            }
+        }
+    }
+
+    struct Ivars {
+        id: u64,
+        asked: Cell<bool>,
+        locating: Cell<bool>,
+    }
+
+    define_class!(
+        #[unsafe(super(NSObject))]
+        #[thread_kind = MainThreadOnly]
+        #[name = "NightCrateLocationDelegate"]
+        #[ivars = Ivars]
+        struct LocationDelegate;
+
+        unsafe impl NSObjectProtocol for LocationDelegate {}
+
+        unsafe impl CLLocationManagerDelegate for LocationDelegate {
+            #[unsafe(method(locationManagerDidChangeAuthorization:))]
+            fn did_change_authorization(&self, manager: &CLLocationManager) {
+                self.evaluate(manager);
+            }
+
+            #[unsafe(method(locationManager:didUpdateLocations:))]
+            fn did_update_locations(
+                &self,
+                _manager: &CLLocationManager,
+                locations: &NSArray<CLLocation>,
+            ) {
+                let outcome = match locations.lastObject() {
+                    Some(location) => unsafe {
+                        let coordinate = location.coordinate();
+                        fix_from(
+                            coordinate.latitude,
+                            coordinate.longitude,
+                            location.horizontalAccuracy(),
+                        )
+                    },
+                    None => Err(Failure::Unavailable),
+                };
+                finish(self.ivars().id, outcome);
+            }
+
+            #[unsafe(method(locationManager:didFailWithError:))]
+            fn did_fail(&self, _manager: &CLLocationManager, error: &NSError) {
+                let failure = if error.code() == CLError::Denied.0 {
+                    Failure::Denied
+                } else {
+                    Failure::Unavailable
+                };
+                finish(self.ivars().id, Err(failure));
+            }
+        }
     );
 
-    /// Lets the backend's page in this window ask macOS for the location.
-    pub fn allow_on_macos(window: &tauri::WebviewWindow, backend_port: u16) {
-        BACKEND_PORT.store(backend_port, Ordering::Release);
-        let result = window.with_webview(|webview| {
-            // SAFETY: `inner` is this window's live WKWebView, and Tauri runs
-            // this closure on the main thread, where WebKit must be used.
-            unsafe { install(webview.inner().cast()) }
-        });
-        if let Err(error) = result {
-            eprintln!("[shell] location: couldn't reach the window's webview: {error}");
+    impl LocationDelegate {
+        fn new(mtm: MainThreadMarker, id: u64) -> Retained<Self> {
+            let this = Self::alloc(mtm).set_ivars(Ivars {
+                id,
+                asked: Cell::new(false),
+                locating: Cell::new(false),
+            });
+            unsafe { msg_send![super(this), init] }
+        }
+
+        /// Moves the request on from the current authorization: ask once,
+        /// locate once when allowed, or finish with the refusal.
+        fn evaluate(&self, manager: &CLLocationManager) {
+            let id = self.ivars().id;
+            let status = unsafe { manager.authorizationStatus() };
+            if status == CLAuthorizationStatus::NotDetermined {
+                note_undecided(id, true);
+                if !self.ivars().asked.replace(true) {
+                    unsafe { manager.requestWhenInUseAuthorization() };
+                }
+            } else if status == CLAuthorizationStatus::AuthorizedAlways
+                || status == CLAuthorizationStatus::AuthorizedWhenInUse
+            {
+                note_undecided(id, false);
+                if !self.ivars().locating.replace(true) {
+                    unsafe { manager.requestLocation() };
+                }
+            } else if status == CLAuthorizationStatus::Denied {
+                finish(id, Err(Failure::Denied));
+            } else if status == CLAuthorizationStatus::Restricted {
+                finish(id, Err(Failure::Restricted));
+            } else {
+                finish(id, Err(Failure::Unavailable));
+            }
         }
     }
 
-    unsafe fn install(webview: *mut AnyObject) {
-        if webview.is_null() {
-            return;
-        }
-        let delegate: *mut AnyObject = unsafe { msg_send![webview, UIDelegate] };
-        let Some(delegate_object) = (unsafe { delegate.as_ref() }) else {
-            eprintln!("[shell] location: the window has no WebKit UI delegate");
+    /// Runs on the main thread.
+    fn start(id: u64) {
+        let Some(mtm) = MainThreadMarker::new() else {
+            finish(id, Err(Failure::Unavailable));
             return;
         };
-        let class: *const AnyClass = delegate_object.class();
-        let decide: Decide = decide;
-        // SAFETY: the signature matches the selector's type encoding, which is
-        // WebKit's own (v48@0:8@16@24@32@?40, read from WKUIDelegatePrivate).
-        let imp: Imp = unsafe { std::mem::transmute::<Decide, Imp>(decide) };
-        // Adds nothing if the class already answers: a later wry may, and it
-        // then asks the window's permission handler instead.
+        let previous = ACTIVE.with(|active| active.borrow_mut().take());
+        if let Some(previous) = previous {
+            release(previous);
+        }
+        let manager = unsafe { CLLocationManager::new() };
+        let delegate = LocationDelegate::new(mtm, id);
         unsafe {
-            class_addMethod(
-                class.cast_mut(),
-                sel!(_webView:requestGeolocationPermissionForOrigin:initiatedByFrame:decisionHandler:),
-                imp,
-                c"v@:@@@@?".as_ptr(),
-            );
+            manager.setDesiredAccuracy(kCLLocationAccuracyHundredMeters);
+            manager.setDelegate(Some(ProtocolObject::from_ref(&*delegate)));
         }
-        // WebKit records which methods a delegate answers when the delegate is
-        // set, so set the same delegate again for the new method to count.
-        let _: () = unsafe { msg_send![webview, setUIDelegate: delegate] };
+        // Don't rely on the callback Core Location makes when a delegate is
+        // set; the flags keep a second evaluation from asking twice.
+        delegate.evaluate(&manager);
+        ACTIVE.with(|active| {
+            *active.borrow_mut() = Some(Active {
+                id,
+                manager,
+                _delegate: delegate,
+            });
+        });
     }
 
-    unsafe fn text(string: *mut AnyObject) -> String {
-        if string.is_null() {
-            return String::new();
+    /// Runs on the main thread, after the command has its answer.
+    fn stop(id: u64) {
+        let finished = ACTIVE.with(|active| {
+            let mut active = active.borrow_mut();
+            if active.as_ref().is_some_and(|current| current.id == id) {
+                active.take()
+            } else {
+                None
+            }
+        });
+        if let Some(finished) = finished {
+            release(finished);
         }
-        let utf8: *const c_char = unsafe { msg_send![string, UTF8String] };
-        if utf8.is_null() {
-            return String::new();
-        }
-        unsafe { CStr::from_ptr(utf8) }
-            .to_string_lossy()
-            .into_owned()
     }
 
-    unsafe extern "C-unwind" fn decide(
-        _delegate: *mut AnyObject,
-        _command: Sel,
-        _webview: *mut AnyObject,
-        origin: *mut AnyObject,
-        _frame: *mut AnyObject,
-        decision_handler: *mut Block<dyn Fn(isize)>,
-    ) {
-        let allowed = !origin.is_null() && {
-            let scheme = unsafe { text(msg_send![origin, protocol]) };
-            let host = unsafe { text(msg_send![origin, host]) };
-            let port: isize = unsafe { msg_send![origin, port] };
-            is_backend(
-                &scheme,
-                &host,
-                u16::try_from(port).ok(),
-                BACKEND_PORT.load(Ordering::Acquire),
-            )
+    fn release(active: Active) {
+        unsafe {
+            active.manager.setDelegate(None);
+            active.manager.stopUpdatingLocation();
+        }
+    }
+
+    pub async fn locate(app: tauri::AppHandle) -> Result<Fix, Failure> {
+        // Apple asks callers not to check this on the main thread.
+        let services_on = tauri::async_runtime::spawn_blocking(|| unsafe {
+            CLLocationManager::locationServicesEnabled_class()
+        })
+        .await
+        .unwrap_or(true);
+        if !services_on {
+            return Err(Failure::ServicesOff);
+        }
+        let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
+        let (sender, receiver) = mpsc::channel();
+        *PENDING.lock().unwrap() = Some(Pending {
+            id,
+            sender,
+            undecided: false,
+        });
+        if app.run_on_main_thread(move || start(id)).is_err() {
+            finish(id, Err(Failure::Unavailable));
+        }
+        let received =
+            tauri::async_runtime::spawn_blocking(move || receiver.recv_timeout(DEADLINE)).await;
+        let undecided = {
+            let mut pending = PENDING.lock().unwrap();
+            if pending.as_ref().is_some_and(|request| request.id == id) {
+                pending.take().is_some_and(|request| request.undecided)
+            } else {
+                false
+            }
         };
-        if let Some(handler) = unsafe { decision_handler.as_ref() } {
-            handler.call((if allowed { GRANT } else { DENY },));
+        let _ = app.run_on_main_thread(move || stop(id));
+        match received {
+            Ok(Ok(outcome)) => outcome,
+            Ok(Err(RecvTimeoutError::Timeout)) => Err(timed_out(undecided)),
+            Ok(Err(RecvTimeoutError::Disconnected)) => Err(Failure::Cancelled),
+            Err(_) => Err(Failure::Unavailable),
         }
     }
 }
@@ -207,5 +432,77 @@ mod tests {
         assert!(!is_backend("http", "127.0.0.1", Some(8767), 8766));
         assert!(!is_backend("http", "127.0.0.1", None, 8766));
         assert!(!is_backend("", "", None, 0));
+    }
+
+    #[test]
+    fn a_reading_becomes_a_fix_only_when_usable() {
+        assert_eq!(
+            fix_from(33.4484, -112.074, 35.0),
+            Ok(Fix {
+                latitude: 33.4484,
+                longitude: -112.074,
+                accuracy_m: 35.0
+            })
+        );
+        assert!(fix_from(-90.0, 180.0, 0.0).is_ok());
+        for (latitude, longitude, accuracy) in [
+            (33.4, -112.0, -1.0),
+            (90.5, 0.0, 10.0),
+            (0.0, -180.5, 10.0),
+            (f64::NAN, 0.0, 10.0),
+            (0.0, f64::INFINITY, 10.0),
+            (0.0, 0.0, f64::NAN),
+        ] {
+            assert_eq!(
+                fix_from(latitude, longitude, accuracy),
+                Err(Failure::Unavailable),
+                "{latitude} {longitude} {accuracy}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_deadline_reports_whether_macos_ever_answered() {
+        assert_eq!(timed_out(true), Failure::NoAnswer);
+        assert_eq!(timed_out(false), Failure::Timeout);
+    }
+
+    #[test]
+    fn failures_have_the_codes_the_page_expects() {
+        let codes: Vec<&str> = [
+            Failure::Denied,
+            Failure::Restricted,
+            Failure::ServicesOff,
+            Failure::NoAnswer,
+            Failure::Timeout,
+            Failure::Unavailable,
+            Failure::Cancelled,
+            Failure::Unsupported,
+        ]
+        .into_iter()
+        .map(Failure::code)
+        .collect();
+        assert_eq!(
+            codes,
+            [
+                "denied",
+                "restricted",
+                "services_off",
+                "no_answer",
+                "timeout",
+                "unavailable",
+                "cancelled",
+                "unsupported"
+            ]
+        );
+    }
+
+    #[test]
+    fn a_fix_reaches_the_page_with_these_field_names() {
+        let fix = fix_from(1.5, -2.5, 35.0).unwrap();
+        assert_eq!(
+            serde_json::to_value(fix).unwrap(),
+            serde_json::json!({"latitude": 1.5, "longitude": -2.5, "accuracy_m": 35.0})
+        );
     }
 }

@@ -2205,20 +2205,27 @@ these are the constraints and traps found while building it.
     list with links);
   - `<main>` is `position: relative`, or an absolutely positioned hidden
     element escapes it and the whole window scrolls;
-  - "Use My Location": WebKit asks the app through
-    `_webView:requestGeolocationPermissionForOrigin:initiatedByFrame:decisionHandler:`
-    (WebKit's private UI-delegate interface), which wry 0.57 doesn't
-    implement, so every request was refused without a prompt.
-    `shell/src-tauri/src/location.rs` adds that method to wry's delegate
-    class (`class_addMethod` adds nothing if a later wry has its own) and
-    grants only `http://127.0.0.1:{port}`; macOS then asks the user. WebKit
-    records the delegate's methods when the delegate is set, so the shell
-    sets the same delegate again afterwards. The bundle needs the
+  - "Use My Location": on macOS, WebKit fetches a location for a page
+    only when the app gives it a location provider; wry doesn't, so the
+    page's own request either fails at once or waits forever (WebKit's
+    `WebGeolocationManagerProxy::providerStartUpdating`; Codex, confirmed
+    with a test app, 2026-11-15). The page calls the shell's
+    `current_location` command instead (`shell/src-tauri/src/location.rs`,
+    `lib/currentLocation.ts`), which asks Core Location on the main thread,
+    so macOS shows its own prompt the first time. It needs the
     `NSLocation…UsageDescription` strings (`Info.plist`) and, under the
     hardened runtime, the location entitlement (`Entitlements.plist`).
-    Windows and Linux grant the same origin through `on_permission_request`
-    (WebKitGTK refuses by default). The page's timeout is 30 s because it
-    includes the first macOS prompt (Fred, 2026-11-15).
+    Each failure has its own code and message; the deadline is 2 minutes,
+    since it includes the first prompt. Windows and Linux answer
+    "unsupported" and use the browser's request, which
+    `on_permission_request` allows for the backend's page (WebKitGTK
+    refuses by default; on Linux it also needs a working GeoClue). An
+    ad-hoc signed update may make macOS ask again, or not ask at all, which
+    the page reports as no answer (Fred, 2026-11-15);
+  - wry asks `on_navigation` about loads inside frames too, so the
+    Locations map (`https://www.openstreetmap.org/export/embed.html`) is
+    allowed by URL in `links.rs`; anything else from outside still opens in
+    the browser.
 - **Test hooks**, read only when set: `NIGHTCRATE_TEST_STARTUP_DELAY`,
   `NIGHTCRATE_TEST_BUSY_POOL` and `NIGHTCRATE_TEST_BASE_PORT` (backend);
   the `NIGHTCRATE_TEST_*` compile-time options (shell), which
