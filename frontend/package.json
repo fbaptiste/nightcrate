@@ -9,6 +9,7 @@
     "build": "tsc -b && vite build",
     "check:home": "node scripts/check-home.mjs",
     "check:sky": "node scripts/check-sky-chart.mjs",
+    "check:paths": "node scripts/check-paths.mjs",
     "lint": "eslint .",
     "preview": "vite preview"
   },

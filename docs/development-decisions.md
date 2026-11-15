@@ -109,6 +109,13 @@ Shared architecture, checks, and privacy rules live in [CLAUDE.md](../CLAUDE.md)
   still dispatch pre-resolved sources separately; a new format affects all three.
 - Aberration detection uses `sep` and `sep.flux_radius` for HFR. Cache by
   `(file_path, hdu, settings_json)` with configurable TTL; debounce edits 500 ms.
+- **One file browser** (`components/fits/FileBrowser.tsx`) serves every file
+  and folder chooser, workspace locations included (`plainFolders`,
+  `allowNewFolder`, `startPath`; v0.54.0). Workspace screens once had their
+  own copy without the volumes list; Fred had to climb from home to
+  `/Volumes` to pick a drive. Paths arrive in the system's own form; split
+  and join them with `lib/paths.ts`, which handles `C:\` and
+  `\\server\share` paths.
 - File browser: a single click opens a folder or selects a file; a double click
   opens the file. Stretch sliders change local state and render only on
   **Apply**; the Auto/None and Linked/Unlinked toggles and Reset apply at once.
@@ -2112,6 +2119,11 @@ these are the constraints and traps found while building it.
   marker's id. **Residual:** versions before v0.54.0 ignore markers; if one
   opens a half-upgraded workspace, its writes are lost when a later version
   restores.
+- **Removing a workspace with its folder deletes the whole folder,** so
+  `DELETE /api/admin/database?delete_file=true` refuses when the folder
+  holds another known workspace (the active one included). New workspaces
+  default to the folder *beside* the active one; on Windows a `/`-only
+  parent rule once proposed a folder inside it (v0.54.0).
 - **While a workspace is refused, nothing opens its database.**
   `get_db_path()` raises `WorkspaceUnavailable`, which becomes a 409, and
   code that read `config.active_db` itself uses `active_db_path_or_none()`.

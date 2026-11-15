@@ -409,6 +409,28 @@ async def setup_database(req: CreateDatabaseRequest) -> dict:
     }
 
 
+def _folder_holds(folder: Path, path: Path) -> bool:
+    """Whether ``path`` is ``folder`` or lies anywhere inside it.
+
+    Compares folders on disk as well as spellings: drives that ignore case
+    (macOS and Windows by default) treat ``/Users/x`` and ``/users/x`` as one
+    folder, which a text comparison misses.
+    """
+    folder = folder.resolve()
+    path = path.resolve()
+    if path.is_relative_to(folder):
+        return True
+    if not folder.exists():
+        return False
+    for ancestor in (path, *path.parents):
+        try:
+            if ancestor.exists() and ancestor.samefile(folder):
+                return True
+        except OSError:
+            continue
+    return False
+
+
 @router.delete("/database", dependencies=[Depends(admit_work)])
 async def remove_database(
     req: RemoveDatabaseRequest,
@@ -427,6 +449,24 @@ async def remove_database(
     if req.path not in config.databases:
         raise HTTPException(status_code=400, detail=f"Path not in known workspaces: {req.path}")
 
+    if delete_file:
+        # Deleting the folder deletes everything in it, so it must not hold
+        # another known workspace, least of all the active one.
+        folder = Path(req.path)
+        workspaces = {path: entry.name for path, entry in config.databases.items()}
+        if config.active_db is not None:
+            workspaces.setdefault(config.active_db, "")
+        for other, name in workspaces.items():
+            if other != req.path and _folder_holds(folder, Path(other)):
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"This folder also holds the workspace \u201c{name or other}\u201d"
+                        f" ({other}). Remove that workspace first, or remove this one"
+                        " without deleting its folder."
+                    ),
+                )
+
     del config.databases[req.path]
     save_config(config)
 
@@ -436,49 +476,6 @@ async def remove_database(
             shutil.rmtree(ws, ignore_errors=True)
 
     return {"ok": True}
-
-
-@router.get("/browse")
-async def browse_filesystem(path: str = Query(default="~")) -> dict:
-    """List directories and .db files at the given filesystem path."""
-    resolved = Path(path).expanduser().resolve()
-
-    if not resolved.is_dir():
-        raise HTTPException(status_code=400, detail=f"Not a directory: {path}")
-
-    dirs = []
-    files = []
-
-    try:
-        for entry in sorted(resolved.iterdir(), key=lambda e: e.name.lower()):
-            if entry.name.startswith("."):
-                continue
-            if entry.is_dir():
-                dirs.append({"name": entry.name, "path": str(entry)})
-            elif entry.is_file() and entry.suffix.lower() == ".db":
-                files.append(
-                    {
-                        "name": entry.name,
-                        "path": str(entry),
-                        "size": entry.stat().st_size,
-                    }
-                )
-    except PermissionError:
-        pass  # Return whatever we managed to collect
-
-    return {"path": str(resolved), "dirs": dirs, "files": files}
-
-
-@router.get("/shortcuts")
-async def filesystem_shortcuts() -> dict:
-    """Return common filesystem shortcut paths."""
-    home = Path.home()
-    docs = home / "Documents"
-    return {
-        "home": str(home),
-        "documents": str(docs) if docs.is_dir() else str(home),
-        "app_data": str(app_config.APP_DIR),
-    }
 
 
 class CreateFolderRequest(BaseModel):

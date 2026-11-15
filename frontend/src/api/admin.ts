@@ -35,12 +35,6 @@ export interface AdminStatus {
   known_databases: DatabaseInfo[];
 }
 
-export interface BrowseResult {
-  path: string;
-  dirs: { name: string; path: string }[];
-  files: { name: string; path: string; size: number }[];
-}
-
 export interface HealthResponse {
   status: string;
   version: string;
@@ -90,17 +84,6 @@ export const removeDatabase = (path: string, deleteFile = false) =>
       body: JSON.stringify({ path }),
     },
   );
-
-export const browseForDatabase = (path = "~") =>
-  apiFetch<BrowseResult>(`/admin/browse?path=${encodeURIComponent(path)}`);
-
-export interface Shortcuts {
-  home: string;
-  documents: string;
-  app_data: string;
-}
-
-export const fetchShortcuts = () => apiFetch<Shortcuts>("/admin/shortcuts");
 
 export const createFolder = (path: string) =>
   apiFetch<{ path: string }>("/admin/mkdir", {

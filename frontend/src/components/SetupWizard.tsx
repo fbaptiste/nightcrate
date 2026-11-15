@@ -6,25 +6,15 @@ import Card from "@mui/material/Card";
 import CardContent from "@mui/material/CardContent";
 import CircularProgress from "@mui/material/CircularProgress";
 import Checkbox from "@mui/material/Checkbox";
-import Dialog from "@mui/material/Dialog";
-import DialogActions from "@mui/material/DialogActions";
-import DialogContent from "@mui/material/DialogContent";
-import DialogTitle from "@mui/material/DialogTitle";
 import Divider from "@mui/material/Divider";
-import IconButton from "@mui/material/IconButton";
 import List from "@mui/material/List";
 import ListItemButton from "@mui/material/ListItemButton";
 import ListItemIcon from "@mui/material/ListItemIcon";
 import ListItemText from "@mui/material/ListItemText";
 import Snackbar from "@mui/material/Snackbar";
 import TextField from "@mui/material/TextField";
-import Tooltip from "@mui/material/Tooltip";
 import Typography from "@mui/material/Typography";
 import FormControlLabel from "@mui/material/FormControlLabel";
-import CreateNewFolderIcon from "@mui/icons-material/CreateNewFolder";
-import DescriptionIcon from "@mui/icons-material/Description";
-import FolderIcon from "@mui/icons-material/Folder";
-import HomeIcon from "@mui/icons-material/Home";
 import StorageIcon from "@mui/icons-material/Storage";
 import { useQuery } from "@tanstack/react-query";
 import {
@@ -32,11 +22,10 @@ import {
   fetchAdminStatus,
   setupDatabase,
   activateDatabase,
-  browseForDatabase,
-  fetchShortcuts,
-  createFolder,
 } from "@/api/admin";
 import { setCheckAutomatically } from "@/api/updates";
+import { FileBrowser } from "@/components/fits/FileBrowser";
+import { joinPath } from "@/lib/paths";
 
 /** Convert a workspace name to a folder slug (e.g., "Fred's Rig" → "Freds_Rig") */
 function nameToFolder(name: string): string {
@@ -51,9 +40,6 @@ export function SetupWizard() {
   const [name, setName] = useState("My NightCrate");
   const [directory, setDirectory] = useState("");
   const [browseOpen, setBrowseOpen] = useState(false);
-  const [browsePath, setBrowsePath] = useState("~");
-  const [newFolderName, setNewFolderName] = useState("");
-  const [newFolderOpen, setNewFolderOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [automaticChecks, setAutomaticChecks] = useState(true);
@@ -68,30 +54,13 @@ export function SetupWizard() {
     queryFn: fetchAdminStatus,
   });
 
-  const { data: shortcuts } = useQuery({
-    queryKey: ["admin-shortcuts"],
-    queryFn: fetchShortcuts,
-  });
-
-  const {
-    data: browseResult,
-    isLoading: browseLoading,
-    refetch: refetchBrowse,
-  } = useQuery({
-    queryKey: ["admin-browse", browsePath],
-    queryFn: () => browseForDatabase(browsePath),
-    enabled: browseOpen,
-  });
-
   useEffect(() => {
     if (info && !directory) {
       setDirectory(info.app_data_dir);
     }
   }, [info, directory]);
 
-  const fullPath = directory
-    ? `${directory.replace(/\/$/, "")}/${nameToFolder(name)}`
-    : "";
+  const fullPath = directory ? joinPath(directory, nameToFolder(name)) : "";
 
   const knownDbs = status?.known_databases ?? [];
   const availableDbs = knownDbs.filter((db) => db.available);
@@ -131,27 +100,6 @@ export function SetupWizard() {
   const handleBrowseSelect = (dirPath: string) => {
     setDirectory(dirPath);
     setBrowseOpen(false);
-  };
-
-  const handleBrowseNavigate = (dirPath: string) => {
-    setBrowsePath(dirPath);
-  };
-
-  const handleCreateFolder = async () => {
-    if (!newFolderName.trim()) return;
-    const currentPath = browseResult?.path ?? browsePath;
-    const newPath = `${currentPath.replace(/\/$/, "")}/${newFolderName.trim()}`;
-    try {
-      const result = await createFolder(newPath);
-      setNewFolderOpen(false);
-      setNewFolderName("");
-      handleBrowseNavigate(result.path);
-      void refetchBrowse();
-    } catch (err) {
-      setErrorMsg(
-        err instanceof Error ? err.message : "Failed to create folder.",
-      );
-    }
   };
 
   return (
@@ -259,17 +207,11 @@ export function SetupWizard() {
                 },
               }}
               sx={{ "& .MuiInputBase-input": { cursor: "pointer" } }}
-              onClick={() => {
-                setBrowsePath(directory || "~");
-                setBrowseOpen(true);
-              }}
+              onClick={() => setBrowseOpen(true)}
             />
             <Button
               variant="outlined"
-              onClick={() => {
-                setBrowsePath(directory || "~");
-                setBrowseOpen(true);
-              }}
+              onClick={() => setBrowseOpen(true)}
               sx={{ whiteSpace: "nowrap", minWidth: 90 }}
             >
               Browse
@@ -312,151 +254,18 @@ export function SetupWizard() {
         </CardContent>
       </Card>
 
-      {/* Directory browser dialog */}
-      <Dialog
+      <FileBrowser
         open={browseOpen}
         onClose={() => setBrowseOpen(false)}
-        maxWidth="sm"
-        fullWidth
-      >
-        <DialogTitle>
-          <Box sx={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-            Select Location
-            <Box sx={{ display: "flex", gap: 0.5 }}>
-              {shortcuts && (
-                <>
-                  <Tooltip title="Home">
-                    <IconButton
-                      size="small"
-                      onClick={() => handleBrowseNavigate(shortcuts.home)}
-                    >
-                      <HomeIcon fontSize="small" />
-                    </IconButton>
-                  </Tooltip>
-                  <Tooltip title="Documents">
-                    <IconButton
-                      size="small"
-                      onClick={() => handleBrowseNavigate(shortcuts.documents)}
-                    >
-                      <DescriptionIcon fontSize="small" />
-                    </IconButton>
-                  </Tooltip>
-                  <Tooltip title="App Data">
-                    <IconButton
-                      size="small"
-                      onClick={() => handleBrowseNavigate(shortcuts.app_data)}
-                    >
-                      <StorageIcon fontSize="small" />
-                    </IconButton>
-                  </Tooltip>
-                </>
-              )}
-              <Tooltip title="New Folder">
-                <IconButton
-                  size="small"
-                  onClick={() => {
-                    setNewFolderName("");
-                    setNewFolderOpen(true);
-                  }}
-                >
-                  <CreateNewFolderIcon fontSize="small" />
-                </IconButton>
-              </Tooltip>
-            </Box>
-          </Box>
-        </DialogTitle>
-        <DialogContent>
-          <Typography
-            variant="caption"
-            color="text.secondary"
-            sx={{ fontFamily: "monospace", display: "block", mb: 1 }}
-          >
-            {browseResult?.path ?? browsePath}
-          </Typography>
-
-          {/* New folder inline form */}
-          {newFolderOpen && (
-            <Box sx={{ display: "flex", gap: 1, mb: 1 }}>
-              <TextField
-                size="small"
-                label="Folder name"
-                value={newFolderName}
-                onChange={(e) => setNewFolderName(e.target.value)}
-                fullWidth
-                autoFocus
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") void handleCreateFolder();
-                  if (e.key === "Escape") setNewFolderOpen(false);
-                }}
-              />
-              <Button
-                size="small"
-                variant="contained"
-                onClick={() => void handleCreateFolder()}
-                disabled={!newFolderName.trim()}
-              >
-                Create
-              </Button>
-              <Button size="small" onClick={() => setNewFolderOpen(false)}>
-                Cancel
-              </Button>
-            </Box>
-          )}
-
-          {browseLoading ? (
-            <Box sx={{ display: "flex", justifyContent: "center", py: 3 }}>
-              <CircularProgress />
-            </Box>
-          ) : (
-            <List dense sx={{ maxHeight: 400, overflowY: "auto" }}>
-              {/* Parent directory */}
-              {browseResult?.path && browseResult.path !== "/" && (
-                <ListItemButton
-                  onClick={() =>
-                    handleBrowseNavigate(
-                      browseResult.path.replace(/\/[^/]+\/?$/, "") || "/",
-                    )
-                  }
-                >
-                  <ListItemIcon sx={{ minWidth: 36 }}>
-                    <FolderIcon />
-                  </ListItemIcon>
-                  <ListItemText primary=".." />
-                </ListItemButton>
-              )}
-              {browseResult?.dirs.map((dir) => (
-                <ListItemButton
-                  key={dir.path}
-                  onClick={() => handleBrowseNavigate(dir.path)}
-                >
-                  <ListItemIcon sx={{ minWidth: 36 }}>
-                    <FolderIcon />
-                  </ListItemIcon>
-                  <ListItemText primary={dir.name} />
-                </ListItemButton>
-              ))}
-              {browseResult?.dirs.length === 0 && (
-                <Typography
-                  variant="body2"
-                  color="text.secondary"
-                  sx={{ py: 2, textAlign: "center" }}
-                >
-                  No subdirectories
-                </Typography>
-              )}
-            </List>
-          )}
-        </DialogContent>
-        <DialogActions>
-          <Button onClick={() => setBrowseOpen(false)}>Cancel</Button>
-          <Button
-            variant="contained"
-            onClick={() => handleBrowseSelect(browseResult?.path ?? browsePath)}
-          >
-            Select This Folder
-          </Button>
-        </DialogActions>
-      </Dialog>
+        onSelect={handleBrowseSelect}
+        title="Select Location"
+        emptyMessage="No folders here"
+        accept={[".db"]}
+        directoryMode
+        plainFolders
+        allowNewFolder
+        startPath={directory || "~"}
+      />
 
       <Snackbar
         open={errorMsg !== null}

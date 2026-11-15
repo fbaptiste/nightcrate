@@ -105,6 +105,14 @@ after v0.53.0 merged.
     one click (Fred, 2026-11-15);
   - the night-detail grid's numbers ran together at the default window
     width; cells now fit their text at every width;
+  - choosing a new workspace's location (first run and Admin) used a
+    separate, simpler folder browser without the volumes list; the
+    workspace screens now use the shared one, which gained New Folder.
+    Its path links and its starting folder beside an open image also
+    work with Windows paths now (they assumed `/`). Codex's review found
+    Admin proposing new workspaces inside the active one on Windows, and
+    that deleting a workspace's folder would delete any workspace inside
+    it, the active one included: both fixed, with tests;
   - after installing build 24, the app window ran build 21's cached page
     (its old location code), because the backend served the page without
     cache headers. Pages and other unhashed files are now revalidated each
@@ -122,8 +130,30 @@ after v0.53.0 merged.
     location strings, the entitlement and macOS 11 as the minimum, and its
     signature verifies. Codex reviews: two minor grid cases, then for the
     native location a stale-fix issue and three minor ones, all fixed; the
-    last re-check found nothing. Not yet run: the location command inside the
-    installed app (Fred's retest).
+    last re-check found nothing. Page caching: a serve test (revalidation
+    headers on pages, deep links and root files; 304 when unchanged);
+    Codex found nothing.
+  - Fred's retest of build 24 (2026-11-15): forecast numbers readable, the
+    map in the dialog, and Use My Location prompted, was allowed and filled
+    in the fields (once the stale page copy had expired).
+
+**Before the first release** (Fred, 2026-11-15: "no actual release yet. we
+still need to work through some additional things"). Merging doesn't
+release; `release.yml` builds a draft only when Fred says "release".
+- [ ] The additional work Fred brings next.
+- [ ] Fred's check on Windows: install, first run, a workspace, Use My
+  Location, and the SmartScreen step. A Windows 11 virtual machine on his
+  Mac runs the x64 installer through Windows' x64 emulation; CI covers
+  native x64. Known before then: a few displayed file names (the image
+  analyzer's title, activity lines, frame names) take the text after the
+  last `/`, so Windows would show whole paths there; switch them to
+  `lib/paths.ts`'s `baseName`, minding archive (`::`) paths.
+- [ ] Fred's check on Linux (x64; the Mac can't run the AppImage natively).
+- [ ] An update test through the app's own update flow, from one build to
+  a newer one, with the page open just before updating: the restarted
+  window shows the new version's page, and the workspace is intact. CI's
+  update rehearsal checks the backend's version after the update, not the
+  window's page; adding that check is part of this item.
 
 ### Packaging test results (Claude, 2026-11-14)
 

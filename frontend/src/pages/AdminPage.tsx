@@ -8,23 +8,14 @@ import Dialog from "@mui/material/Dialog";
 import DialogActions from "@mui/material/DialogActions";
 import DialogContent from "@mui/material/DialogContent";
 import DialogTitle from "@mui/material/DialogTitle";
-import IconButton from "@mui/material/IconButton";
 import List from "@mui/material/List";
 import ListItem from "@mui/material/ListItem";
-import ListItemButton from "@mui/material/ListItemButton";
-import ListItemIcon from "@mui/material/ListItemIcon";
 import ListItemText from "@mui/material/ListItemText";
 import Link from "@mui/material/Link";
 import Paper from "@mui/material/Paper";
 import Snackbar from "@mui/material/Snackbar";
 import TextField from "@mui/material/TextField";
-import Tooltip from "@mui/material/Tooltip";
 import Typography from "@mui/material/Typography";
-import CreateNewFolderIcon from "@mui/icons-material/CreateNewFolder";
-import DescriptionIcon from "@mui/icons-material/Description";
-import FolderIcon from "@mui/icons-material/Folder";
-import HomeIcon from "@mui/icons-material/Home";
-import StorageIcon from "@mui/icons-material/Storage";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   fetchAdminInfo,
@@ -34,9 +25,6 @@ import {
   addExistingDatabase,
   activateDatabase,
   removeDatabase,
-  browseForDatabase,
-  fetchShortcuts,
-  createFolder,
   reseedEquipment,
   type AdminStatus,
   type AppInfo,
@@ -44,6 +32,8 @@ import {
   type WorkspaceProblem,
 } from "@/api/admin";
 import { ApiError } from "@/api/client";
+import { FileBrowser } from "@/components/fits/FileBrowser";
+import { baseName, joinPath, parentPath } from "@/lib/paths";
 import CatalogsAdminSection from "@/components/dso/CatalogsAdminSection";
 import CachesAdminSection from "@/components/admin/CachesAdminSection";
 import StarCatalogAdminSection from "@/components/admin/StarCatalogAdminSection";
@@ -114,26 +104,8 @@ function CreateDbDialog({
   const [directory, setDirectory] = useState("");
   const [existingPath, setExistingPath] = useState("");
   const [browseOpen, setBrowseOpen] = useState(false);
-  const [browsePath, setBrowsePath] = useState("~");
-  const [newFolderName, setNewFolderName] = useState("");
-  const [newFolderOpen, setNewFolderOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
-  const { data: shortcuts } = useQuery({
-    queryKey: ["admin-shortcuts"],
-    queryFn: fetchShortcuts,
-  });
-
-  const {
-    data: browseResult,
-    isLoading: browseLoading,
-    refetch: refetchBrowse,
-  } = useQuery({
-    queryKey: ["admin-browse-dialog", browsePath],
-    queryFn: () => browseForDatabase(browsePath),
-    enabled: browseOpen,
-  });
 
   const handleOpen = () => {
     setName(isAddExisting ? "" : "My NightCrate");
@@ -142,9 +114,7 @@ function CreateDbDialog({
     setError(null);
   };
 
-  const fullPath = directory
-    ? `${directory.replace(/\/$/, "")}/${nameToFolder(name)}`
-    : "";
+  const fullPath = directory ? joinPath(directory, nameToFolder(name)) : "";
 
   const handleSubmit = async () => {
     setSubmitting(true);
@@ -175,30 +145,10 @@ function CreateDbDialog({
   const handleBrowseSelectWorkspace = (dirPath: string) => {
     setExistingPath(dirPath);
     if (!name.trim()) {
-      const folderName = dirPath.split("/").pop() ?? "";
-      const base = folderName.replace(/_/g, " ");
+      const base = baseName(dirPath).replace(/_/g, " ");
       setName(base.charAt(0).toUpperCase() + base.slice(1));
     }
     setBrowseOpen(false);
-  };
-
-  const handleBrowseNavigate = (dirPath: string) => {
-    setBrowsePath(dirPath);
-  };
-
-  const handleCreateFolder = async () => {
-    if (!newFolderName.trim()) return;
-    const currentPath = browseResult?.path ?? browsePath;
-    const newPath = `${currentPath.replace(/\/$/, "")}/${newFolderName.trim()}`;
-    try {
-      const result = await createFolder(newPath);
-      setNewFolderOpen(false);
-      setNewFolderName("");
-      handleBrowseNavigate(result.path);
-      void refetchBrowse();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to create folder.");
-    }
   };
 
   const isValid = isAddExisting
@@ -232,10 +182,7 @@ function CreateDbDialog({
                   fullWidth
                   slotProps={{ input: { readOnly: true } }}
                   sx={{ "& .MuiInputBase-input": { cursor: "pointer" } }}
-                  onClick={() => {
-                    setBrowsePath(defaultDir);
-                    setBrowseOpen(true);
-                  }}
+                  onClick={() => setBrowseOpen(true)}
                   helperText={
                     existingPath
                       ? undefined
@@ -244,10 +191,7 @@ function CreateDbDialog({
                 />
                 <Button
                   variant="outlined"
-                  onClick={() => {
-                    setBrowsePath(defaultDir);
-                    setBrowseOpen(true);
-                  }}
+                  onClick={() => setBrowseOpen(true)}
                   sx={{ whiteSpace: "nowrap", minWidth: 90, height: 56 }}
                 >
                   Browse
@@ -262,17 +206,11 @@ function CreateDbDialog({
                     fullWidth
                     slotProps={{ input: { readOnly: true } }}
                     sx={{ "& .MuiInputBase-input": { cursor: "pointer" } }}
-                    onClick={() => {
-                      setBrowsePath(directory || "~");
-                      setBrowseOpen(true);
-                    }}
+                    onClick={() => setBrowseOpen(true)}
                   />
                   <Button
                     variant="outlined"
-                    onClick={() => {
-                      setBrowsePath(directory || "~");
-                      setBrowseOpen(true);
-                    }}
+                    onClick={() => setBrowseOpen(true)}
                     sx={{ whiteSpace: "nowrap", minWidth: 90 }}
                   >
                     Browse
@@ -310,120 +248,18 @@ function CreateDbDialog({
         </DialogActions>
       </Dialog>
 
-      {/* Folder browser dialog */}
-      <Dialog
+      <FileBrowser
         open={browseOpen}
         onClose={() => setBrowseOpen(false)}
-        maxWidth="sm"
-        fullWidth
-      >
-        <DialogTitle>
-          <Box sx={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-            Select Location
-            <Box sx={{ display: "flex", gap: 0.5 }}>
-              {shortcuts && (
-                <>
-                  <Tooltip title="Home">
-                    <IconButton size="small" onClick={() => handleBrowseNavigate(shortcuts.home)}>
-                      <HomeIcon fontSize="small" />
-                    </IconButton>
-                  </Tooltip>
-                  <Tooltip title="Documents">
-                    <IconButton size="small" onClick={() => handleBrowseNavigate(shortcuts.documents)}>
-                      <DescriptionIcon fontSize="small" />
-                    </IconButton>
-                  </Tooltip>
-                  <Tooltip title="App Data">
-                    <IconButton size="small" onClick={() => handleBrowseNavigate(shortcuts.app_data)}>
-                      <StorageIcon fontSize="small" />
-                    </IconButton>
-                  </Tooltip>
-                </>
-              )}
-              <Tooltip title="New Folder">
-                <IconButton size="small" onClick={() => { setNewFolderName(""); setNewFolderOpen(true); }}>
-                  <CreateNewFolderIcon fontSize="small" />
-                </IconButton>
-              </Tooltip>
-            </Box>
-          </Box>
-        </DialogTitle>
-        <DialogContent>
-          <Typography
-            variant="caption"
-            color="text.secondary"
-            sx={{ fontFamily: "monospace", display: "block", mb: 1 }}
-          >
-            {browseResult?.path ?? browsePath}
-          </Typography>
-
-          {newFolderOpen && (
-            <Box sx={{ display: "flex", gap: 1, mb: 1 }}>
-              <TextField
-                size="small"
-                label="Folder name"
-                value={newFolderName}
-                onChange={(e) => setNewFolderName(e.target.value)}
-                fullWidth
-                autoFocus
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") void handleCreateFolder();
-                  if (e.key === "Escape") setNewFolderOpen(false);
-                }}
-              />
-              <Button size="small" variant="contained" onClick={() => void handleCreateFolder()} disabled={!newFolderName.trim()}>
-                Create
-              </Button>
-              <Button size="small" onClick={() => setNewFolderOpen(false)}>
-                Cancel
-              </Button>
-            </Box>
-          )}
-
-          {browseLoading ? (
-            <Box sx={{ display: "flex", justifyContent: "center", py: 3 }}>
-              <CircularProgress />
-            </Box>
-          ) : (
-            <List dense sx={{ maxHeight: 400, overflowY: "auto" }}>
-              {browseResult?.path && browseResult.path !== "/" && (
-                <ListItemButton
-                  onClick={() =>
-                    handleBrowseNavigate(browseResult.path.replace(/\/[^/]+\/?$/, "") || "/")
-                  }
-                >
-                  <ListItemIcon sx={{ minWidth: 36 }}><FolderIcon /></ListItemIcon>
-                  <ListItemText primary=".." />
-                </ListItemButton>
-              )}
-              {browseResult?.dirs.map((dir) => (
-                <ListItemButton key={dir.path} onClick={() => handleBrowseNavigate(dir.path)}>
-                  <ListItemIcon sx={{ minWidth: 36 }}><FolderIcon /></ListItemIcon>
-                  <ListItemText primary={dir.name} />
-                </ListItemButton>
-              ))}
-              {browseResult?.dirs.length === 0 && (
-                <Typography variant="body2" color="text.secondary" sx={{ py: 2, textAlign: "center" }}>
-                  No subdirectories
-                </Typography>
-              )}
-            </List>
-          )}
-        </DialogContent>
-        <DialogActions>
-          <Button onClick={() => setBrowseOpen(false)}>Cancel</Button>
-          <Button
-            variant="contained"
-            onClick={() =>
-              isAddExisting
-                ? handleBrowseSelectWorkspace(browseResult?.path ?? browsePath)
-                : handleBrowseSelectDir(browseResult?.path ?? browsePath)
-            }
-          >
-            Select This Folder
-          </Button>
-        </DialogActions>
-      </Dialog>
+        onSelect={isAddExisting ? handleBrowseSelectWorkspace : handleBrowseSelectDir}
+        title={isAddExisting ? "Select Workspace Folder" : "Select Location"}
+        emptyMessage="No folders here"
+        accept={[".db"]}
+        directoryMode
+        plainFolders
+        allowNewFolder={!isAddExisting}
+        startPath={isAddExisting ? existingPath || defaultDir : directory || defaultDir}
+      />
     </>
   );
 }
@@ -443,10 +279,9 @@ function DatabaseSection({ status, onMutate }: DatabaseSectionProps) {
   const [removeTarget, setRemoveTarget] = useState<{ path: string; name: string } | null>(null);
   const queryClient = useQueryClient();
 
-  // Default to the active DB's directory
-  const activeDir = status.active_db?.path
-    ? status.active_db.path.replace(/\/[^/]+$/, "")
-    : "~";
+  // New workspaces default to the folder holding the active one (beside it,
+  // never inside it: deleting a folder deletes any workspace within).
+  const activeDir = status.active_db?.path ? parentPath(status.active_db.path) : "~";
 
   const invalidate = () => {
     void queryClient.invalidateQueries({ queryKey: ["admin-status"] });
