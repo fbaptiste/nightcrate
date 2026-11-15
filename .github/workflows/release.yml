@@ -1,6 +1,12 @@
-name: Installer build test
+name: Build installers and release
 
 on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version to build (without the v prefix)
+        required: true
+        type: string
   push:
     branches: ["build/**"]
 
@@ -8,7 +14,61 @@ permissions:
   contents: read
 
 jobs:
+  validate:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+      - name: Validate release request
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          VERSION_INPUT: ${{ inputs.version }}
+        run: |
+          if [ "$GITHUB_REF" != "refs/heads/main" ]; then
+            echo 'Releases must be dispatched from main' >&2
+            exit 1
+          fi
+          python - <<'PY'
+          import base64
+          import binascii
+          import json
+          import os
+          import pathlib
+          import re
+          import tomllib
+
+          expected = os.environ["VERSION_INPUT"]
+          root = pathlib.Path(".")
+          values = {
+              "VERSION": (root / "VERSION").read_text(encoding="utf-8").strip(),
+              "backend/pyproject.toml": tomllib.loads(
+                  (root / "backend/pyproject.toml").read_text(encoding="utf-8")
+              )["project"]["version"],
+              "frontend/package.json": json.loads(
+                  (root / "frontend/package.json").read_text(encoding="utf-8")
+              )["version"],
+          }
+          cargo = (root / "packaging/shell/src-tauri/Cargo.toml").read_text(encoding="utf-8")
+          match = re.search(r"(?ms)^\[package\].*?^version\s*=\s*\"([^\"]+)\"", cargo)
+          if match is None:
+              raise SystemExit("Cargo.toml package version not found")
+          values["packaging/shell/src-tauri/Cargo.toml"] = match.group(1)
+          wrong = {name: value for name, value in values.items() if value != expected}
+          if wrong:
+              raise SystemExit(f"version mismatch: expected {expected!r}, found {wrong!r}")
+          PY
+          if git show-ref --verify --quiet "refs/tags/v${VERSION_INPUT}"; then
+            echo "tag v${VERSION_INPUT} already exists" >&2
+            exit 1
+          fi
+          if env | grep '^NIGHTCRATE_TEST_'; then
+            echo 'NIGHTCRATE_TEST_* must not be set in a release build' >&2
+            exit 1
+          fi
+
   build:
+    needs: validate
     timeout-minutes: 60
     strategy:
       fail-fast: false
@@ -18,12 +78,15 @@ jobs:
             # app as well: building only the dmg deletes the .app the next step checks.
             bundle: app,dmg
             artifact: nightcrate-macos
+            release_platform: macos
           - os: ubuntu-22.04
             bundle: appimage
             artifact: nightcrate-linux
+            release_platform: linux
           - os: windows-2022
             bundle: nsis
             artifact: nightcrate-windows
+            release_platform: windows
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
@@ -84,14 +147,25 @@ jobs:
             --backend-dir packaging/build/backend \
             --shell-dir packaging/shell/src-tauri \
             --out "$notices/inventory.json"
-          # Test-branch builds may continue; Phase 5 release paths must omit this flag.
+          render_args=()
+          if [ "$GITHUB_EVENT_NAME" = push ]; then render_args+=(--allow-unresolved-gcc); fi
           uv run --project backend python packaging/notices.py render \
             --inventory "$notices/inventory.json" \
             --out "$notices" \
-            --allow-unresolved-gcc
+            "${render_args[@]}"
           cp -R "$notices/licences/." packaging/build/backend/licences/
-      - name: Build installer (first pass on Linux)
+      - name: Build unsigned test installer (first pass on Linux)
+        if: github.event_name == 'push'
         working-directory: packaging/shell
+        env:
+          TAURI_CONFIG: '{"bundle":{"createUpdaterArtifacts":false}}'
+        run: npx --no-install tauri build --bundles ${{ matrix.bundle }}
+      - name: Build signed release installer (first pass on Linux)
+        if: github.event_name == 'workflow_dispatch'
+        working-directory: packaging/shell
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: npx --no-install tauri build --bundles ${{ matrix.bundle }}
       - name: Extract first Linux AppImage and render notices
         if: runner.os == 'Linux'
@@ -109,15 +183,25 @@ jobs:
             --shell-dir packaging/shell/src-tauri \
             --appimage "$first/squashfs-root" \
             --out "$notices/inventory-first.json"
-          # Test-branch builds may continue; Phase 5 release paths must omit this flag.
+          render_args=()
+          if [ "$GITHUB_EVENT_NAME" = push ]; then render_args+=(--allow-unresolved-gcc); fi
           uv run --project backend python packaging/notices.py render \
             --inventory "$notices/inventory-first.json" \
             --out "$notices" \
-            --allow-unresolved-gcc
+            "${render_args[@]}"
           cp -R "$notices/licences/." packaging/build/backend/licences/
-      - name: Rebuild Linux AppImage with notices
-        if: runner.os == 'Linux'
+      - name: Rebuild unsigned Linux AppImage with notices
+        if: runner.os == 'Linux' && github.event_name == 'push'
         working-directory: packaging/shell
+        env:
+          TAURI_CONFIG: '{"bundle":{"createUpdaterArtifacts":false}}'
+        run: npx --no-install tauri build --bundles appimage
+      - name: Rebuild signed Linux AppImage with notices
+        if: runner.os == 'Linux' && github.event_name == 'workflow_dispatch'
+        working-directory: packaging/shell
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: npx --no-install tauri build --bundles appimage
       - name: Verify second Linux inventory is unchanged
         if: runner.os == 'Linux'
@@ -201,6 +285,22 @@ jobs:
           occupied_pid=$!
           trap 'kill "$occupied_pid" 2>/dev/null || true' EXIT
           xvfb-run -a "$appimage" --selftest-configured
+      - name: Collect release assets
+        if: github.event_name == 'workflow_dispatch'
+        shell: bash
+        env:
+          RELEASE_PLATFORM: ${{ matrix.release_platform }}
+          VERSION_INPUT: ${{ inputs.version }}
+        run: |
+          destination=packaging/build/release
+          mkdir -p "$destination"
+          find packaging/shell/src-tauri/target/release/bundle -type f \
+            \( -name '*.dmg' -o -name '*-setup.exe' -o -name '*.AppImage' \
+               -o -name '*.app.tar.gz' -o -name '*.AppImage.tar.gz' -o -name '*.nsis.zip' \
+               -o -name '*.sig' \) -exec cp {} "$destination/" \;
+          cp packaging/build/notices/licences/THIRD_PARTY_NOTICES.txt \
+            "$destination/nightcrate-${VERSION_INPUT}-third-party-notices-${RELEASE_PLATFORM}.txt"
+          cp packaging/build/notices/nightcrate-*-lgpl-sources-*.tar.gz "$destination/"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: ${{ matrix.artifact }}
@@ -211,4 +311,81 @@ jobs:
             packaging/build/notices/inventory*.json
             packaging/build/notices/licences/**
             packaging/build/notices/nightcrate-*-lgpl-sources-*.tar.gz
+            packaging/build/release/*
           if-no-files-found: error
+
+  draft-release:
+    if: github.event_name == 'workflow_dispatch'
+    needs: build
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: nightcrate-*
+          path: artifacts
+      - name: Assemble, verify and draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION_INPUT: ${{ inputs.version }}
+          TARGET_SHA: ${{ github.sha }}
+        run: |
+          mkdir release
+          find artifacts -path '*/build/release/*' -type f -exec cp {} release/ \;
+          python - <<'PY'
+          import json
+          import os
+          import pathlib
+
+          version = os.environ["VERSION_INPUT"]
+          release = pathlib.Path("release")
+          targets = {
+              "darwin-aarch64": "*.app.tar.gz",
+              "linux-x86_64": "*.AppImage.tar.gz",
+              "windows-x86_64": "*.nsis.zip",
+          }
+          platforms = {}
+          for target, pattern in targets.items():
+              archives = list(release.glob(pattern))
+              if len(archives) != 1:
+                  raise SystemExit(f"expected one {target} archive, found {archives}")
+              archive = archives[0]
+              signature = pathlib.Path(str(archive) + ".sig")
+              if not signature.is_file():
+                  raise SystemExit(f"missing signature for {archive.name}")
+              signature_text = signature.read_text(encoding="utf-8").strip()
+              try:
+                  signed_payload = base64.b64decode(signature_text, validate=True).decode("utf-8")
+              except (binascii.Error, UnicodeDecodeError) as exc:
+                  raise SystemExit(f"invalid signature file {signature.name}: {exc}") from exc
+              trusted = next(
+                  (line for line in signed_payload.splitlines() if line.startswith("trusted comment:")),
+                  None,
+              )
+              if trusted is None or f"version:{version}" not in trusted.split():
+                  raise SystemExit(f"wrong trusted comment in {signature.name}: {trusted!r}")
+              platforms[target] = {
+                  "url": (
+                      "https://github.com/fbaptiste/nightcrate/releases/download/"
+                      f"v{version}/{archive.name}"
+                  ),
+                  "signature": signature_text,
+              }
+          (release / "latest.json").write_text(
+              json.dumps({"version": version, "platforms": platforms}, indent=2, sort_keys=True)
+              + "\n",
+              encoding="utf-8",
+          )
+          PY
+          test "$(find release -maxdepth 1 -name '*.dmg' | wc -l | tr -d ' ')" = 1
+          test "$(find release -maxdepth 1 -name '*-setup.exe' | wc -l | tr -d ' ')" = 1
+          test "$(find release -maxdepth 1 -name '*.AppImage' | wc -l | tr -d ' ')" = 1
+          test "$(find release -maxdepth 1 -name '*third-party-notices-*.txt' | wc -l | tr -d ' ')" = 3
+          test "$(find release -maxdepth 1 -name '*lgpl-sources-*.tar.gz' | wc -l | tr -d ' ')" = 3
+          gh release create "v${VERSION_INPUT}" release/* \
+            --draft \
+            --target "$TARGET_SHA" \
+            --title "NightCrate ${VERSION_INPUT}" \
+            --notes-file packaging/release-notes.md

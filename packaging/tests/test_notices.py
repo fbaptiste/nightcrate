@@ -351,6 +351,49 @@ def test_ambiguous_relocated_basename_still_fails(
         )
 
 
+@pytest.mark.parametrize(
+    ("libs_directory", "expected_owner"),
+    [("numpy.libs", "numpy"), ("scipy.libs", "scipy")],
+)
+def test_identical_hashes_are_disambiguated_by_frozen_record_path(
+    tmp_path: Path,
+    libs_directory: str,
+    expected_owner: str,
+) -> None:
+    filename = "x.so"
+    shared_bytes = b"\x7fELFidentical-library"
+    numpy_source = tmp_path / "installed" / "numpy.libs" / filename
+    scipy_source = tmp_path / "installed" / "scipy.libs" / filename
+    numpy_source.parent.mkdir(parents=True)
+    scipy_source.parent.mkdir(parents=True)
+    numpy_source.write_bytes(shared_bytes)
+    scipy_source.write_bytes(shared_bytes)
+    backend = tmp_path / "backend"
+    frozen = backend / "lib" / libs_directory / filename
+    frozen.parent.mkdir(parents=True)
+    frozen.write_bytes(shared_bytes)
+    numpy = _FakeDistribution("numpy", "2.4.4")
+    scipy = _FakeDistribution("scipy", "1.17.1")
+    candidates = [
+        (numpy, f"numpy.libs/{filename}", numpy_source),
+        (scipy, f"scipy.libs/{filename}", scipy_source),
+    ]
+
+    owner = _owner_for_python_native(
+        frozen,
+        backend,
+        {filename: candidates},
+        {
+            str(numpy_source): notices._sha256(numpy_source),
+            str(scipy_source): notices._sha256(scipy_source),
+        },
+        {},
+        {},
+    )
+
+    assert owner["name"] == expected_owner
+
+
 def test_vcruntime_is_a_system_library(tmp_path: Path) -> None:
     interpreter = tmp_path / "python"
     interpreter.mkdir()

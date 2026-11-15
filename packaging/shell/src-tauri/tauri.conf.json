@@ -15,6 +15,7 @@
   },
   "bundle": {
     "active": true,
+    "createUpdaterArtifacts": true,
     "targets": ["app", "dmg", "nsis", "appimage"],
     "resources": {
       "../../build/backend/": "backend/"
@@ -32,6 +33,18 @@
     "windows": {
       "nsis": {
         "installMode": "currentUser"
+      }
+    }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDA4Q0FGNTQ2QkU1QThGQTYKUldTbWoxcStSdlhLQ0g0TU9Ya1NtYWlHTEl2blNSNEdEQzkxQmNxY2tvUXBYaXd5cXpUN0NqMDgK",
+      "endpoints": [
+        "https://github.com/fbaptiste/nightcrate/releases/latest/download/latest.json"
+      ],
+      "requireSignedVersion": true,
+      "windows": {
+        "installMode": "passive"
       }
     }
   }

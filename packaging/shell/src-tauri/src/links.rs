@@ -17,11 +17,12 @@ pub fn configure_main<'a>(
     mut builder: WebviewWindowBuilder<'a, Wry, AppHandle<Wry>>,
     app_handle: &'a AppHandle<Wry>,
     port: u16,
+    probe_url: Option<&'static str>,
 ) -> WebviewWindowBuilder<'a, Wry, AppHandle<Wry>> {
     let origin = format!("http://127.0.0.1:{port}");
     let navigation_origin = origin.clone();
     builder = builder.on_navigation(move |url| {
-        if same_origin(url, &navigation_origin) {
+        if navigation_allowed(url, &navigation_origin, probe_url) {
             true
         } else {
             match classify(url) {
@@ -105,6 +106,10 @@ fn same_origin(url: &tauri::Url, origin: &str) -> bool {
     url.as_str() == origin || url.as_str().starts_with(&format!("{origin}/"))
 }
 
+fn navigation_allowed(url: &tauri::Url, origin: &str, probe_url: Option<&str>) -> bool {
+    same_origin(url, origin) || probe_url.is_some_and(|probe| url.as_str() == probe)
+}
+
 fn classify(url: &tauri::Url) -> Classification {
     match url.scheme() {
         "blob" | "data" | "about" => Classification::Allow,
@@ -183,13 +188,58 @@ mod tests {
 
     #[test]
     fn classifies_safe_navigation_and_external_schemes() {
-        assert_eq!(classification("blob:http://127.0.0.1/value"), Classification::Allow);
-        assert_eq!(classification("data:text/plain,value"), Classification::Allow);
+        assert_eq!(
+            classification("blob:http://127.0.0.1/value"),
+            Classification::Allow
+        );
+        assert_eq!(
+            classification("data:text/plain,value"),
+            Classification::Allow
+        );
         assert_eq!(classification("about:blank"), Classification::Allow);
-        assert_eq!(classification("http://example.com"), Classification::External);
-        assert_eq!(classification("https://example.com"), Classification::External);
-        assert_eq!(classification("mailto:user@example.com"), Classification::External);
-        assert_eq!(classification("file:///tmp/private"), Classification::Refuse);
-        assert_eq!(classification("nightcrate://private"), Classification::Refuse);
+        assert_eq!(
+            classification("http://example.com"),
+            Classification::External
+        );
+        assert_eq!(
+            classification("https://example.com"),
+            Classification::External
+        );
+        assert_eq!(
+            classification("mailto:user@example.com"),
+            Classification::External
+        );
+        assert_eq!(
+            classification("file:///tmp/private"),
+            Classification::Refuse
+        );
+        assert_eq!(
+            classification("nightcrate://private"),
+            Classification::Refuse
+        );
+    }
+
+    #[test]
+    fn allows_only_the_exact_configured_probe_url() {
+        let probe = "http://127.0.0.1:4567/probe.html?run=one";
+        let allowed = tauri::Url::parse(probe).unwrap();
+        let changed_path = tauri::Url::parse("http://127.0.0.1:4567/other").unwrap();
+        let changed_query = tauri::Url::parse("http://127.0.0.1:4567/probe.html?run=two").unwrap();
+        assert!(navigation_allowed(
+            &allowed,
+            "http://127.0.0.1:8765",
+            Some(probe)
+        ));
+        assert!(!navigation_allowed(
+            &changed_path,
+            "http://127.0.0.1:8765",
+            Some(probe)
+        ));
+        assert!(!navigation_allowed(
+            &changed_query,
+            "http://127.0.0.1:8765",
+            Some(probe)
+        ));
+        assert!(!navigation_allowed(&allowed, "http://127.0.0.1:8765", None));
     }
 }

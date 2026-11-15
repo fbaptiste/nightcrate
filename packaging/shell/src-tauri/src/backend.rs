@@ -79,28 +79,39 @@ impl ShellLog {
     }
 }
 
-#[derive(Default)]
 pub struct Backend {
     process: Mutex<Option<Process>>,
     last_lines: Arc<Mutex<VecDeque<String>>>,
+    ready_port: Mutex<Option<u16>>,
+    log: Arc<Mutex<ShellLog>>,
 }
 
 impl Backend {
-    pub fn spawn(app: &AppHandle) -> Result<(Arc<Self>, mpsc::Receiver<Output>), String> {
-        let executable = resource_dir(app)?
-            .join("backend")
-            .join(if cfg!(windows) {
-                "nightcrate-backend.exe"
-            } else {
-                "nightcrate-backend"
-            });
+    pub fn spawn(
+        app: &AppHandle,
+        requested_port: Option<u16>,
+    ) -> Result<(Arc<Self>, mpsc::Receiver<Output>), String> {
+        let executable = resource_dir(app)?.join("backend").join(if cfg!(windows) {
+            "nightcrate-backend.exe"
+        } else {
+            "nightcrate-backend"
+        });
         let mut command = Command::new(&executable);
         command.arg("--shell");
         if let Some(app_dir) = option_env!("NIGHTCRATE_TEST_APP_DIR") {
             command.arg("--app-dir").arg(app_dir);
         }
-        if let Some(port) = option_env!("NIGHTCRATE_TEST_PORT") {
+        if let Some(port) = requested_port
+            .map(|value| value.to_string())
+            .or_else(|| option_env!("NIGHTCRATE_TEST_PORT").map(str::to_owned))
+        {
             command.arg("--port").arg(port);
+        }
+        if let Some(url) = option_env!("NIGHTCRATE_TEST_MANIFEST_URL") {
+            command.arg("--test-manifest-url").arg(url);
+        }
+        if let Some(url) = option_env!("NIGHTCRATE_TEST_RELEASES_URL") {
+            command.arg("--test-releases-url").arg(url);
         }
         command
             .stdin(Stdio::piped())
@@ -116,6 +127,8 @@ impl Backend {
         let stdin = child.stdin.take();
         let stdout = child.stdout.take().ok_or("backend stdout was not piped")?;
         let stderr = child.stderr.take().ok_or("backend stderr was not piped")?;
+        let log_path = shell_log_path(app)?;
+        let log = Arc::new(Mutex::new(open_log(&log_path)?));
         let backend = Arc::new(Self {
             process: Mutex::new(Some(Process {
                 child,
@@ -124,11 +137,16 @@ impl Backend {
                 job,
             })),
             last_lines: Arc::new(Mutex::new(VecDeque::with_capacity(20))),
+            ready_port: Mutex::new(None),
+            log: Arc::clone(&log),
         });
-        let log_path = shell_log_path(app)?;
-        let log = Arc::new(Mutex::new(open_log(&log_path)?));
         let (sender, receiver) = mpsc::channel();
-        read_stream(stdout, Arc::clone(&log), Arc::clone(&backend.last_lines), sender.clone());
+        read_stream(
+            stdout,
+            Arc::clone(&log),
+            Arc::clone(&backend.last_lines),
+            sender.clone(),
+        );
         read_stream(stderr, log, Arc::clone(&backend.last_lines), sender);
         Ok((backend, receiver))
     }
@@ -144,13 +162,20 @@ impl Backend {
                 Ok(output) => {
                     on_output(&output);
                     match output {
-                        Output::Ready(port) => return Ok(port),
+                        Output::Ready(port) => {
+                            *self.ready_port.lock().unwrap() = Some(port);
+                            return Ok(port);
+                        }
                         Output::Locked(kind) => locked_kind = kind,
                         _ => {}
                     }
                 }
                 Err(mpsc::RecvTimeoutError::Timeout) => {
-                    return Err(self.failure(None, locked_kind, "no backend output for 60 seconds"));
+                    return Err(self.failure(
+                        None,
+                        locked_kind,
+                        "no backend output for 60 seconds",
+                    ));
                 }
                 Err(mpsc::RecvTimeoutError::Disconnected) => {
                     let status = self.wait_for_exit(Duration::from_secs(2));
@@ -212,6 +237,18 @@ impl Backend {
         }
         self.process.lock().unwrap().take();
     }
+
+    pub fn port(&self) -> Option<u16> {
+        *self.ready_port.lock().unwrap()
+    }
+
+    pub fn log_shell_event(&self, message: &str) {
+        eprintln!("[shell] {message}");
+        self.log
+            .lock()
+            .unwrap()
+            .write_line(&format!("[shell] {message}"));
+    }
 }
 
 fn resource_dir(app: &AppHandle) -> Result<PathBuf, String> {
@@ -228,8 +265,7 @@ fn resource_dir(app: &AppHandle) -> Result<PathBuf, String> {
 fn current_executable_has_symlink_ancestor() -> bool {
     std::env::current_exe().ok().is_some_and(|executable| {
         executable.ancestors().any(|ancestor| {
-            fs::symlink_metadata(ancestor)
-                .is_ok_and(|metadata| metadata.file_type().is_symlink())
+            fs::symlink_metadata(ancestor).is_ok_and(|metadata| metadata.file_type().is_symlink())
         })
     })
 }
@@ -240,13 +276,29 @@ fn current_executable_has_symlink_ancestor() -> bool {
 }
 
 fn shell_log_path(app: &AppHandle) -> Result<PathBuf, String> {
-    let directory = app.path().app_log_dir().map_err(|error| error.to_string())?;
+    if let Some(directory) = option_env!("NIGHTCRATE_TEST_APP_DIR") {
+        let directory = PathBuf::from(directory).join("logs");
+        fs::create_dir_all(&directory).map_err(|error| error.to_string())?;
+        return Ok(directory.join("shell.log"));
+    }
+    let directory = app
+        .path()
+        .app_log_dir()
+        .map_err(|error| error.to_string())?;
     fs::create_dir_all(&directory).map_err(|error| error.to_string())?;
     Ok(directory.join("shell.log"))
 }
 
 pub fn log_dir(app: &AppHandle) -> Result<PathBuf, String> {
-    let directory = app.path().app_log_dir().map_err(|error| error.to_string())?;
+    if let Some(directory) = option_env!("NIGHTCRATE_TEST_APP_DIR") {
+        let directory = PathBuf::from(directory).join("logs");
+        fs::create_dir_all(&directory).map_err(|error| error.to_string())?;
+        return Ok(directory);
+    }
+    let directory = app
+        .path()
+        .app_log_dir()
+        .map_err(|error| error.to_string())?;
     fs::create_dir_all(&directory).map_err(|error| error.to_string())?;
     Ok(directory)
 }

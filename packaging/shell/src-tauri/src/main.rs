@@ -3,9 +3,11 @@
 mod backend;
 mod links;
 mod selftest;
+mod update;
 
 use backend::{Backend, Output, StartFailure};
 use selftest::{Mode, SelfTest};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use tauri::ipc::CapabilityBuilder;
@@ -17,15 +19,23 @@ use tauri::{AppHandle, Manager, RunEvent, WebviewUrl, WebviewWindowBuilder, Wind
 
 struct BackendSlot(Mutex<Option<Arc<Backend>>>);
 
+static PROBE_STARTED: AtomicBool = AtomicBool::new(false);
+
 fn selftest_mode() -> Result<Mode, String> {
     let arguments: Vec<String> = std::env::args().skip(1).collect();
-    if let Some(index) = arguments.iter().position(|value| value == "--selftest-fresh") {
+    if let Some(index) = arguments
+        .iter()
+        .position(|value| value == "--selftest-fresh")
+    {
         let path = arguments
             .get(index + 1)
             .ok_or("--selftest-fresh requires a workspace directory")?;
         return Ok(Mode::Fresh(path.clone()));
     }
-    if arguments.iter().any(|value| value == "--selftest-configured") {
+    if arguments
+        .iter()
+        .any(|value| value == "--selftest-configured")
+    {
         return Ok(Mode::Configured);
     }
     Ok(Mode::Off)
@@ -40,6 +50,8 @@ fn capability_spec(port: u16, selftest: bool) -> (String, Vec<&'static str>) {
     if selftest {
         permissions.push("allow-selftest-report");
     }
+    #[cfg(nightcrate_test_auto_install)]
+    permissions.push("allow-test-auto-install-enabled");
     (format!("http://127.0.0.1:{port}/*"), permissions)
 }
 
@@ -61,9 +73,10 @@ fn open_log_folder(app: AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+#[cfg(nightcrate_test_auto_install)]
 #[tauri::command]
-fn install_update() -> Result<(), String> {
-    Err("Updates are not enabled in this build.".to_owned())
+fn test_auto_install_enabled() -> bool {
+    true
 }
 
 fn loading_status(app: &AppHandle, message: &str) {
@@ -71,6 +84,15 @@ fn loading_status(app: &AppHandle, message: &str) {
         let message = serde_json::to_string(message).unwrap();
         let _ = window.eval(format!("window.nightcrateLoading.status({message})"));
     }
+}
+
+fn guarded_selftest_script(script: String) -> String {
+    if cfg!(nightcrate_test_auto_install) {
+        return script;
+    }
+    format!(
+        r#"(async()=>{{try{{await window.__TAURI__.core.invoke('test_auto_install_enabled');await window.__TAURI__.core.invoke('selftest_report',{{report:{{phase:'forbidden-test-command',ok:false}}}});}}catch(_error){{{script}}}}})();"#
+    )
 }
 
 fn loading_failure(app: &AppHandle, failure: &StartFailure) {
@@ -121,7 +143,12 @@ fn loading_failure(app: &AppHandle, failure: &StartFailure) {
 fn create_main(app: &AppHandle, port: u16, selftest: bool) -> Result<(), String> {
     app.add_capability(main_capability(port, selftest))
         .map_err(|error| error.to_string())?;
-    let url = format!("http://127.0.0.1:{port}/")
+    let suffix = if cfg!(nightcrate_test_auto_install) {
+        "?nc-test-autoinstall=1"
+    } else {
+        ""
+    };
+    let url = format!("http://127.0.0.1:{port}/{suffix}")
         .parse()
         .map_err(|error| format!("invalid backend URL: {error}"))?;
     let builder = WebviewWindowBuilder::new(app, "main", WebviewUrl::External(url))
@@ -130,9 +157,10 @@ fn create_main(app: &AppHandle, port: u16, selftest: bool) -> Result<(), String>
         .min_inner_size(1024.0, 700.0)
         .disable_drag_drop_handler()
         .zoom_hotkeys_enabled(true);
-    let _window = links::configure_main(builder, app, port)
-        .build()
-        .map_err(|error| error.to_string())?;
+    let _window =
+        links::configure_main(builder, app, port, option_env!("NIGHTCRATE_TEST_PROBE_URL"))
+            .build()
+            .map_err(|error| error.to_string())?;
     #[cfg(feature = "test-devtools")]
     {
         _window.open_devtools();
@@ -143,24 +171,19 @@ fn create_main(app: &AppHandle, port: u16, selftest: bool) -> Result<(), String>
     Ok(())
 }
 
-fn start_backend(app: AppHandle) {
-    let (backend, receiver) = match Backend::spawn(&app) {
-        Ok(value) => value,
-        Err(reason) => {
-            loading_failure(
-                &app,
-                &StartFailure {
-                    exit_code: None,
-                    locked_kind: None,
-                    last_lines: Vec::new(),
-                    reason,
-                },
-            );
-            return;
-        }
-    };
+fn launch_backend(
+    app: &AppHandle,
+    requested_port: Option<u16>,
+) -> Result<(Arc<Backend>, u16), StartFailure> {
+    let (backend, receiver) =
+        Backend::spawn(app, requested_port).map_err(|reason| StartFailure {
+            exit_code: None,
+            locked_kind: None,
+            last_lines: Vec::new(),
+            reason,
+        })?;
     *app.state::<BackendSlot>().0.lock().unwrap() = Some(Arc::clone(&backend));
-    let result = backend.wait_until_ready(&receiver, |output| {
+    let port = backend.wait_until_ready(&receiver, |output| {
         if let Output::Step(step) = output {
             let message = match step.step.as_str() {
                 "backing_up" => format!(
@@ -173,26 +196,38 @@ fn start_backend(app: AppHandle) {
                 ),
                 _ => "Starting NightCrate…".to_owned(),
             };
-            loading_status(&app, &message);
+            loading_status(app, &message);
         }
-    });
-    match result {
-        Ok(port) => {
-            let selftest = app.state::<SelfTest>().enabled();
-            if let Err(reason) = create_main(&app, port, selftest) {
-                loading_failure(
-                    &app,
-                    &StartFailure {
-                        exit_code: None,
-                        locked_kind: None,
-                        last_lines: Vec::new(),
-                        reason,
-                    },
-                );
-            }
+    })?;
+    Ok((backend, port))
+}
+
+fn start_backend(app: AppHandle) {
+    let (_, port) = match launch_backend(&app, None) {
+        Ok(value) => value,
+        Err(failure) => {
+            loading_failure(&app, &failure);
+            return;
         }
-        Err(failure) => loading_failure(&app, &failure),
+    };
+    let selftest = app.state::<SelfTest>().enabled();
+    if let Err(reason) = create_main(&app, port, selftest) {
+        loading_failure(
+            &app,
+            &StartFailure {
+                exit_code: None,
+                locked_kind: None,
+                last_lines: Vec::new(),
+                reason,
+            },
+        );
     }
+}
+
+fn restart_backend(app: AppHandle, port: u16) -> Result<(), String> {
+    launch_backend(&app, Some(port))
+        .map(|_| ())
+        .map_err(|failure| failure.reason)
 }
 
 #[cfg(target_os = "macos")]
@@ -207,7 +242,10 @@ fn install_edit_menu(app: &tauri::App) -> tauri::Result<()> {
         .paste()
         .select_all()
         .build()?;
-    let menu = MenuBuilder::new(app).item(&application).item(&edit).build()?;
+    let menu = MenuBuilder::new(app)
+        .item(&application)
+        .item(&edit)
+        .build()?;
     app.set_menu(menu)?;
     Ok(())
 }
@@ -222,9 +260,10 @@ fn main() {
         eprintln!("{error}");
         std::process::exit(2);
     });
-    let app = tauri::Builder::default()
+    let builder = tauri::Builder::default()
         .manage(BackendSlot(Mutex::new(None)))
         .manage(SelfTest::new(mode))
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(
             tauri_plugin_window_state::Builder::default()
                 .with_denylist(&["loading"])
@@ -238,17 +277,52 @@ fn main() {
                 let _ = window.show();
                 let _ = window.set_focus();
             }
-        }))
-        .invoke_handler(tauri::generate_handler![
-            selftest::selftest_report,
-            open_log_folder,
-            install_update
-        ])
+        }));
+    #[cfg(not(nightcrate_test_auto_install))]
+    let builder = builder.invoke_handler(tauri::generate_handler![
+        selftest::selftest_report,
+        open_log_folder,
+        update::install_update
+    ]);
+    #[cfg(nightcrate_test_auto_install)]
+    let builder = builder.invoke_handler(tauri::generate_handler![
+        selftest::selftest_report,
+        open_log_folder,
+        update::install_update,
+        test_auto_install_enabled
+    ]);
+    let app = builder
         .on_page_load(|webview, payload| {
             if webview.label() == "main" && payload.event() == PageLoadEvent::Finished {
                 let app = webview.app_handle();
-                if let Some(script) = app.state::<SelfTest>().script() {
-                    let _ = webview.eval(script);
+                let loaded = payload.url().as_str();
+                let backend = app.state::<BackendSlot>().0.lock().unwrap().clone();
+                if let Some(backend) = &backend {
+                    backend.log_shell_event(&format!("main loaded {loaded}"));
+                }
+                let port = backend.and_then(|backend| backend.port());
+                let backend_origin = port.map(|port| format!("http://127.0.0.1:{port}"));
+                let on_backend = backend_origin.as_ref().is_some_and(|origin| {
+                    loaded == origin || loaded.starts_with(&format!("{origin}/"))
+                });
+                if on_backend {
+                    if let Some(script) = app.state::<SelfTest>().script() {
+                        let _ = webview.eval(guarded_selftest_script(script));
+                    }
+                    if let Some(probe) = option_env!("NIGHTCRATE_TEST_PROBE_URL") {
+                        if !PROBE_STARTED.swap(true, Ordering::AcqRel) {
+                            if let Ok(url) = tauri::Url::parse(probe) {
+                                let _ = webview.navigate(url);
+                            }
+                        }
+                    }
+                } else if option_env!("NIGHTCRATE_TEST_PROBE_URL") == Some(loaded) {
+                    if let Some(origin) = backend_origin {
+                        let target = serde_json::to_string(&format!("{origin}/")).unwrap();
+                        let _ = webview.eval(format!(
+                            "window.__nightcrateProbeReturn=setInterval(()=>{{if(window.__nightcrateProbeReported){{clearInterval(window.__nightcrateProbeReturn);window.location.replace({target});}}}},50)"
+                        ));
+                    }
                 }
             }
         })
@@ -310,5 +384,14 @@ mod tests {
             ]
         );
         let _capability = main_capability(8766, true).build();
+    }
+
+    #[cfg(not(nightcrate_test_auto_install))]
+    #[test]
+    fn production_selftest_requires_the_test_command_to_be_rejected() {
+        let script = guarded_selftest_script("window.selftestContinued=true;".to_owned());
+        assert!(script.contains("invoke('test_auto_install_enabled')"));
+        assert!(script.contains("window.selftestContinued=true;"));
+        assert!(script.contains("forbidden-test-command"));
     }
 }

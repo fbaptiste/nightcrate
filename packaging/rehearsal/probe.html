@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+  <head><meta charset="utf-8"><title>NightCrate origin probe</title></head>
+  <body>
+    <p>Checking the NightCrate bridge origin.</p>
+    <script>
+      (async () => {
+        let report;
+        if (!window.__TAURI__?.core?.invoke) {
+          report = { outcome: "no-bridge" };
+        } else {
+          try {
+            await window.__TAURI__.core.invoke("install_update", {
+              expectedVersion: "0.0.2",
+              token: "origin-probe",
+            });
+            report = { outcome: "invoke-allowed" };
+          } catch (error) {
+            report = { outcome: "invoke-rejected", error: String(error) };
+          }
+        }
+        try {
+          await fetch("http://127.0.0.1:48123/probe-report", {
+            method: "POST",
+            mode: "cors",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify(report),
+          });
+          window.__nightcrateProbeReported = true;
+        } catch (error) {
+          document.body.append(` Report failed: ${error}`);
+        }
+      })();
+    </script>
+  </body>
+</html>

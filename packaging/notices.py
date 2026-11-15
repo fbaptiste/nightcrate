@@ -555,6 +555,63 @@ def _native_binary_kind(path: Path) -> str | None:
     return None
 
 
+def _candidate_owners(
+    candidates: list[tuple[metadata.Distribution, str, Path]],
+) -> set[tuple[str, str]]:
+    return {
+        (_canonical(candidate[0].metadata["Name"]), candidate[0].version)
+        for candidate in candidates
+    }
+
+
+def _disambiguate_distribution_candidates(
+    candidates: list[tuple[metadata.Distribution, str, Path]],
+    record_relative: str,
+    binary_path: Path,
+) -> list[tuple[metadata.Distribution, str, Path]]:
+    """Narrow identical or relocated binaries using their frozen path."""
+    if len(_candidate_owners(candidates)) <= 1:
+        return candidates
+
+    exact = [candidate for candidate in candidates if candidate[1] == record_relative]
+    if exact:
+        candidates = exact
+        if len(_candidate_owners(candidates)) <= 1:
+            return candidates
+
+    suffix = [
+        candidate
+        for candidate in candidates
+        if candidate[1].endswith(f"/{record_relative}")
+    ]
+    if suffix:
+        candidates = suffix
+        if len(_candidate_owners(candidates)) <= 1:
+            return candidates
+
+    frozen_libs = {
+        part for part in PurePosixPath(record_relative).parts if part.endswith(".libs")
+    }
+    if frozen_libs:
+        libs_matches = [
+            candidate
+            for candidate in candidates
+            if frozen_libs.intersection(PurePosixPath(candidate[1]).parts)
+        ]
+        if libs_matches:
+            candidates = libs_matches
+            if len(_candidate_owners(candidates)) <= 1:
+                return candidates
+
+    binary = binary_path.read_bytes()
+    embedded_owner = [
+        candidate
+        for candidate in candidates
+        if candidate[1].split("/", 1)[0].encode() in binary
+    ]
+    return embedded_owner or candidates
+
+
 def _distribution_native_owner(
     path: Path,
     record_relative: str,
@@ -571,7 +628,11 @@ def _distribution_native_owner(
     ]
     patched_note: str | None = None
     if matching:
-        candidates = matching
+        candidates = _disambiguate_distribution_candidates(
+            matching,
+            record_relative,
+            path,
+        )
     elif sys.platform.startswith("linux") or sys.platform == "darwin":
         expected_kind = "elf" if sys.platform.startswith("linux") else "macho"
         target_kind = _native_binary_kind(path)
@@ -594,19 +655,11 @@ def _distribution_native_owner(
                 if PurePosixPath(candidate[1]).name
                 == PurePosixPath(record_relative).name
             ]
-        path_owners = {
-            _canonical(candidate[0].metadata["Name"]) for candidate in path_matches
-        }
-        if len(path_owners) > 1:
-            binary = path.read_bytes()
-            embedded_owner = [
-                candidate
-                for candidate in path_matches
-                if candidate[1].split("/", 1)[0].encode() in binary
-            ]
-            if embedded_owner:
-                path_matches = embedded_owner
-        candidates = path_matches
+        candidates = _disambiguate_distribution_candidates(
+            path_matches,
+            record_relative,
+            path,
+        )
         if path_matches:
             patched_note = (
                 "binary patched by the freezer (RPATH)"
