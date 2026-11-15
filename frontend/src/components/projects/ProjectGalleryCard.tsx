@@ -6,9 +6,13 @@ import Chip from "@mui/material/Chip";
 import Typography from "@mui/material/Typography";
 import CollectionsIcon from "@mui/icons-material/Collections";
 import { useNavigate } from "react-router-dom";
-import type { ProjectListItem } from "@/api/projects";
-import { projectThumbnailUrl, PROJECT_STATUS_COLORS } from "@/api/projects";
+import { projectThumbnailUrl, type ProjectListItem } from "@/api/projects";
 import NearViewportImage from "@/components/common/NearViewportImage";
+import {
+  projectStatusDisplay,
+  projectStatusLabel,
+  projectStatusPillColor,
+} from "@/lib/projectStatus";
 
 interface Props {
   project: ProjectListItem;
@@ -82,10 +86,21 @@ export default function ProjectGalleryCard({ project }: Props) {
           <Box sx={{ display: "flex", alignItems: "center", gap: 1, mt: 0.25 }}>
             {project.status !== "active" && (
               <Chip
-                label={project.status}
+                label={projectStatusLabel(project.status)}
                 size="small"
-                color={PROJECT_STATUS_COLORS[project.status] ?? "default"}
-                sx={{ height: 18, fontSize: 11 }}
+                color={projectStatusDisplay(project.status)?.chipColor ?? "default"}
+                variant={project.status === "ready_to_process" ? "outlined" : "filled"}
+                sx={(theme) => ({
+                  height: 18,
+                  fontSize: 11,
+                  ...(project.status === "ready_to_process" && {
+                    color: projectStatusPillColor(project.status, theme.palette.mode),
+                    borderColor: projectStatusPillColor(
+                      project.status,
+                      theme.palette.mode,
+                    ),
+                  }),
+                })}
               />
             )}
             <Typography variant="caption" color="text.secondary" noWrap>

@@ -1,6 +1,6 @@
 # NightCrate Database Schema
 
-**NightCrate version:** 0.52.0
+**NightCrate version:** 0.53.0
 
 Complete schema including existing tables and v0.8.0 equipment tables (revised design). All table names use singular form. Broken into logical groups for readability.
 
@@ -894,7 +894,7 @@ In addition, the migration creates calibration-matching and integration **views*
 
 | Table | Purpose |
 |-------|---------|
-| `project` (migrations 0029, 0031) | User-defined imaging project. `name` (NOT unique — migration 0031 allows duplicate project names), `description`, `notes`, `status` CHECK ∈ `{'active','paused','complete','abandoned'}`, `active` soft-delete flag, timestamps with `updated_at` trigger. Index on `active`. |
+| `project` (migrations 0029, 0031, 0073) | User-defined imaging project. `name` (NOT unique — migration 0031 allows duplicate project names), `description`, `notes`, `status` CHECK ∈ `{'active','ready_to_process','paused','complete','abandoned'}` (`ready_to_process` added by migration 0073), `active` soft-delete flag, timestamps with `updated_at` trigger, and the later `location_id` (0035) and `cover_sub_frame_id` (0037). Index on `active`. |
 | `project_image` (migrations 0029, 0033) | File reference within a project. `project_id` FK CASCADE, `file_path` (supports `::` virtual paths for archives and pxiprojects), `display_order`, `is_main` with partial unique index enforcing at most one main per project, `notes`, timestamps with trigger. Index on `project_id`. (v0.37.0 / migration 0033 dropped the `staged` column — the project editor moved to save-as-you-go: edits persist immediately, no Save/Cancel.) |
 
 ### v0.36.0 — Project Thumbnails (1 table)
@@ -1043,3 +1043,11 @@ Rules: [development decisions](docs/development-decisions.md#projects-catalog-an
 | Table | Purpose |
 |-------|---------|
 | `uncataloged_file` | One row per project path that the latest covering scan could list but could not catalog. `reason` is `damaged`, `unsupported`, or `unreadable`; `(project_id, path)` is unique. The project FK cascades and the detecting ingestion run FK sets null. |
+
+### v0.53.0 — The Ready to process status (migration 0073)
+
+Rules: [development decisions](docs/development-decisions.md#the-home-page).
+
+| Migration | Change |
+|-----------|--------|
+| `0073.project_ready_to_process` | Rebuilds `project` to widen its `status` CHECK to `active`, `ready_to_process`, `paused`, `complete`, `abandoned`. `project` is a parent table, so the rebuild runs under `PRAGMA legacy_alter_table = ON` (as 0040 does), keeping all 16 child foreign keys pointing at `project`. All ten columns are kept, `location_id` and `cover_sub_frame_id` included, and `idx_project_active` and `trg_project_updated_at` are recreated. The `sqlite_sequence` counter is carried over separately, because a plain copy would lower it after the highest project had been deleted. No row changes. |

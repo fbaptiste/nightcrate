@@ -4,10 +4,11 @@ import asyncio
 import hashlib
 import json
 import logging
+import threading
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from functools import lru_cache
-from typing import Any
+from typing import Any, Literal
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, HTTPException
@@ -20,6 +21,9 @@ from nightcrate.api.weather_models import (
     ExtremesResponse,
     ForecastRequest,
     ForecastResponse,
+    FortnightNight,
+    FortnightResponse,
+    FortnightRun,
     HourResponse,
     IntervalResponse,
     MethodologyResponse,
@@ -102,6 +106,14 @@ class ForecastData:
 
 
 @dataclass(frozen=True)
+class ForecastInputs:
+    loc: dict
+    saved_rules: ImagingRules
+    rules_saved: bool
+    forecast_data: ForecastData
+
+
+@dataclass(frozen=True)
 class _CachedWeather:
     data: WeatherData
     fetched_at: datetime
@@ -121,6 +133,7 @@ class _CachedCloud:
 _repair_attempts: dict[tuple[int, str], datetime] = {}
 _refresh_failures: dict[tuple[int, str], datetime] = {}
 _cache_locks: dict[tuple[int, str], asyncio.Lock] = {}
+_BUILD_LOCK = threading.Lock()
 _REPAIR_INTERVAL = timedelta(hours=1)
 _REFRESH_FAILURE_COOLDOWN = timedelta(minutes=10)
 
@@ -933,6 +946,19 @@ async def _get_location_and_rules(
         return dict(row), rules, saved
 
 
+async def _forecast_inputs(request: ForecastRequest) -> ForecastInputs:
+    """Load the database and provider inputs without doing forecast CPU work."""
+    loc, saved_rules, rules_saved = await _get_location_and_rules(request.location_id)
+    settings = await get_settings()
+    forecast_data = await _load_forecast_data(loc, settings.weather_cache_ttl_hours)
+    return ForecastInputs(
+        loc=loc,
+        saved_rules=saved_rules,
+        rules_saved=rules_saved,
+        forecast_data=forecast_data,
+    )
+
+
 def _astronomy_nights(
     loc: dict,
     anchor: date,
@@ -1057,20 +1083,22 @@ def _run_age_minutes(metadata: dict[str, Any], now: datetime) -> dict[str, int |
     }
 
 
-@router.post("/forecast", response_model=ForecastResponse)
-async def forecast(request: ForecastRequest) -> ForecastResponse:
-    """Evaluate the forecast's noon-to-noon nights against saved or draft rules."""
+def _build_forecast(
+    inputs: ForecastInputs,
+    request: ForecastRequest,
+    now: datetime,
+) -> ForecastResponse:
+    """CPU phase of a forecast build; safe to run in a worker thread."""
     try:
-        loc, saved_rules, rules_saved = await _get_location_and_rules(request.location_id)
-        rules = request.rules or saved_rules
-        settings = await get_settings()
-        now = _now()
+        loc = inputs.loc
+        rules = request.rules or inputs.saved_rules
+        rules_saved = inputs.rules_saved
+        forecast_data = inputs.forecast_data
         display_timezone = ZoneInfo(loc["timezone"])
         site_timezone = ZoneInfo(loc.get("geo_timezone") or loc["timezone"])
         local_now = now.astimezone(display_timezone)
         anchor = local_now.date() - timedelta(days=1) if local_now.hour < 12 else local_now.date()
         astronomy_nights = _astronomy_nights(loc, anchor)
-        forecast_data = await _load_forecast_data(loc, settings.weather_cache_ttl_hours)
         returned_dates = {night_date.isoformat() for night_date, _ in astronomy_nights}
         ignored = {key for key in request.night_controls if key not in returned_dates}
         weather_by_time = {row.time_utc: row for row in forecast_data.weather.hourly}
@@ -1137,7 +1165,7 @@ async def forecast(request: ForecastRequest) -> ForecastResponse:
                 loc.get("elevation_m"),
             )
             moon_by_time = dict(zip(hour_times, moon_values, strict=True))
-            inputs = build_hours(
+            hour_inputs = build_hours(
                 forecast_data.weather.hourly,
                 forecast_data.cloud_models,
                 moon_by_time,
@@ -1153,7 +1181,7 @@ async def forecast(request: ForecastRequest) -> ForecastResponse:
                     noon_start_utc=noon_start,
                     noon_end_utc=noon_end,
                     dark_intervals=selected_darkness,
-                    hours=inputs,
+                    hours=hour_inputs,
                     now_utc=now,
                     controls=evaluator_controls,
                     cloud_models=selected_cloud_models(rules),
@@ -1224,6 +1252,7 @@ async def forecast(request: ForecastRequest) -> ForecastResponse:
                     ),
                     clear_hours=round(result.clear_minutes / 60.0, 2),
                     dark_hours=round(result.dark_minutes / 60.0, 2),
+                    moonless_dark_hours=summary.moonless_dark_hours,
                     unknown_hours=round(result.unknown_minutes / 60.0, 2),
                     clear_pct=round(clear_pct, 1) if clear_pct is not None else None,
                     longest_gap_start=(
@@ -1297,7 +1326,9 @@ async def forecast(request: ForecastRequest) -> ForecastResponse:
                     cloud_coarse_from_utc=coarse_for_night,
                     stale_minutes=stale_minutes,
                     requirements=result.requirements,
-                    extremes=_extremes(inputs, result.hours, rules.rain_policy, display_timezone),
+                    extremes=_extremes(
+                        hour_inputs, result.hours, rules.rain_policy, display_timezone
+                    ),
                     sunset=_fmt_time(summary.sunset, display_timezone),
                     sunset_utc=summary.sunset,
                     sunrise=_fmt_time(summary.sunrise, display_timezone),
@@ -1309,7 +1340,7 @@ async def forecast(request: ForecastRequest) -> ForecastResponse:
                     moonset=_fmt_time(summary.moon.moonset_utc, display_timezone),
                     moonset_utc=summary.moon.moonset_utc,
                     hours=_hour_responses(
-                        inputs,
+                        hour_inputs,
                         result.hours,
                         summary,
                         result.primary_model,
@@ -1342,6 +1373,127 @@ async def forecast(request: ForecastRequest) -> ForecastResponse:
         raise
     except Exception as exc:
         logger.exception("[weather] forecast failed location=%s", request.location_id)
+        raise HTTPException(status_code=500, detail="Failed to build weather forecast") from exc
+
+
+@router.post("/forecast", response_model=ForecastResponse)
+async def forecast(request: ForecastRequest) -> ForecastResponse:
+    """Evaluate the forecast's noon-to-noon nights against saved or draft rules."""
+    try:
+        inputs = await _forecast_inputs(request)
+        return await asyncio.to_thread(_run_build, inputs, request, _now())
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("[weather] forecast failed location=%s", request.location_id)
+        raise HTTPException(status_code=500, detail="Failed to build weather forecast") from exc
+
+
+def _stale_since(inputs: ForecastInputs, response: ForecastResponse) -> str | None:
+    stale_times = []
+    if response.stale_sources.forecast is not None:
+        stale_times.append(inputs.forecast_data.fetched_at)
+    if response.stale_sources.cloud_models is not None:
+        stale_times.append(
+            inputs.forecast_data.cloud_fetched_at or inputs.forecast_data.cloud_attempted_at
+        )
+    if not stale_times:
+        return None
+    return min(stale_times).astimezone(UTC).isoformat().replace("+00:00", "Z")
+
+
+def _run_build(
+    inputs: ForecastInputs,
+    request: ForecastRequest,
+    now: datetime,
+) -> ForecastResponse:
+    with _BUILD_LOCK:
+        return _build_forecast(inputs, request, now)
+
+
+_DARKNESS_NAMES: dict[str, Literal["astronomical", "nautical", "civil", "none"]] = {
+    "astro": "astronomical",
+    "nautical": "nautical",
+    "civil": "civil",
+    "none": "none",
+}
+
+
+def _display_midnight(
+    night_date: date,
+    runs: tuple[tuple[datetime, datetime, bool], ...],
+    display_timezone: ZoneInfo,
+) -> datetime:
+    """The first display-local midnight after darkness begins.
+
+    The night's date belongs to the site's time zone; a location displayed in
+    another zone can see its darkness start a day earlier or later there.
+    """
+    if runs:
+        start = runs[0][0].astimezone(display_timezone)
+        day = start.date() + timedelta(days=1)
+    else:
+        day = night_date + timedelta(days=1)
+    return datetime.combine(day, datetime.min.time(), tzinfo=display_timezone)
+
+
+def _fortnight_night(loc: dict, night: NightResponse) -> FortnightNight:
+    night_date = date.fromisoformat(night.date)
+    display_timezone = ZoneInfo(loc["timezone"])
+    summary = _night_summary_cached(
+        loc["latitude"],
+        loc["longitude"],
+        loc.get("elevation_m"),
+        night_date,
+        loc.get("geo_timezone") or loc["timezone"],
+    )
+    midnight = _display_midnight(night_date, summary.moon_runs, display_timezone)
+    return FortnightNight(
+        date=night.date,
+        verdict=night.verdict,
+        darkness=_DARKNESS_NAMES[summary.deepest_darkness_reached],
+        dark_hours=summary.darkness_hours,
+        moonless_dark_hours=night.moonless_dark_hours,
+        midnight_utc=midnight.astimezone(UTC),
+        runs=[
+            FortnightRun(
+                start=_fmt_time(start, display_timezone) or "",
+                end=_fmt_time(end, display_timezone) or "",
+                start_utc=start,
+                end_utc=end,
+                moon_up=moon_up,
+            )
+            for start, end, moon_up in summary.moon_runs
+        ],
+    )
+
+
+def _run_fortnight(
+    inputs: ForecastInputs,
+    request: ForecastRequest,
+    now: datetime,
+) -> FortnightResponse:
+    """CPU phase of the fortnight: the forecast plus each night's Moon runs."""
+    with _BUILD_LOCK:
+        response = _build_forecast(inputs, request, now)
+        return FortnightResponse(
+            location_id=request.location_id,
+            evaluated_at=response.evaluated_at,
+            stale_since=_stale_since(inputs, response),
+            nights=[_fortnight_night(inputs.loc, night) for night in response.nights],
+        )
+
+
+@router.get("/fortnight", response_model=FortnightResponse)
+async def fortnight(location_id: int) -> FortnightResponse:
+    request = ForecastRequest(location_id=location_id)
+    try:
+        inputs = await _forecast_inputs(request)
+        return await asyncio.to_thread(_run_fortnight, inputs, request, _now())
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("[weather] fortnight failed location=%s", location_id)
         raise HTTPException(status_code=500, detail="Failed to build weather forecast") from exc
 
 

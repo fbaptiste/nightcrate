@@ -26,6 +26,7 @@ from nightcrate.api import (
     equipment,
     files,
     gallery,
+    home,
     horizons,
     images,
     imaging_rules,
@@ -447,6 +448,7 @@ app.include_router(projects.router)
 app.include_router(project_night_notes.router)
 app.include_router(project_rig_setups.router)
 app.include_router(gallery.router)
+app.include_router(home.router)
 app.include_router(project_info.router)
 app.include_router(messier.router)
 app.include_router(ingest.router)

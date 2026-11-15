@@ -130,6 +130,72 @@ Shared architecture, checks, and privacy rules live in [CLAUDE.md](../CLAUDE.md)
   nested state such as chart zoom survives navigation. To add a page, register
   it in `PERSISTENT_ROUTES` (`components/AppShell.tsx`) and give its route
   `element: null` in `App.tsx` to avoid a second render.
+- **The joke wands share one toast slot,** provided by `AppShell`. A new line
+  replaces the shown one and restarts its 15 s timer; moving the mouse away
+  doesn't dismiss it. Separate per-wand toasts would stack when the nav's
+  wand and a page's wand are both used.
+
+## The Home page
+
+- **One summary request, then one request per forecast row.**
+  - `GET /api/home` (`api/home.py`, aggregation in `services/home.py`) is
+    cheap and refetched on every visit (`staleTime` 0), so edits elsewhere
+    never leave stale counts.
+  - Each forecast row then calls `GET /api/weather/fortnight` on its own,
+    so a slow or failing forecast never holds up the page.
+- **Stages:**
+  - Not started and Capturing split `status = 'active'` by integration time,
+    the same `project_session` sum the Overview tab shows.
+  - Ready to process is a status set by hand (migration 0073). Per-filter
+    goals were removed in v0.41.1, so no stage is derived from goals.
+  - "Active projects" anywhere on the page means `status = 'active'`.
+- **Dates:** session dates go through `valid_session_date` before ranking,
+  grouping or windowing. Text that isn't a date never wins "recent", and two
+  timestamps on one date are one night.
+- **The 12-month window** starts on the first day of the month 11 months
+  back and ends today, so its 12 bars are whole months. "Best night" is the
+  date with the most integration across projects. It isn't "longest",
+  because simultaneous rigs add up.
+- **Location figures** count the sessions of projects whose
+  `project.location_id` is that location; sessions record no location.
+  Retired rigs and locations leave only the panels and forecast rows. Their
+  projects' integration still counts.
+- **Forecast builds run one at a time, off the event loop.**
+  - `POST /api/weather/forecast` and `GET /api/weather/fortnight` await
+    their I/O, then run all CPU work (night summaries, Moon altitudes,
+    evaluation, the response) in `asyncio.to_thread`, under a module-level
+    `threading.Lock`.
+  - Measured with four cold builds and stubbed fetches, `GET /api/home`
+    took 3 ms alone, 3.8 s with the builds inline, 629 ms with them in
+    parallel threads, and 4 ms with them serialised. The work is GIL-bound,
+    so parallel threads only add contention.
+  - Use a threading lock, not an `asyncio.Semaphore`, which binds to one
+    event loop.
+- **The forecast grid's columns** are 14 nights from tonight by the
+  browser's clock, before local noon counting the night that began
+  yesterday. Rows match cells by ISO date, so a location in another time
+  zone, or a missing night, leaves an empty cell instead of shifting the row.
+- **The darkness line** (Fred, 2026-11-14) spans each night's own deepest
+  darkness, astronomical, else nautical, else civil
+  (`NightSummary.deepest_darkness_reached`), from start to end. It is not a
+  fixed clock, so line lengths don't compare between cells; the figures do.
+  - `NightSummary.moon_runs` splits that darkness where the Moon crosses
+    −0.833°, interpolated between 5-minute samples (weather algorithms
+    §2.7). It matches the rise/set search to within seconds and is cached
+    with the summary, so the fortnight never computes it twice.
+  - `NightSummary.moonless_dark_hours` is the Moon-down total of the same
+    runs, so the figure, the line and Tonight at a Glance agree. (A separate
+    5-minute sampler showed 5.8 h beside a 5.9 h line.) The Moon is up only
+    strictly above the horizon.
+  - The midnight tick is the first display-local midnight after darkness
+    begins. The night's date belongs to the site's time zone, so a location
+    shown in another zone can start its darkness a day earlier there.
+- **Forecast rows** (at most four): the default, then the locations active
+  projects use, then the rest by name (Fred, 2026-11-14). Without the last
+  step, a location no project used never appeared, even with rows to spare.
+- **Freshness:** each row carries `evaluated_at` and `stale_since`, the
+  oldest fetch time among the sources the forecast marks stale. The grid
+  says when it was updated, offers Refresh, and marks a stale row.
 
 ## Tablet and LAN behavior
 

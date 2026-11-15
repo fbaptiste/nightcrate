@@ -19,6 +19,7 @@ import CatalogFilter from "@/components/dso/CatalogFilter";
 import ConstellationFilter from "@/components/dso/ConstellationFilter";
 import type { GalleryFilters as FilterValues } from "@/stores/galleryStore";
 import TypeGroupFilter from "./TypeGroupFilter";
+import { projectStatusLabel } from "@/lib/projectStatus";
 import { useDebounce } from "@/lib/useDebounce";
 
 interface Props {
@@ -30,13 +31,6 @@ interface Props {
   hasFilters: boolean;
   onSuggestionsOpenChange: (open: boolean) => void;
 }
-
-const statusNames: Record<string, string> = {
-  active: "Active",
-  paused: "Paused",
-  complete: "Complete",
-  abandoned: "Abandoned",
-};
 
 export default function GalleryFilters({
   values,
@@ -73,7 +67,7 @@ export default function GalleryFilters({
   const wrapperSx = { flex: "0 1 180px", minWidth: 160 };
   const statusOptions = (facets?.statuses ?? []).map((option) => ({
     code: option.code,
-    displayName: statusNames[option.code] ?? option.code,
+    displayName: projectStatusLabel(option.code),
     count: option.count,
   }));
   const rigOptions = (facets?.rigs ?? []).map((option) => ({

@@ -11,6 +11,16 @@ forecasts and survey imagery are fetched from external services when needed.
 
 ## Features
 
+- **Home:** where your projects stand at a glance.
+  - Projects by stage: Not started, Capturing, Ready to process, Complete,
+    Paused, Abandoned. Each stage opens the Projects page filtered to it.
+  - The three most recently imaged projects, with hours per filter.
+  - The next two weeks' weather verdict for up to four of your locations
+    (the default, then those your active projects use, then the rest by
+    name), with each night's darkness and when the Moon is up.
+  - Your latest picture.
+  - The last 12 months (hours, nights, new pictures, your best night).
+  - Your rigs and locations, with their use.
 - **Projects and catalog:** bind folders or archives, classify captures from
   headers, tag rigs/targets, inspect frames in a table grouped by night (or as
   thumbnails), keep notes and finished images.
@@ -19,8 +29,8 @@ forecasts and survey imagery are fetched from external services when needed.
   XISF, are listed with the reason under "Not cataloged". A project can start with a finished image and manual
   sessions; importing raw captures is optional. Plate solving a project image
   identifies the catalog objects in it, and you choose one or more as main
-  targets. Each project has a status (Active, Paused, Complete, Abandoned)
-  that you set from its title, and a "Plate solved" pill that opens its
+  targets. Each project has a status (Active, Ready to process, Paused,
+  Complete, Abandoned) that you set from its title, and a "Plate solved" pill that opens its
   Plate Solve tab. A plate-solved project's Info tab lists its targets with
   their catalog numbers, constellation, distance and Wikipedia links, every
   other catalogued object in the picture, nearest first, and the

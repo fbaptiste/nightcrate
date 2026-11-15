@@ -150,6 +150,7 @@ export interface Night {
   advisory: Reason | null;
   clear_hours: number;
   dark_hours: number;
+  moonless_dark_hours: number;
   unknown_hours: number;
   clear_pct: number | null;
   longest_gap_start: string | null;

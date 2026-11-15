@@ -68,6 +68,10 @@ import { setActivity } from "@/api/client";
 import { useSettingsStore } from "@/stores/settingsStore";
 import { ActivityConsole } from "@/components/ActivityConsole";
 import type { Theme } from "@/api/settings";
+import { EasterEggWand } from "@/components/EasterEggWand";
+import { WandToast } from "@/components/WandToast";
+import { WandToastContext } from "@/components/WandToastContext";
+import { ASTRO_JOKES } from "@/lib/astroJokes";
 
 const DRAWER_WIDTH_OPEN = 220;
 const DRAWER_WIDTH_CLOSED = 52;
@@ -204,6 +208,8 @@ export function AppShell() {
   const version = healthQuery.data?.version ?? "…";
   const [activityOpen, setActivityOpen] = useState(false);
   const [navOpen, setNavOpen] = useState(true);
+  const [wandToast, setWandToast] = useState<{ id: number; message: string } | null>(null);
+  const nextWandToastId = useRef(0);
 
   const muiTheme = useTheme();
   const isTablet = useMediaQuery(muiTheme.breakpoints.down("md"));
@@ -248,6 +254,12 @@ export function AppShell() {
   };
 
   return (
+    <WandToastContext.Provider
+      value={(message) => {
+        nextWandToastId.current += 1;
+        setWandToast({ id: nextWandToastId.current, message });
+      }}
+    >
     <Box sx={{ display: "flex", height: "100dvh" }}>
       <Drawer
         variant="permanent"
@@ -366,6 +378,9 @@ export function AppShell() {
               <TimelineIcon sx={{ fontSize: 16 }} />
             </IconButton>
           </Tooltip>
+          <Box sx={{ ml: navOpen ? "auto" : 0 }}>
+            <EasterEggWand lines={ASTRO_JOKES} tooltip="Words of wisdom" size={16} />
+          </Box>
         </Box>
       </Drawer>
 
@@ -374,7 +389,14 @@ export function AppShell() {
       </Box>
 
       <ActivityConsole open={activityOpen} onClose={() => setActivityOpen(false)} />
+      <WandToast
+        id={wandToast?.id ?? 0}
+        message={wandToast?.message ?? null}
+        left={drawerWidth + 16}
+        onClose={() => setWandToast(null)}
+      />
     </Box>
+    </WandToastContext.Provider>
   );
 }
 

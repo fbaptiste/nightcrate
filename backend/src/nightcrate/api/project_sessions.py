@@ -322,7 +322,7 @@ def _label_order(label: str, not_recorded: bool = False) -> tuple[int, str]:
         return (len(LINE_NAMES), label.lower())
 
 
-async def _compute_integration(conn, project_id: int) -> IntegrationSummary:
+async def compute_integration(conn, project_id: int) -> IntegrationSummary:
     cursor = await conn.execute(
         "SELECT ps.id, ps.filter_id, ps.line_name, ps.filter_label, ps.exposure_seconds,"
         " ps.num_subs, ps.session_date, ps.source, f.model_name AS filter_name"
@@ -446,4 +446,4 @@ async def _compute_integration(conn, project_id: int) -> IntegrationSummary:
 async def get_integration(project_id: int) -> IntegrationSummary:
     async with get_db() as conn:
         await get_or_404(conn, "project", project_id, "Project")
-        return await _compute_integration(conn, project_id)
+        return await compute_integration(conn, project_id)

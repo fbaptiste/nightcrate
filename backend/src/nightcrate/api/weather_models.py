@@ -118,6 +118,7 @@ class NightResponse(BaseModel):
     advisory: ReasonResponse | None
     clear_hours: float
     dark_hours: float
+    moonless_dark_hours: float
     unknown_hours: float
     clear_pct: float | None
     longest_gap_start: str | None
@@ -193,6 +194,34 @@ class ForecastResponse(BaseModel):
     run_age_minutes: dict[str, int | None]
     ignored_controls: list[str]
     nights: list[NightResponse]
+
+
+class FortnightRun(BaseModel):
+    """A stretch of the night's darkness with the Moon up or down."""
+
+    start: str  # display time, HH:MM
+    end: str
+    start_utc: datetime
+    end_utc: datetime
+    moon_up: bool
+
+
+class FortnightNight(BaseModel):
+    date: str
+    verdict: Verdict
+    # The deepest darkness the night reaches: astronomical, else nautical, else civil.
+    darkness: Literal["astronomical", "nautical", "civil", "none"]
+    dark_hours: float  # hours of that darkness
+    moonless_dark_hours: float
+    midnight_utc: datetime  # local midnight that night, in the display timezone
+    runs: list[FortnightRun]  # that darkness from start to end; empty for none
+
+
+class FortnightResponse(BaseModel):
+    location_id: int
+    evaluated_at: datetime
+    stale_since: str | None
+    nights: list[FortnightNight]
 
 
 class MethodologyResponse(BaseModel):

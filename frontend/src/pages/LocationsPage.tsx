@@ -57,6 +57,7 @@ import {
 import { parseOptionalFloat, parseOptionalInt } from "@/lib/formUtils";
 import type { WeatherUnits } from "@/api/settings";
 import { useSettingsStore } from "@/stores/settingsStore";
+import { useSearchParams } from "react-router-dom";
 
 function formsDiffer(a: FormState, b: FormState): boolean {
   const keys = Object.keys(a) as (keyof FormState)[];
@@ -299,6 +300,7 @@ function locationToForm(loc: Location, units: WeatherUnits): FormState {
 
 export default function LocationsPage() {
   const queryClient = useQueryClient();
+  const [searchParams, setSearchParams] = useSearchParams();
   const settings = useSettingsStore((s) => s.settings);
   const units: WeatherUnits = settings?.weather_units ?? "metric";
   const unitIsImperial = units === "imperial";
@@ -341,6 +343,25 @@ export default function LocationsPage() {
   const selectedLocation = selectedLocationId != null
     ? locations.find((l) => l.id === selectedLocationId) ?? null
     : null;
+  useEffect(() => {
+    if (isLoading) return;
+    const raw = searchParams.get("select");
+    if (!raw) return;
+    const id = Number(raw);
+    const match = Number.isInteger(id)
+      ? locations.find((location) => location.id === id)
+      : undefined;
+    if (!match) return;
+    const next = new URLSearchParams(searchParams);
+    next.delete("select");
+    setSearchParams(next, { replace: true });
+    requestAnimationFrame(() => {
+      setSelectedLocationId(match.id);
+      requestAnimationFrame(() => {
+        document.getElementById(`location-${id}`)?.scrollIntoView({ block: "center" });
+      });
+    });
+  }, [isLoading, locations, searchParams, setSearchParams]);
   // Deselect if the location was deleted from the list
   useEffect(() => {
     if (selectedLocationId != null && !locations.some((l) => l.id === selectedLocationId)) {
@@ -387,7 +408,10 @@ export default function LocationsPage() {
     return () => clearTimeout(geoTzTimerRef.current);
   }, [form.latitude, form.longitude]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const invalidate = () => queryClient.invalidateQueries({ queryKey: ["locations"] });
+  const invalidate = () => {
+    queryClient.invalidateQueries({ queryKey: ["locations"] });
+    queryClient.invalidateQueries({ queryKey: ["home-fortnight"] });
+  };
 
   /** Fetch with retry on 429 (rate limit) and transient errors. */
   async function fetchWithRetry(
@@ -827,6 +851,7 @@ export default function LocationsPage() {
         {locations.map((loc) => (
           <Paper
             key={loc.id}
+            id={`location-${loc.id}`}
             variant="outlined"
             onClick={() =>
               setSelectedLocationId((prev) => (prev === loc.id ? null : loc.id))
@@ -1817,4 +1842,3 @@ function LocationHorizonReadonly({ location }: { location: Location }) {
     </Paper>
   );
 }
-

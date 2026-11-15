@@ -11,6 +11,7 @@ import TextField from "@mui/material/TextField";
 import Typography from "@mui/material/Typography";
 import FormControlLabel from "@mui/material/FormControlLabel";
 import Switch from "@mui/material/Switch";
+import Chip from "@mui/material/Chip";
 import AddIcon from "@mui/icons-material/Add";
 import GridViewIcon from "@mui/icons-material/GridView";
 import ViewListIcon from "@mui/icons-material/ViewList";
@@ -19,12 +20,15 @@ import {
   fetchProjects,
   createProject,
   type ProjectCreate,
+  type Stage,
 } from "@/api/projects";
 import ProjectCard from "@/components/projects/ProjectCard";
 import ProjectGalleryCard from "@/components/projects/ProjectGalleryCard";
 import ProjectFormDialog from "@/components/projects/ProjectFormDialog";
 import ViewToggle, { type ViewToggleOption } from "@/components/common/ViewToggle";
 import { invalidateProjectLinks } from "@/api/projectTargetLinks";
+import { useSearchParams } from "react-router-dom";
+import { STAGE_LABELS, STAGE_ORDER } from "@/lib/home";
 
 type ViewMode = "compact" | "list" | "pictures";
 
@@ -36,6 +40,11 @@ const VIEW_OPTIONS: ViewToggleOption<ViewMode>[] = [
 
 export default function ProjectsPage() {
   const queryClient = useQueryClient();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const stageValue = searchParams.get("stage");
+  const stage = STAGE_ORDER.includes(stageValue as Stage)
+    ? (stageValue as Stage)
+    : undefined;
   const [search, setSearch] = useState("");
   const [sortBy, setSortBy] = useState("updated_at");
   const [viewMode, setViewMode] = useState<ViewMode>("pictures");
@@ -44,8 +53,9 @@ export default function ProjectsPage() {
   const [snack, setSnack] = useState<string | null>(null);
 
   const { data: projects = [], isLoading } = useQuery({
-    queryKey: ["projects", { sort: sortBy, showRetired }],
-    queryFn: () => fetchProjects({ sort: sortBy, include_retired: showRetired }),
+    queryKey: ["projects", { sort: sortBy, showRetired, stage }],
+    queryFn: () =>
+      fetchProjects({ sort: sortBy, include_retired: showRetired, stage }),
   });
 
   const createMutation = useMutation({
@@ -127,6 +137,18 @@ export default function ProjectsPage() {
           New Project
         </Button>
       </Box>
+
+      {stage && (
+        <Chip
+          label={`Showing: ${STAGE_LABELS[stage]}`}
+          onDelete={() => {
+            const next = new URLSearchParams(searchParams);
+            next.delete("stage");
+            setSearchParams(next, { replace: true });
+          }}
+          sx={{ mb: 2 }}
+        />
+      )}
 
       {isLoading && (
         <Typography color="text.secondary">Loading projects...</Typography>
