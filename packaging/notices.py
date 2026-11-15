@@ -29,9 +29,15 @@ import certifi
 
 ROOT = Path(__file__).resolve().parents[1]
 POLICY_PATH = Path(__file__).with_name("licence_policy.toml")
+LICENCE_TEXT_DIR = Path(__file__).with_name("licence-texts")
 NATIVE_SUFFIXES = (".dylib", ".dll", ".pyd", ".so")
 SOURCE_LICENCES = {"LGPL-2.1-or-later", "LGPL-3.0-or-later"}
 GCC_RUNTIME_PREFIXES = ("libgcc_s", "libgfortran", "libquadmath")
+CPYTHON_DLL_PREFIXES = ("libcrypto-", "libssl-", "libffi-", "sqlite3")
+MSVC_RUNTIME_PREFIXES = ("vcruntime140", "msvcp140")
+MSVC_SYSTEM_LIBRARY_NOTICE = (
+    "GPLv3 §1 System Library; no Corresponding Source archive is required."
+)
 HEADER_SUFFIXES = {
     ".c",
     ".cc",
@@ -80,6 +86,17 @@ def _tokenise_expression(expression: str) -> list[str]:
     if compact_input.lower() != compact_tokens.lower():
         raise NoticeError(f"cannot parse licence expression {expression!r}")
     return tokens
+
+
+def _licence_identifiers(expression: str) -> list[str]:
+    """Return each SPDX licence or exception identifier in a chosen expression."""
+    return list(
+        dict.fromkeys(
+            token
+            for token in _tokenise_expression(expression)
+            if token.upper() not in {"AND", "OR", "WITH"} and token not in {"(", ")"}
+        )
+    )
 
 
 class _ExpressionParser:
@@ -299,6 +316,22 @@ def _distribution_licences(dist: metadata.Distribution) -> list[dict[str, str]]:
     return result
 
 
+def _declared_authors(value: Any) -> list[str]:
+    """Normalise Python, npm, and Cargo author metadata for notice rendering."""
+    if isinstance(value, str):
+        value = " ".join(value.split())
+        return [value] if value else []
+    if isinstance(value, dict):
+        return _declared_authors(value.get("name"))
+    if isinstance(value, list):
+        return list(
+            dict.fromkeys(
+                author for item in value for author in _declared_authors(item)
+            )
+        )
+    return []
+
+
 def _sha256(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as handle:
@@ -349,6 +382,87 @@ def _is_gcc_runtime(path: Path) -> bool:
     return path.name.lower().startswith(GCC_RUNTIME_PREFIXES)
 
 
+def _interpreter_native_candidates(
+    interpreter_root: Path | None = None,
+    platstdlib: Path | None = None,
+    python_version: str | None = None,
+) -> dict[str, list[tuple[Path, dict[str, Any]]]]:
+    """Index CPython and MSVC natives from the build interpreter."""
+    interpreter_root = interpreter_root or Path(sys.base_prefix)
+    if platstdlib is None:
+        platstdlib_paths = {
+            Path(sysconfig.get_path("platstdlib")),
+            Path(
+                sysconfig.get_path(
+                    "platstdlib",
+                    vars={"base": sys.base_prefix, "platbase": sys.base_prefix},
+                )
+            ),
+        }
+    else:
+        platstdlib_paths = {platstdlib}
+    python_version = python_version or platform.python_version()
+    result: dict[str, list[tuple[Path, dict[str, Any]]]] = defaultdict(list)
+
+    def add(path: Path, owner: dict[str, Any]) -> None:
+        if path.is_file():
+            result[path.name.lower()].append((path, owner))
+
+    cpython_owner = {
+        "kind": "cpython",
+        "name": "CPython",
+        "version": python_version,
+    }
+    dlls = interpreter_root / "DLLs"
+    if dlls.is_dir():
+        for path in dlls.iterdir():
+            lower = path.name.lower()
+            if lower.endswith(".pyd") or (
+                lower.endswith(".dll")
+                and (
+                    lower.startswith("python3")
+                    or lower.startswith(CPYTHON_DLL_PREFIXES)
+                )
+            ):
+                add(path, cpython_owner)
+    for path in interpreter_root.glob("python3*.dll"):
+        add(path, cpython_owner)
+    msvc_owner = {
+        "kind": "system",
+        "name": "Microsoft Visual C++ runtime",
+        "system_library": True,
+        "notice": MSVC_SYSTEM_LIBRARY_NOTICE,
+    }
+    for path in interpreter_root.glob("*.dll"):
+        if path.name.lower().startswith(MSVC_RUNTIME_PREFIXES):
+            add(path, msvc_owner)
+    for path_root in platstdlib_paths:
+        lib_dynload = path_root / "lib-dynload"
+        if lib_dynload.is_dir():
+            for path in lib_dynload.iterdir():
+                if path.is_file() and _is_native(path):
+                    add(path, cpython_owner)
+    return result
+
+
+def _interpreter_native_owner(
+    path: Path,
+    candidates: dict[str, list[tuple[Path, dict[str, Any]]]],
+) -> dict[str, Any] | None:
+    target_hash = _sha256(path)
+    matches = [
+        owner
+        for source, owner in candidates.get(path.name.lower(), [])
+        if _sha256(source) == target_hash
+    ]
+    distinct = {json.dumps(owner, sort_keys=True) for owner in matches}
+    if len(distinct) == 1:
+        return matches[0]
+    if matches:
+        raise NoticeError(f"{path}: interpreter native file has ambiguous ownership")
+    return None
+
+
 def _frozen_distribution_versions(backend_dir: Path) -> dict[str, str]:
     versions: dict[str, str] = {}
     for metadata_path in backend_dir.rglob("*.dist-info/METADATA"):
@@ -396,7 +510,7 @@ def _gcc_runtime_version(
     frozen_version: str | None,
     compiler_record: dict[str, Any] | None,
     library: Path,
-) -> str:
+) -> str | None:
     if frozen_version is None:
         raise NoticeError(f"{library}: frozen {package} dist-info version is missing")
     if environment_version != frozen_version:
@@ -404,12 +518,31 @@ def _gcc_runtime_version(
             f"{library}: build-environment {package} version {environment_version} "
             f"does not match frozen version {frozen_version}"
         )
-    if not compiler_record or str(compiler_record.get("name", "")).lower() != "gcc":
-        raise NoticeError(f"{library}: {package} compiler record does not name gcc")
-    version = str(compiler_record.get("version", "")).strip()
-    if not version:
-        raise NoticeError(f"{library}: {package} gcc compiler record has no version")
-    return version
+    if compiler_record and str(compiler_record.get("name", "")).lower() == "gcc":
+        version = str(compiler_record.get("version", "")).strip()
+        if version:
+            return version
+    if sys.platform.startswith("linux"):
+        return _elf_gcc_version(library)
+    return None
+
+
+def _elf_gcc_version(library: Path) -> str | None:
+    """Read the compiler release from an ELF .comment section when available."""
+    try:
+        result = subprocess.run(
+            ["readelf", "--string-dump=.comment", str(library)],
+            check=False,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+        )
+    except FileNotFoundError:
+        return None
+    if result.returncode != 0:
+        return None
+    match = re.search(r"GCC: \(GNU\)\s+([^\s]+)", result.stdout)
+    return match.group(1) if match else None
 
 
 def _owner_for_python_native(
@@ -418,7 +551,11 @@ def _owner_for_python_native(
     by_basename: dict[str, list[tuple[metadata.Distribution, str, Path]]],
     source_hashes: dict[str, str],
     frozen_versions: dict[str, str],
-) -> dict[str, str]:
+    interpreter_candidates: dict[str, list[tuple[Path, dict[str, Any]]]],
+) -> dict[str, Any]:
+    interpreter_owner = _interpreter_native_owner(path, interpreter_candidates)
+    if interpreter_owner is not None:
+        return interpreter_owner
     candidates = by_basename.get(path.name, [])
     relative = path.relative_to(backend_dir).as_posix()
     if relative.startswith("lib/"):
@@ -471,12 +608,27 @@ def _owner_for_python_native(
             _compiler_record(dist),
             path,
         )
+        if gcc_version:
+            return {
+                "kind": "gcc",
+                "name": "GCC runtime",
+                "version": gcc_version,
+                "provider": display_name,
+                "provider_version": dist.version,
+            }
+        licences = _distribution_licences(dist)
+        if not licences:
+            raise NoticeError(
+                f"{path}: unresolved GCC runtime provider {display_name} "
+                "has no bundled licence file"
+            )
         return {
-            "kind": "gcc",
-            "name": "GCC runtime",
-            "version": gcc_version,
+            "kind": "gcc-unresolved",
+            "name": "GCC runtime library, exact GCC release undetermined",
             "provider": display_name,
             "provider_version": dist.version,
+            "source_url": "https://gcc.gnu.org/",
+            "licence_files": licences,
         }
     return {
         "kind": "python",
@@ -487,7 +639,7 @@ def _owner_for_python_native(
 
 def _python_components(
     backend_dir: Path,
-    native_owners: list[dict[str, str]],
+    native_owners: list[dict[str, Any]],
     distributions: dict[str, metadata.Distribution],
     policy: dict[str, Any],
 ) -> list[dict[str, Any]]:
@@ -535,6 +687,7 @@ def _python_components(
                 "licence": expression,
                 "selected_licence": selected,
                 "source_url": f"https://pypi.org/project/{display_name}/{dist.version}/",
+                "authors": _declared_authors(dist.metadata.get("Author")),
                 "licence_files": licences,
             }
         )
@@ -573,6 +726,23 @@ def _frontend_components(policy: dict[str, Any]) -> list[dict[str, Any]]:
         selected = evaluate_licence(name, expression, policy)
         if "MPL-2.0" in selected:
             _check_mpl_tree(name, install_dir)
+        package_data: dict[str, Any] = {}
+        package_json = install_dir / "package.json"
+        if package_json.is_file():
+            try:
+                package_data = json.loads(package_json.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError) as exc:
+                raise NoticeError(
+                    f"{name}: cannot read installed package.json: {exc}"
+                ) from exc
+        authors = _declared_authors(item.get("author") or package_data.get("author"))
+        authors.extend(
+            author
+            for author in _declared_authors(
+                item.get("contributors") or package_data.get("contributors")
+            )
+            if author not in authors
+        )
         result.append(
             {
                 "kind": "frontend",
@@ -581,6 +751,7 @@ def _frontend_components(policy: dict[str, Any]) -> list[dict[str, Any]]:
                 "licence": expression,
                 "selected_licence": selected,
                 "source_url": f"https://www.npmjs.com/package/{name}/v/{version}",
+                "authors": authors,
                 "licence_files": _licence_files(install_dir),
             }
         )
@@ -631,6 +802,7 @@ def _rust_components(shell_dir: Path, policy: dict[str, Any]) -> list[dict[str, 
                 "selected_licence": selected,
                 "source_url": item.get("repository")
                 or f"https://crates.io/crates/{item['name']}/{item['version']}",
+                "authors": _declared_authors(item.get("authors")),
                 "licence_files": licence_files,
             }
         )
@@ -761,7 +933,8 @@ def inventory(
     by_basename, source_hashes = _native_distribution_indices(distributions)
     frozen_versions = _frozen_distribution_versions(backend_dir)
     natives: list[dict[str, Any]] = []
-    owners: list[dict[str, str]] = []
+    owners: list[dict[str, Any]] = []
+    interpreter_candidates = _interpreter_native_candidates()
     for path in sorted(backend_dir.rglob("*")):
         if not path.is_file() or not _is_native(path):
             continue
@@ -771,6 +944,7 @@ def inventory(
             by_basename,
             source_hashes,
             frozen_versions,
+            interpreter_candidates,
         )
         owners.append(owner)
         natives.append(
@@ -890,6 +1064,14 @@ def _download_apt_source(component: dict[str, Any], directory: Path) -> list[Pat
     return paths
 
 
+def _gcc_source_versions(inventory_data: dict[str, Any]) -> set[str]:
+    return {
+        item["owner"]["version"]
+        for item in inventory_data["native_libraries"]
+        if item["owner"]["kind"] == "gcc"
+    }
+
+
 def _source_archive(inventory_data: dict[str, Any], out: Path) -> Path:
     version = inventory_data["project"]["version"]
     platform_name = inventory_data["platform"]
@@ -918,12 +1100,7 @@ def _source_archive(inventory_data: dict[str, Any], out: Path) -> Path:
                 directory.mkdir(parents=True)
                 for path in _download_apt_source(component, directory):
                     members.append((path, f"ubuntu/{directory.name}/{path.name}"))
-        gcc_versions = {
-            item["owner"]["version"]
-            for item in inventory_data["native_libraries"]
-            if item["owner"]["kind"] == "gcc"
-        }
-        for gcc_version in sorted(gcc_versions):
+        for gcc_version in sorted(_gcc_source_versions(inventory_data)):
             filename = f"gcc-{gcc_version}.tar.xz"
             path = temp / "gcc" / filename
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -939,7 +1116,52 @@ def _source_archive(inventory_data: dict[str, Any], out: Path) -> Path:
     return destination
 
 
-def _notices_text(inventory_data: dict[str, Any], archive_name: str) -> str:
+def _component_licence_files(
+    component: dict[str, Any], licence_text_dir: Path
+) -> list[dict[str, str]]:
+    bundled = component.get("licence_files", [])
+    if bundled:
+        return bundled
+    authors = _declared_authors(component.get("authors")) or ["the package authors"]
+    copyright_line = f"Copyright: {', '.join(authors)}"
+    result: list[dict[str, str]] = []
+    for identifier in _licence_identifiers(component["selected_licence"]):
+        path = licence_text_dir / f"{identifier}.txt"
+        if not path.is_file():
+            raise NoticeError(
+                f"{component['name']}: canonical licence text is missing for "
+                f"{identifier} ({path})"
+            )
+        text = path.read_text(encoding="utf-8").strip()
+        if not text:
+            raise NoticeError(
+                f"{component['name']}: canonical licence text is empty for {identifier}"
+            )
+        result.append(
+            {
+                "name": f"SPDX {identifier}",
+                "text": f"{copyright_line}\n\n{text}\n",
+            }
+        )
+    if not result:
+        raise NoticeError(f"{component['name']}: chosen licence has no identifiers")
+    return result
+
+
+def _notices_text(
+    inventory_data: dict[str, Any],
+    archive_name: str,
+    licence_text_dir: Path = LICENCE_TEXT_DIR,
+) -> str:
+    has_unresolved_gcc = any(
+        item["owner"]["kind"] == "gcc-unresolved"
+        for item in inventory_data["native_libraries"]
+    )
+    source_summary = (
+        "The exact sources for bundled LGPL components with identified releases are in:"
+        if has_unresolved_gcc
+        else "The exact sources for bundled LGPL components are in:"
+    )
     lines = [
         "NightCrate third-party notices",
         "==============================",
@@ -947,28 +1169,30 @@ def _notices_text(inventory_data: dict[str, Any], archive_name: str) -> str:
         f"Build: NightCrate {inventory_data['project']['version']} "
         f"({inventory_data['platform']}/{inventory_data['architecture']})",
         "",
-        "The exact sources for bundled LGPL components are in:",
+        source_summary,
         f"  {archive_name}",
         "",
         "Components",
         "----------",
     ]
     text_groups: dict[str, dict[str, Any]] = {}
+
+    def add_licence_text(text: str, user: str) -> None:
+        text = text.rstrip() + "\n"
+        digest = hashlib.sha256(text.encode()).hexdigest()
+        group = text_groups.setdefault(digest, {"text": text, "users": []})
+        group["users"].append(user)
+
     for component in inventory_data["components"]:
         lines.append(
             f"- [{component['kind']}] {component['name']} {component['version']}: "
             f"{component['licence']} (accepted as {component['selected_licence']})"
         )
         lines.append(f"  Source: {component['source_url']}")
-        for licence_file in component.get("licence_files", []):
-            text = licence_file["text"].rstrip() + "\n"
-            digest = hashlib.sha256(text.encode()).hexdigest()
-            group = text_groups.setdefault(
-                digest,
-                {"text": text, "users": []},
-            )
-            group["users"].append(
-                f"{component['name']} {component['version']} ({licence_file['name']})"
+        for licence_file in _component_licence_files(component, licence_text_dir):
+            add_licence_text(
+                licence_file["text"],
+                f"{component['name']} {component['version']} ({licence_file['name']})",
             )
     lines.extend(["", "Native libraries", "----------------"])
     for item in inventory_data["native_libraries"]:
@@ -976,10 +1200,24 @@ def _notices_text(inventory_data: dict[str, Any], archive_name: str) -> str:
         provider = ""
         if owner.get("provider"):
             provider = f", provided by {owner['provider']} {owner['provider_version']}"
-        lines.append(
-            f"- {item['path']}: {owner['kind']} {owner['name']} {owner['version']} "
-            f"(sha256 {item['sha256']}{provider})"
+        version = f" {owner['version']}" if owner.get("version") else ""
+        owner_label = (
+            owner["name"]
+            if owner["kind"] == "gcc-unresolved"
+            else f"{owner['kind']} {owner['name']}{version}"
         )
+        lines.append(
+            f"- {item['path']}: {owner_label} (sha256 {item['sha256']}{provider})"
+        )
+        if owner.get("notice"):
+            lines.append(f"  Notice: {owner['notice']}")
+        if owner.get("source_url"):
+            lines.append(f"  Source: {owner['source_url']}")
+        for licence_file in owner.get("licence_files", []):
+            add_licence_text(
+                licence_file["text"],
+                f"{item['path']} ({licence_file['name']})",
+            )
     lines.extend(["", "Licence texts", "-------------"])
     for number, group in enumerate(text_groups.values(), start=1):
         lines.extend(
@@ -994,10 +1232,26 @@ def _notices_text(inventory_data: dict[str, Any], archive_name: str) -> str:
     return "\n".join(lines).rstrip() + "\n"
 
 
-def render(inventory_path: Path, out: Path) -> Path:
+def render(
+    inventory_path: Path, out: Path, *, allow_unresolved_gcc: bool = False
+) -> Path:
     inventory_data = json.loads(inventory_path.read_text(encoding="utf-8"))
     if inventory_data.get("schema") != 1:
         raise NoticeError(f"unsupported inventory schema in {inventory_path}")
+    unresolved = [
+        item
+        for item in inventory_data["native_libraries"]
+        if item["owner"]["kind"] == "gcc-unresolved"
+    ]
+    if unresolved and not allow_unresolved_gcc:
+        paths = ", ".join(item["path"] for item in unresolved)
+        raise NoticeError(f"unresolved GCC runtime libraries: {paths}")
+    for item in unresolved:
+        print(
+            f"warning: {item['path']}: GCC runtime library, exact GCC release "
+            "undetermined; omitted from the exact-source archive",
+            file=sys.stderr,
+        )
     out.mkdir(parents=True, exist_ok=True)
     archive = _source_archive(inventory_data, out)
     licences = out / "licences"
@@ -1035,6 +1289,11 @@ def _parser() -> argparse.ArgumentParser:
     )
     render_parser.add_argument("--inventory", type=Path, required=True)
     render_parser.add_argument("--out", type=Path, required=True)
+    render_parser.add_argument(
+        "--allow-unresolved-gcc",
+        action="store_true",
+        help="allow test builds with GCC runtimes whose exact release is unknown",
+    )
     return parser
 
 
@@ -1049,7 +1308,11 @@ def main() -> int:
             )
             print(f"wrote {args.out}")
         else:
-            archive = render(args.inventory, args.out)
+            archive = render(
+                args.inventory,
+                args.out,
+                allow_unresolved_gcc=args.allow_unresolved_gcc,
+            )
             print(f"wrote {args.out / 'licences'} and {archive}")
     except NoticeError as exc:
         print(f"licence notices failed: {exc}", file=sys.stderr)

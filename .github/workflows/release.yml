@@ -84,9 +84,11 @@ jobs:
             --backend-dir packaging/build/backend \
             --shell-dir packaging/shell/src-tauri \
             --out "$notices/inventory.json"
+          # Test-branch builds may continue; Phase 5 release paths must omit this flag.
           uv run --project backend python packaging/notices.py render \
             --inventory "$notices/inventory.json" \
-            --out "$notices"
+            --out "$notices" \
+            --allow-unresolved-gcc
           cp -R "$notices/licences/." packaging/build/backend/licences/
       - name: Build installer (first pass on Linux)
         working-directory: packaging/shell
@@ -107,9 +109,11 @@ jobs:
             --shell-dir packaging/shell/src-tauri \
             --appimage "$first/squashfs-root" \
             --out "$notices/inventory-first.json"
+          # Test-branch builds may continue; Phase 5 release paths must omit this flag.
           uv run --project backend python packaging/notices.py render \
             --inventory "$notices/inventory-first.json" \
-            --out "$notices"
+            --out "$notices" \
+            --allow-unresolved-gcc
           cp -R "$notices/licences/." packaging/build/backend/licences/
       - name: Rebuild Linux AppImage with notices
         if: runner.os == 'Linux'

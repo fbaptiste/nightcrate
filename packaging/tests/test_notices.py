@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 import sys
 
@@ -7,13 +8,19 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parents[1]))
 
+import notices  # noqa: E402
 from notices import (  # noqa: E402
     NoticeError,
     _check_mpl_tree,
     _gcc_runtime_version,
+    _gcc_source_versions,
+    _interpreter_native_candidates,
+    _notices_text,
+    _owner_for_python_native,
     evaluate_licence,
     has_applied_mpl_incompatibility,
     load_policy,
+    render,
 )
 
 
@@ -79,8 +86,8 @@ def test_gcc_runtime_rejects_scipy_version_mismatch() -> None:
         )
 
 
-def test_gcc_runtime_rejects_missing_gcc_record() -> None:
-    with pytest.raises(NoticeError, match="compiler record does not name gcc"):
+def test_gcc_runtime_without_compiler_evidence_is_unresolved() -> None:
+    assert (
         _gcc_runtime_version(
             "scipy",
             "1.17.1",
@@ -88,3 +95,228 @@ def test_gcc_runtime_rejects_missing_gcc_record() -> None:
             None,
             Path("libquadmath.0.dylib"),
         )
+        is None
+    )
+
+
+def _native_owner(
+    frozen_file: Path,
+    candidates: dict[str, list[tuple[Path, dict[str, object]]]],
+) -> dict[str, object]:
+    return _owner_for_python_native(
+        frozen_file,
+        frozen_file.parent,
+        {},
+        {},
+        {},
+        candidates,
+    )
+
+
+def test_windows_cpython_dll_tree_is_attributed_by_name_and_hash(
+    tmp_path: Path,
+) -> None:
+    interpreter = tmp_path / "python"
+    dlls = interpreter / "DLLs"
+    dlls.mkdir(parents=True)
+    source = dlls / "_asyncio.pyd"
+    source.write_bytes(b"CPython extension")
+    frozen = tmp_path / "frozen" / "_asyncio.pyd"
+    frozen.parent.mkdir()
+    frozen.write_bytes(source.read_bytes())
+    candidates = _interpreter_native_candidates(
+        interpreter,
+        tmp_path / "platstdlib",
+        "3.14.0",
+    )
+
+    owner = _native_owner(frozen, candidates)
+
+    assert owner == {"kind": "cpython", "name": "CPython", "version": "3.14.0"}
+
+
+def test_posix_lib_dynload_extension_is_attributed_to_cpython(
+    tmp_path: Path,
+) -> None:
+    platstdlib = tmp_path / "platstdlib"
+    lib_dynload = platstdlib / "lib-dynload"
+    lib_dynload.mkdir(parents=True)
+    source = lib_dynload / "_asyncio.cpython-314-test.so"
+    source.write_bytes(b"CPython POSIX extension")
+    frozen = tmp_path / "frozen" / source.name
+    frozen.parent.mkdir()
+    frozen.write_bytes(source.read_bytes())
+    candidates = _interpreter_native_candidates(
+        tmp_path / "python",
+        platstdlib,
+        "3.14.0",
+    )
+
+    owner = _native_owner(frozen, candidates)
+
+    assert owner == {"kind": "cpython", "name": "CPython", "version": "3.14.0"}
+
+
+def test_unknown_pyd_still_fails(tmp_path: Path) -> None:
+    interpreter = tmp_path / "python"
+    dlls = interpreter / "DLLs"
+    dlls.mkdir(parents=True)
+    (dlls / "unknown.pyd").write_bytes(b"different interpreter extension")
+    frozen = tmp_path / "frozen" / "unknown.pyd"
+    frozen.parent.mkdir()
+    frozen.write_bytes(b"unknown extension")
+    candidates = _interpreter_native_candidates(
+        interpreter,
+        tmp_path / "platstdlib",
+        "3.14.0",
+    )
+
+    with pytest.raises(NoticeError, match="unknown.pyd.*no unique owner"):
+        _native_owner(frozen, candidates)
+
+
+def test_vcruntime_is_a_system_library(tmp_path: Path) -> None:
+    interpreter = tmp_path / "python"
+    interpreter.mkdir()
+    source = interpreter / "vcruntime140.dll"
+    source.write_bytes(b"MSVC runtime")
+    frozen = tmp_path / "frozen" / "vcruntime140.dll"
+    frozen.parent.mkdir()
+    frozen.write_bytes(source.read_bytes())
+    candidates = _interpreter_native_candidates(
+        interpreter,
+        tmp_path / "platstdlib",
+        "3.14.0",
+    )
+
+    owner = _native_owner(frozen, candidates)
+
+    assert owner["name"] == "Microsoft Visual C++ runtime"
+    assert owner["system_library"] is True
+    assert "GPLv3 §1 System Library" in str(owner["notice"])
+
+
+def test_linux_elf_comment_is_second_gcc_version_source(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(notices.sys, "platform", "linux")
+    monkeypatch.setattr(notices, "_elf_gcc_version", lambda _path: "12.3.0")
+
+    version = _gcc_runtime_version(
+        "numpy",
+        "2.4.4",
+        "2.4.4",
+        {"name": "clang", "version": "18.0.0"},
+        Path("libgfortran.so.5"),
+    )
+
+    assert version == "12.3.0"
+
+
+def test_unresolved_gcc_requires_flag_and_renders_warning_without_source_archive(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    unresolved = {
+        "path": "lib/numpy.libs/libgfortran.so.5",
+        "sha256": "abc123",
+        "owner": {
+            "kind": "gcc-unresolved",
+            "name": "GCC runtime library, exact GCC release undetermined",
+            "provider": "numpy",
+            "provider_version": "2.4.4",
+            "source_url": "https://gcc.gnu.org/",
+            "licence_files": [
+                {"name": "LICENSE.txt", "text": "Provider bundled licence"}
+            ],
+        },
+    }
+    inventory = {
+        "schema": 1,
+        "project": {"version": "1.2.3"},
+        "platform": "linux",
+        "architecture": "x86_64",
+        "cpython_licence": "CPython licence",
+        "cx_freeze_licence": "cx_Freeze licence",
+        "components": [],
+        "native_libraries": [unresolved],
+    }
+    inventory_path = tmp_path / "inventory.json"
+    inventory_path.write_text(json.dumps(inventory), encoding="utf-8")
+
+    with pytest.raises(NoticeError, match="libgfortran.so.5"):
+        render(inventory_path, tmp_path / "blocked")
+
+    def fake_source_archive(data: dict[str, object], out: Path) -> Path:
+        assert _gcc_source_versions(data) == set()
+        archive = out / "sources.tar.gz"
+        archive.write_bytes(b"")
+        return archive
+
+    monkeypatch.setattr(notices, "_source_archive", fake_source_archive)
+    out = tmp_path / "allowed"
+    render(inventory_path, out, allow_unresolved_gcc=True)
+
+    warning = capsys.readouterr().err
+    rendered = (out / "licences" / "THIRD_PARTY_NOTICES.txt").read_text(
+        encoding="utf-8"
+    )
+    assert "lib/numpy.libs/libgfortran.so.5" in warning
+    assert "omitted from the exact-source archive" in warning
+    assert "GCC runtime library, exact GCC release undetermined" in rendered
+    assert "https://gcc.gnu.org/" in rendered
+    assert "Provider bundled licence" in rendered
+
+
+def _inventory_with(component: dict[str, object]) -> dict[str, object]:
+    return {
+        "project": {"version": "1.2.3"},
+        "platform": "test",
+        "architecture": "test",
+        "components": [component],
+        "native_libraries": [],
+    }
+
+
+def test_missing_package_licence_renders_canonical_text_and_authors(
+    tmp_path: Path,
+) -> None:
+    canonical_text = "MIT License\n\nPermission is hereby granted, free of charge"
+    (tmp_path / "MIT.txt").write_text(canonical_text, encoding="utf-8")
+    inventory = _inventory_with(
+        {
+            "kind": "rust",
+            "name": "license-less-crate",
+            "version": "1.0.0",
+            "licence": "MIT",
+            "selected_licence": "MIT",
+            "source_url": "https://example.invalid/license-less-crate",
+            "authors": ["Ada Example", "Grace Example"],
+            "licence_files": [],
+        }
+    )
+
+    notices = _notices_text(inventory, "sources.tar.gz", tmp_path)
+
+    assert "Copyright: Ada Example, Grace Example" in notices
+    assert canonical_text in notices
+    assert "license-less-crate 1.0.0 (SPDX MIT)" in notices
+
+
+def test_missing_canonical_licence_fails_with_component_name(tmp_path: Path) -> None:
+    inventory = _inventory_with(
+        {
+            "kind": "frontend",
+            "name": "missing-canonical-text",
+            "version": "2.0.0",
+            "licence": "MIT",
+            "selected_licence": "MIT",
+            "source_url": "https://example.invalid/missing-canonical-text",
+            "authors": [],
+            "licence_files": [],
+        }
+    )
+
+    with pytest.raises(NoticeError, match="missing-canonical-text"):
+        _notices_text(inventory, "sources.tar.gz", tmp_path)
