@@ -11,6 +11,8 @@ use tauri::{AppHandle, Manager};
 
 const LOG_LIMIT: u64 = 10 * 1024 * 1024;
 const LOG_LIMIT_MESSAGE: &str = "[shell] log limit reached; further backend output omitted";
+const SYMLINK_INSTALL_MESSAGE: &str =
+    "NightCrate can't run from a folder reached through a symbolic link. Move NightCrate.app to Applications and open it again.";
 const START_SILENCE: Duration = Duration::from_secs(60);
 const STOP_TIMEOUT: Duration = Duration::from_secs(15);
 
@@ -85,10 +87,7 @@ pub struct Backend {
 
 impl Backend {
     pub fn spawn(app: &AppHandle) -> Result<(Arc<Self>, mpsc::Receiver<Output>), String> {
-        let executable = app
-            .path()
-            .resource_dir()
-            .map_err(|error| error.to_string())?
+        let executable = resource_dir(app)?
             .join("backend")
             .join(if cfg!(windows) {
                 "nightcrate-backend.exe"
@@ -213,6 +212,31 @@ impl Backend {
         }
         self.process.lock().unwrap().take();
     }
+}
+
+fn resource_dir(app: &AppHandle) -> Result<PathBuf, String> {
+    app.path().resource_dir().map_err(|error| {
+        if current_executable_has_symlink_ancestor() {
+            SYMLINK_INSTALL_MESSAGE.to_owned()
+        } else {
+            format!("NightCrate couldn't locate its bundled backend resources: {error}")
+        }
+    })
+}
+
+#[cfg(target_os = "macos")]
+fn current_executable_has_symlink_ancestor() -> bool {
+    std::env::current_exe().ok().is_some_and(|executable| {
+        executable.ancestors().any(|ancestor| {
+            fs::symlink_metadata(ancestor)
+                .is_ok_and(|metadata| metadata.file_type().is_symlink())
+        })
+    })
+}
+
+#[cfg(not(target_os = "macos"))]
+fn current_executable_has_symlink_ancestor() -> bool {
+    false
 }
 
 fn shell_log_path(app: &AppHandle) -> Result<PathBuf, String> {

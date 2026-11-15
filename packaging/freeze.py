@@ -5,6 +5,7 @@ from __future__ import annotations
 import shutil
 import sys
 import tomllib
+from importlib import metadata
 from pathlib import Path
 
 from cx_Freeze import Executable, setup
@@ -39,6 +40,26 @@ def package_version() -> str:
         return tomllib.load(handle)["project"]["version"]
 
 
+def gcc_runtime_dist_info() -> list[tuple[str, str]]:
+    """Keep exact provider versions beside bundled GCC runtime libraries."""
+    result: list[tuple[str, str]] = []
+    for dist in metadata.distributions():
+        if not any(
+            Path(str(item))
+            .name.lower()
+            .startswith(("libgcc_s", "libgfortran", "libquadmath"))
+            for item in dist.files or []
+        ):
+            continue
+        dist_info = Path(dist._path)  # noqa: SLF001
+        if not dist_info.name.endswith(".dist-info"):
+            raise RuntimeError(
+                f"GCC runtime provider {dist.metadata['Name']} has no dist-info directory"
+            )
+        result.append((str(dist_info), f"lib/{dist_info.name}"))
+    return result
+
+
 if BUILD_DIR.exists():
     shutil.rmtree(BUILD_DIR)
 
@@ -48,7 +69,7 @@ include_files: list[tuple[str, str]] = [
         str(BACKEND / "src" / "nightcrate" / "db" / "migrations"),
         "lib/nightcrate/db/migrations",
     ),
-]
+] + gcc_runtime_dist_info()
 if sys.platform == "darwin":
     include_files.append(
         (str(PYTHON_SITE / "mlx" / "lib" / "mlx.metallib"), "lib/mlx.metallib")

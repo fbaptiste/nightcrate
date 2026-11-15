@@ -85,7 +85,11 @@ fn loading_failure(app: &AppHandle, failure: &StartFailure) {
             "NightCrate couldn't find a free port (8765–8775). Close the program using it, then open NightCrate again.",
             false,
         ),
-        _ => ("NightCrate couldn't start", "NightCrate couldn't start", true),
+        _ => (
+            "NightCrate couldn't start",
+            failure.reason.as_str(),
+            true,
+        ),
     };
     let title = serde_json::to_string(title).unwrap();
     let message = serde_json::to_string(message).unwrap();
@@ -100,7 +104,18 @@ fn loading_failure(app: &AppHandle, failure: &StartFailure) {
             "window.nightcrateLoading.failure({title},{message},{lines})"
         ));
     }
-    eprintln!("[shell] {}: {}", failure.reason, failure.last_lines.join(" | "));
+    eprintln!(
+        "[shell] {}: {}",
+        failure.reason,
+        failure.last_lines.join(" | ")
+    );
+    if let Some(exit_code) = app.state::<SelfTest>().start_failure_exit_code() {
+        let backend = app.state::<BackendSlot>().0.lock().unwrap().take();
+        if let Some(backend) = backend {
+            backend.stop();
+        }
+        app.exit(exit_code);
+    }
 }
 
 fn create_main(app: &AppHandle, port: u16, selftest: bool) -> Result<(), String> {
@@ -174,8 +189,6 @@ fn start_backend(app: AppHandle) {
                         reason,
                     },
                 );
-            } else if selftest {
-                SelfTest::start_timeout(app);
             }
         }
         Err(failure) => loading_failure(&app, &failure),
@@ -247,6 +260,7 @@ fn main() {
             }
         })
         .setup(|app| {
+            SelfTest::start_timeout(app.handle().clone());
             install_edit_menu(app)?;
             WebviewWindowBuilder::new(app, "loading", WebviewUrl::App("index.html".into()))
                 .title("NightCrate")

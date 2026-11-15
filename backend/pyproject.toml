@@ -2,6 +2,7 @@
 name = "nightcrate"
 version = "0.53.0"
 description = "Astrophotography session cataloging and analysis"
+license = "GPL-3.0-or-later"
 requires-python = ">=3.14"
 dependencies = [
     "fastapi>=0.115",

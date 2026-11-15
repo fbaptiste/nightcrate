@@ -11,6 +11,13 @@ pub enum Mode {
     Configured,
 }
 
+fn start_event_exit_code(mode: &Mode, start_failed: bool) -> Option<i32> {
+    match (mode, start_failed) {
+        (Mode::Off, _) | (_, false) => None,
+        (_, true) => Some(3),
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Phase {
     Off,
@@ -39,6 +46,10 @@ impl SelfTest {
 
     pub fn enabled(&self) -> bool {
         !matches!(self.mode, Mode::Off)
+    }
+
+    pub fn start_failure_exit_code(&self) -> Option<i32> {
+        start_event_exit_code(&self.mode, true)
     }
 
     pub fn script(&self) -> Option<String> {
@@ -75,10 +86,14 @@ impl SelfTest {
     }
 
     pub fn start_timeout(app: AppHandle) {
+        let phase = *app.state::<SelfTest>().phase.lock().unwrap();
+        if matches!(phase, Phase::Off | Phase::Complete) {
+            return;
+        }
         thread::spawn(move || {
             thread::sleep(Duration::from_secs(120));
             let test = app.state::<SelfTest>();
-            if test.enabled() && *test.phase.lock().unwrap() != Phase::Complete {
+            if *test.phase.lock().unwrap() == phase {
                 eprintln!("[selftest] timed out waiting for the next report");
                 app.exit(2);
             }
@@ -95,6 +110,7 @@ pub fn selftest_report(app: AppHandle, test: State<'_, SelfTest>, report: Value)
         (Phase::Wizard, Some("wizard"), true) => {
             *current = Phase::Shell;
             drop(current);
+            SelfTest::start_timeout(app.clone());
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.eval("window.location.reload()");
             }
@@ -115,5 +131,21 @@ pub fn selftest_report(app: AppHandle, test: State<'_, SelfTest>, report: Value)
             drop(current);
             app.exit(1);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn start_failure_exit_code_depends_on_selftest_mode_and_event() {
+        assert_eq!(start_event_exit_code(&Mode::Off, true), None);
+        assert_eq!(
+            start_event_exit_code(&Mode::Fresh("workspace".to_owned()), true),
+            Some(3)
+        );
+        assert_eq!(start_event_exit_code(&Mode::Configured, true), Some(3));
+        assert_eq!(start_event_exit_code(&Mode::Configured, false), None);
     }
 }
