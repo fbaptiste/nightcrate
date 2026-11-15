@@ -23,13 +23,17 @@ jobs:
             bundle: nsis
     runs-on: ${{ matrix.os }}
     env:
-      NIGHTCRATE_TEST_APP_DIR: ${{ runner.temp }}/nightcrate-update-app-data
+      # NIGHTCRATE_TEST_APP_DIR is set in the first step: the runner context
+      # (runner.temp) isn't available in job-level env.
       NIGHTCRATE_TEST_PORT: "48125"
       NIGHTCRATE_TEST_MANIFEST_URL: http://127.0.0.1:48123/latest.json
       NIGHTCRATE_TEST_RELEASES_URL: http://127.0.0.1:48123/release.json
       NIGHTCRATE_TEST_AUTO_INSTALL: "1"
       NIGHTCRATE_TEST_PROBE_URL: http://127.0.0.1:48124/probe.html
     steps:
+      - name: Set the private app-data folder
+        shell: bash
+        run: echo "NIGHTCRATE_TEST_APP_DIR=$RUNNER_TEMP/nightcrate-update-app-data" >> "$GITHUB_ENV"
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       - uses: astral-sh/setup-uv@e92bafb6253dcd438e0484186d7669ea7a8ca1cc # v6.4.3
         with:
