@@ -39,7 +39,37 @@ import { cloudHatch, failHatch, weatherPalette } from "@/lib/weatherPalette";
 import { monoFontFamily } from "@/theme/theme";
 import { DarknessBand } from "./HourStrip";
 
-const DETAIL_COLUMNS = `${WEATHER_DETAIL_LABEL_WIDTH}px minmax(420px, 1fr) ${WEATHER_ROW_SUMMARY_WIDTH}px`;
+// An hour cell fits three characters ("-74", "8.3") at the cell font;
+// below that the panel scrolls sideways (Fred, 2026-11-15). The hours track
+// grows with the column count, so the darkness band, which spans the track,
+// stays aligned with the cells. On a daylight-saving fall-back night one
+// clock column holds two hours (the span), so every column widens to fit
+// two cells and the columns stay equal.
+const HOUR_CELL_MIN = 26;
+const HOUR_CELL_GAP = 1;
+const HOUR_GAP = 3;
+const DETAIL_GAP = 12;
+
+/** Most hours one clock column holds: 2 on a fall-back night, else 1. */
+function hourSpan(cells: Hour[][]): number {
+  return Math.max(1, ...cells.map((hours) => hours.length));
+}
+
+function columnMin(span: number): number {
+  return span * HOUR_CELL_MIN + (span - 1) * HOUR_CELL_GAP;
+}
+
+function hoursMinWidth(count: number, span: number): number {
+  return Math.max(420, count * (columnMin(span) + HOUR_GAP) - HOUR_GAP);
+}
+
+function detailColumns(count: number, span: number): string {
+  return `${WEATHER_DETAIL_LABEL_WIDTH}px minmax(${hoursMinWidth(count, span)}px, 1fr) ${WEATHER_ROW_SUMMARY_WIDTH}px`;
+}
+
+function hourColumns(count: number, span: number): string {
+  return `repeat(${Math.max(count, 1)}, minmax(${columnMin(span)}px, 1fr))`;
+}
 const DASH = "—";
 const HOUR_MS = 60 * 60 * 1000;
 const CHANCE_HELP = "An hour fails if its forecast chance is above this. In North America, beyond about 36 hours, one chance covers each 6-hour stretch and repeats in each hour.";
@@ -58,12 +88,23 @@ function cellNumber(value: number | null, digits = 1): string {
     : value.toFixed(digits).replace(/\.?0+$/, "");
 }
 
-function precipitationCell(valueMm: number | null, units: WeatherUnits): string {
-  return formatAmount(valueMm, units).replace(/ (?:mm|in)$/, "");
+// Hour columns can be as narrow as 28 px (a 1400 px window), where four
+// characters such as "16.1" run into the next hour (Fred, 2026-11-15). Keep
+// one decimal only while the value fits in three characters; the night
+// summary and checklist keep the exact figure.
+function fittedNumber(value: number | null): string {
+  if (value == null) return DASH;
+  const decimal = cellNumber(value);
+  return decimal.length <= 3 ? decimal : cellNumber(Math.round(value) || 0);
 }
 
-// Whole numbers: wind and gust share one cell in the "not counted" row, and a
-// decimal on each overflows the hour column.
+function precipitationCell(valueMm: number | null, units: WeatherUnits): string {
+  const text = formatAmount(valueMm, units).replace(/ (?:mm|in)$/, "");
+  // Inches have two decimals, so drop the leading zero (".02") to fit.
+  return units === "imperial" ? text.replace(/^(<?)0\./, "$1.") : text;
+}
+
+// Whole numbers, which keep the value to three characters.
 function windCell(valueKmh: number | null, units: WeatherUnits): string {
   return cellNumber(
     valueKmh == null ? null : Math.round(units === "imperial" ? valueKmh * 0.621371 : valueKmh),
@@ -71,17 +112,17 @@ function windCell(valueKmh: number | null, units: WeatherUnits): string {
 }
 
 function spreadCell(valueC: number | null, units: WeatherUnits): string {
-  return cellNumber(valueC == null ? null : units === "imperial" ? valueC * 9 / 5 : valueC);
+  return fittedNumber(valueC == null ? null : units === "imperial" ? valueC * 9 / 5 : valueC);
 }
 
 function temperatureCell(valueC: number | null, units: WeatherUnits): string {
-  return cellNumber(valueC == null ? null : units === "imperial" ? valueC * 9 / 5 + 32 : valueC);
+  return fittedNumber(valueC == null ? null : units === "imperial" ? valueC * 9 / 5 + 32 : valueC);
 }
 
 function visibilityCell(valueM: number | null, units: WeatherUnits): string {
   if (valueM == null) return DASH;
   const value = units === "imperial" ? valueM / 1609.344 : valueM / 1000;
-  return cellNumber(value);
+  return fittedNumber(value);
 }
 
 function transparencyCell(hour: Hour): string {
@@ -185,6 +226,7 @@ function metricCellSx(
   state: CellStatus,
   failurePattern: FailurePattern,
   outsideNight: boolean,
+  long: boolean,
 ) {
   return (theme: Theme) => {
     const p = weatherPalette(theme);
@@ -195,11 +237,13 @@ function metricCellSx(
       display: "flex",
       alignItems: "center",
       justifyContent: "center",
-      px: "2px",
+      px: "1px",
       boxSizing: "border-box",
       borderRadius: "3px",
       fontFamily: monoFontFamily,
-      fontSize: "0.75rem",
+      // Four characters ("fair", "1.25") fit the narrowest column only at
+      // the smaller size.
+      fontSize: long ? "0.625rem" : "0.75rem",
       lineHeight: 1,
       whiteSpace: "nowrap",
       overflow: "hidden",
@@ -256,25 +300,27 @@ function GridRow({
   failurePattern = "orange",
 }: GridRowProps) {
   const cells = cellsFor(night, clock);
+  const span = hourSpan(cells);
   return (
-    <Box sx={{ display: "grid", gridTemplateColumns: DETAIL_COLUMNS, gap: 1.5, alignItems: "center", py: "3px" }}>
+    <Box sx={{ display: "grid", gridTemplateColumns: detailColumns(clock.length, span), gap: `${DETAIL_GAP}px`, alignItems: "center", py: "3px" }}>
       <Typography variant="body2" sx={(theme) => ({ color: dimmed ? weatherPalette(theme).onDim : "text.primary" })}>{label}</Typography>
-      <Box sx={{ display: "grid", gridTemplateColumns: `repeat(${Math.max(clock.length, 1)}, minmax(24px, 1fr))`, gap: "3px", minWidth: clock.length * 27 }}>
+      <Box sx={{ display: "grid", gridTemplateColumns: hourColumns(clock.length, span), gap: `${HOUR_GAP}px` }}>
         {cells.map((hours, columnIndex) => (
-          <Box key={`${clock[columnIndex]?.hour ?? columnIndex}-${columnIndex}`} sx={{ display: "flex", gap: "1px" }}>
+          <Box key={`${clock[columnIndex]?.hour ?? columnIndex}-${columnIndex}`} sx={{ display: "flex", gap: `${HOUR_CELL_GAP}px` }}>
             {hours.length === 0 ? <Box sx={{ width: "100%", height: 26 }} /> : hours.map((hour) => {
               const beyondCoverage = notExpected?.(hour) ?? false;
               const state: CellStatus = dimmed || beyondCoverage ? "not_counted" : status?.(hour) ?? "context";
               const outsideNight = hour.elapsed || hour.excluded || (hour.dark_minutes === 0 && hour.exposure_minutes === 0);
+              const text = value(hour);
               return (
                 <Box
                   key={hour.start_utc}
                   title={beyondCoverage
                     ? "forecast does not reach this hour — not counted"
-                    : tooltip?.(hour) ?? `${hour.time.slice(11, 16)} · ${value(hour)}`}
-                  sx={metricCellSx(state, failurePattern, outsideNight)}
+                    : tooltip?.(hour) ?? `${hour.time.slice(11, 16)} · ${text}`}
+                  sx={metricCellSx(state, failurePattern, outsideNight, text.length > 3)}
                 >
-                  {value(hour)}
+                  {text}
                 </Box>
               );
             })}
@@ -411,6 +457,7 @@ export default function NightDetailPanel({
     controls.imaging_from !== null || controls.imaging_until !== null,
   );
   const multipleModels = night.cloud_models.length > 1;
+  const span = hourSpan(cellsFor(night, clock));
   const showModels = multipleModels || (
     modelVisibility.key === modelVisibilityKey ? modelVisibility.show : false
   );
@@ -618,10 +665,10 @@ export default function NightDetailPanel({
       </Box>
 
       <Box sx={{ overflowX: "auto", mt: 1 }}>
-        <Box sx={{ minWidth: 940 }}>
-          <Box sx={{ display: "grid", gridTemplateColumns: DETAIL_COLUMNS, gap: 1.5, color: "text.secondary", py: 0.5 }}>
+        <Box sx={{ minWidth: WEATHER_DETAIL_LABEL_WIDTH + hoursMinWidth(clock.length, span) + WEATHER_ROW_SUMMARY_WIDTH + 2 * DETAIL_GAP }}>
+          <Box sx={{ display: "grid", gridTemplateColumns: detailColumns(clock.length, span), gap: `${DETAIL_GAP}px`, color: "text.secondary", py: 0.5 }}>
             <span />
-            <Box sx={{ display: "grid", gridTemplateColumns: `repeat(${Math.max(clock.length, 1)}, minmax(24px, 1fr))`, gap: "3px", minWidth: clock.length * 27 }}>
+            <Box sx={{ display: "grid", gridTemplateColumns: hourColumns(clock.length, span), gap: `${HOUR_GAP}px` }}>
               {clock.map((column, index) => <Typography key={`${column.hour}-${index}`} variant="caption">{column.label}</Typography>)}
             </Box>
             <Typography variant="caption">Night summary</Typography>
@@ -682,7 +729,7 @@ export default function NightDetailPanel({
             status={(hour) => judge(rainCounts(hour), hour.model_precip_mm[model] ?? null, (value) => value > rules.rain_amount_threshold_mm)}
             notExpected={(hour) => hour.expected[model]?.amount === false}
           />)}
-          <Box sx={{ display: "grid", gridTemplateColumns: DETAIL_COLUMNS, gap: 1.5, alignItems: "center", py: "3px" }}>
+          <Box sx={{ display: "grid", gridTemplateColumns: detailColumns(clock.length, span), gap: `${DETAIL_GAP}px`, alignItems: "center", py: "3px" }}>
             <Typography variant="body2">Darkness</Typography>
             <DarknessBand night={night} clock={clock} height={26} />
             <Typography variant="caption" color="text.secondary">{`you use ${rules.darkness}`}</Typography>
@@ -695,7 +742,10 @@ export default function NightDetailPanel({
           {rules.moon_must_be_down && <GridRow night={night} clock={clock} label="Moon altitude °" summary="must be below 0°" value={(hour) => cellNumber(hour.moon_altitude_deg, 0)} status={(hour) => judge(hour.dark_minutes > 0, hour.moon_altitude_deg, (value) => value >= 0)} />}
 
           {(!rules.wind_counted || !rules.dew_counted || !rules.moon_must_be_down) && <GroupLabel>Not counted (your rules)</GroupLabel>}
-          {!rules.wind_counted && <GridRow dimmed night={night} clock={clock} label={`Wind / gusts ${units === "imperial" ? "mph" : "km/h"}`} summary={`up to ${formatWind(night.extremes.max_gust_kmh, units)}`} value={(hour) => `${windCell(hour.wind_kmh, units)}/${windCell(hour.gust_kmh, units)}`} />}
+          {!rules.wind_counted && <>
+            <GridRow dimmed night={night} clock={clock} label={`Wind ${units === "imperial" ? "mph" : "km/h"}`} summary="context only" value={(hour) => windCell(hour.wind_kmh, units)} />
+            <GridRow dimmed night={night} clock={clock} label={`Gusts ${units === "imperial" ? "mph" : "km/h"}`} summary={`up to ${formatWind(night.extremes.max_gust_kmh, units)}`} value={(hour) => windCell(hour.gust_kmh, units)} />
+          </>}
           {!rules.dew_counted && <GridRow dimmed night={night} clock={clock} label={`Temperature above dew point (${units === "imperial" ? "°F" : "°C"})`} summary={`minimum ${formatDewSpread(night.extremes.min_dew_spread_c, units)}`} value={(hour) => spreadCell(hour.dew_spread_c, units)} />}
           {!rules.moon_must_be_down && <GridRow dimmed night={night} clock={clock} label="Moon altitude °" summary="context only" value={(hour) => cellNumber(hour.moon_altitude_deg, 0)} />}
 
@@ -706,7 +756,7 @@ export default function NightDetailPanel({
           <GridRow night={night} clock={clock} label={`Temperature ${units === "imperial" ? "°F" : "°C"}`} summary="context only" value={(hour) => temperatureCell(hour.temperature_c, units)} />
           <GridRow night={night} clock={clock} label={`Visibility ${units === "imperial" ? "mi" : "km"}`} summary="context only" value={(hour) => visibilityCell(hour.visibility_m, units)} />
           <GridRow night={night} clock={clock} label="Seeing (estimate)" summary="context only" value={(hour) => hour.seeing ?? DASH} />
-          <GridRow night={night} clock={clock} label="Transparency (estimate)" summary="context only" value={transparencyCell} />
+          <GridRow night={night} clock={clock} label="Transparency (estimate)" summary="context only" value={(hour) => hour.transparency ?? DASH} tooltip={(hour) => `${hour.time.slice(11, 16)} · ${transparencyCell(hour)}`} />
         </Box>
       </Box>
       {!multipleModels && <FormControlLabel

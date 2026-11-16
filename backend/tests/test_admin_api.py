@@ -1,6 +1,7 @@
 """Tests for the admin API endpoints."""
 
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
@@ -384,98 +385,6 @@ async def test_status_shows_unavailable(client, tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# GET /api/admin/browse
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.anyio
-async def test_browse(client, tmp_path):
-    # Create a subdirectory and a .db file inside tmp_path
-    sub = tmp_path / "subdir"
-    sub.mkdir()
-    db_file = tmp_path / "test.db"
-    db_file.write_bytes(b"SQLite format 3\x00")
-    txt_file = tmp_path / "readme.txt"
-    txt_file.write_text("hello")
-
-    resp = await client.get(f"/api/admin/browse?path={tmp_path}")
-    assert resp.status_code == 200
-    data = resp.json()
-    assert "path" in data
-    assert "dirs" in data
-    assert "files" in data
-
-    dir_names = [d["name"] for d in data["dirs"]]
-    assert "subdir" in dir_names
-
-    file_names = [f["name"] for f in data["files"]]
-    assert "test.db" in file_names
-    # .txt should be excluded
-    assert "readme.txt" not in file_names
-
-    # Each file has size
-    db_entry = next(f for f in data["files"] if f["name"] == "test.db")
-    assert "size" in db_entry
-    assert db_entry["size"] > 0
-
-
-# ---------------------------------------------------------------------------
-# GET /api/admin/browse — hidden files excluded
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.anyio
-async def test_browse_excludes_hidden(client, tmp_path):
-    hidden_dir = tmp_path / ".hidden"
-    hidden_dir.mkdir()
-    hidden_file = tmp_path / ".secret.db"
-    hidden_file.write_bytes(b"x")
-    visible = tmp_path / "visible"
-    visible.mkdir()
-
-    resp = await client.get(f"/api/admin/browse?path={tmp_path}")
-    assert resp.status_code == 200
-    data = resp.json()
-
-    dir_names = [d["name"] for d in data["dirs"]]
-    file_names = [f["name"] for f in data["files"]]
-    assert ".hidden" not in dir_names
-    assert ".secret.db" not in file_names
-    assert "visible" in dir_names
-
-
-# ---------------------------------------------------------------------------
-# GET /api/admin/browse — not a directory
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.anyio
-async def test_browse_not_a_directory(client, tmp_path):
-    file_path = tmp_path / "somefile.txt"
-    file_path.write_text("hello")
-
-    resp = await client.get(f"/api/admin/browse?path={file_path}")
-    assert resp.status_code == 400
-
-
-# ---------------------------------------------------------------------------
-# GET /api/admin/shortcuts
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.anyio
-async def test_shortcuts(client):
-    resp = await client.get("/api/admin/shortcuts")
-    assert resp.status_code == 200
-    data = resp.json()
-    assert "home" in data
-    assert "documents" in data
-    assert "app_data" in data
-    # home should be a real directory
-    assert Path(data["home"]).is_dir()
-
-
-# ---------------------------------------------------------------------------
 # POST /api/admin/mkdir
 # ---------------------------------------------------------------------------
 
@@ -519,6 +428,85 @@ async def test_remove_database_deletes_file(client, tmp_path):
     assert resp.json()["ok"] is True
     # File should be gone from disk
     assert not (Path(db_path) / "nightcrate.db").is_file()
+
+
+@pytest.mark.anyio
+async def test_remove_folder_refused_when_active_workspace_inside(client, tmp_path):
+    # On Windows, Admin once proposed new workspaces inside the active one;
+    # deleting the outer folder then deleted the active workspace too.
+    outer = tmp_path / "Outer"
+    inner = outer / "Inner"
+    assert (
+        await client.post("/api/admin/database/setup", json={"path": str(inner), "name": "Inner"})
+    ).status_code == 200
+    assert (
+        await client.post("/api/admin/database/create", json={"path": str(outer), "name": "Outer"})
+    ).status_code == 200
+
+    resp = await client.request(
+        "DELETE", "/api/admin/database?delete_file=true", json={"path": str(outer)}
+    )
+    assert resp.status_code == 400
+    assert "Inner" in resp.json()["detail"]
+    assert (inner / "nightcrate.db").is_file()
+    assert (outer / "nightcrate.db").is_file()
+    status = (await client.get("/api/admin/status")).json()
+    assert str(outer) in [db["path"] for db in status["known_databases"]]
+
+    # Forgetting the outer workspace without deleting its folder is still fine.
+    resp = await client.request("DELETE", "/api/admin/database", json={"path": str(outer)})
+    assert resp.status_code == 200
+    assert (inner / "nightcrate.db").is_file()
+
+
+@pytest.mark.anyio
+async def test_remove_folder_refused_when_other_workspace_inside(client, tmp_path):
+    outer = tmp_path / "Outer"
+    inner = outer / "Nested"
+    for path, name in ((outer, "Outer"), (inner, "Nested")):
+        resp = await client.post(
+            "/api/admin/database/create", json={"path": str(path), "name": name}
+        )
+        assert resp.status_code == 200
+
+    resp = await client.request(
+        "DELETE", "/api/admin/database?delete_file=true", json={"path": str(outer)}
+    )
+    assert resp.status_code == 400
+    assert "Nested" in resp.json()["detail"]
+    assert (inner / "nightcrate.db").is_file()
+
+    # Deleting the nested one first, then the outer one, works.
+    for path in (inner, outer):
+        resp = await client.request(
+            "DELETE", "/api/admin/database?delete_file=true", json={"path": str(path)}
+        )
+        assert resp.status_code == 200
+    assert not outer.exists()
+
+
+@pytest.mark.anyio
+async def test_remove_folder_refused_when_workspace_inside_spelled_differently(client, tmp_path):
+    # macOS and Windows drives usually ignore case: "/Users/x" and "/users/x"
+    # are one folder, so the guard must compare folders, not spellings.
+    probe = tmp_path / "CaseProbe"
+    probe.mkdir()
+    if not (tmp_path / "caseprobe").exists():
+        pytest.skip("case-sensitive filesystem")
+    outer = tmp_path / "Outer"
+    inner_respelled = Path(str(outer).swapcase()) / "Inner"
+    for path, name in ((outer, "Outer"), (inner_respelled, "Inner")):
+        resp = await client.post(
+            "/api/admin/database/create", json={"path": str(path), "name": name}
+        )
+        assert resp.status_code == 200
+
+    resp = await client.request(
+        "DELETE", "/api/admin/database?delete_file=true", json={"path": str(outer)}
+    )
+    assert resp.status_code == 400
+    assert "Inner" in resp.json()["detail"]
+    assert (outer / "Inner" / "nightcrate.db").is_file()
 
 
 # ---------------------------------------------------------------------------
@@ -633,28 +621,6 @@ async def test_remove_unknown_database_rejected(client, tmp_path):
     )
     assert resp.status_code == 400
     assert "not in known workspaces" in resp.json()["detail"].lower()
-
-
-# ---------------------------------------------------------------------------
-# GET /api/admin/browse — PermissionError
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.anyio
-async def test_browse_permission_error(client, tmp_path):
-    """Browse should handle PermissionError gracefully (return partial results)."""
-    # Create a dir that we can browse
-    sub = tmp_path / "restricted"
-    sub.mkdir()
-
-    # We can't easily simulate PermissionError on iterdir without mocking,
-    # so use a real path — the endpoint returns partial results on PermissionError
-    resp = await client.get(f"/api/admin/browse?path={tmp_path}")
-    assert resp.status_code == 200
-    # At minimum we get a valid response structure
-    data = resp.json()
-    assert "dirs" in data
-    assert "files" in data
 
 
 # ---------------------------------------------------------------------------
@@ -989,3 +955,30 @@ async def test_wikidata_fetch_network_failure_returns_502(client, tmp_path, monk
     resp = await client.post("/api/admin/catalogs/wikidata/fetch")
     assert resp.status_code == 502
     assert "Failed to fetch Wikidata SPARQL" in resp.json()["detail"]
+
+
+@pytest.mark.anyio
+async def test_wikidata_fetch_sends_app_version(client, tmp_path, monkeypatch):
+    workspace = str(tmp_path / "wikidata-version")
+    setup = await client.post(
+        "/api/admin/database/setup", json={"path": workspace, "name": "Version"}
+    )
+    assert setup.status_code == 200
+    received = None
+
+    async def fake_fetch(_root, *, app_version, on_progress):
+        nonlocal received
+        received = app_version
+        return SimpleNamespace(
+            fetched_at="2026-11-15T00:00:00Z",
+            size_bytes=1,
+            sha256="abc",
+            query_version="v3",
+        )
+
+    monkeypatch.setattr(
+        "nightcrate.catalog_loader.wikidata.fetch_wikidata_external_refs", fake_fetch
+    )
+    response = await client.post("/api/admin/catalogs/wikidata/fetch")
+    assert response.status_code == 200
+    assert received == admin.runtime.app_version()

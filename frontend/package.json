@@ -1,13 +1,15 @@
 {
   "name": "frontend",
   "private": true,
-  "version": "0.0.0",
+  "version": "0.54.0",
+  "license": "GPL-3.0-or-later",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
     "check:home": "node scripts/check-home.mjs",
     "check:sky": "node scripts/check-sky-chart.mjs",
+    "check:paths": "node scripts/check-paths.mjs",
     "lint": "eslint .",
     "preview": "vite preview"
   },

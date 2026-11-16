@@ -74,17 +74,12 @@ const TAB = {
   notes: 5,
 } as const;
 
-const escapeHtml = (s: string) =>
-  s.replace(/[&<>"]/g, (c) => `&${{ "&": "amp", "<": "lt", ">": "gt", '"': "quot" }[c]};`);
-
 /**
  * Open one project image in its own OS window at ~2/3 of the screen.
  *
  * A real window rather than a modal, so it can be resized, moved to a second
- * display, and left open next to the app. The popup gets a tiny document rather
- * than the bare image URL so the image *fits* the window and keeps fitting as
- * it is resized — pointing a window at an image URL shows it at native size
- * with scrollbars instead.
+ * display, and left open next to the app. The same-origin viewer route makes
+ * this work in both a browser and the installed shell.
  */
 function openImageWindow(url: string, title: string) {
   const width = Math.round(window.screen.availWidth * (2 / 3));
@@ -96,25 +91,17 @@ function openImageWindow(url: string, title: string) {
   const left = Math.round(window.screenX + (window.outerWidth - width) / 2);
   const top = Math.round(window.screenY + (window.outerHeight - height) / 2);
 
+  const viewer = `/image-viewer?${new URLSearchParams({ src: url, title }).toString()}`;
   const win = window.open(
-    "",
+    viewer,
     `nightcrate-image-${title}`,
     `popup=yes,width=${width},height=${height},left=${left},top=${top},resizable=yes,scrollbars=no`,
   );
   if (!win) {
     // Popup blocked — fall back to a tab so the click still does something.
-    window.open(url, "_blank", "noopener");
+    window.open(viewer, "_blank", "noopener");
     return;
   }
-  win.document.write(
-    `<!doctype html><html><head><meta charset="utf-8">` +
-      `<title>${escapeHtml(title)}</title>` +
-      `<style>html,body{margin:0;height:100%;background:#000000;}` +
-      `body{display:flex;align-items:center;justify-content:center;}` +
-      `img{max-width:100vw;max-height:100vh;object-fit:contain;}</style></head>` +
-      `<body><img src="${escapeHtml(url)}" alt="${escapeHtml(title)}"></body></html>`,
-  );
-  win.document.close();
   win.focus();
 }
 

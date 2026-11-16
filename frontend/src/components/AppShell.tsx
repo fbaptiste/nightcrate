@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import Box from "@mui/material/Box";
 import Divider from "@mui/material/Divider";
 import Drawer from "@mui/material/Drawer";
+import Button from "@mui/material/Button";
 import IconButton from "@mui/material/IconButton";
 import List from "@mui/material/List";
 import ListItem from "@mui/material/ListItem";
@@ -66,12 +67,22 @@ import { fetchHealth } from "@/api/files";
 import { fetchAdminStatus } from "@/api/admin";
 import { setActivity } from "@/api/client";
 import { useSettingsStore } from "@/stores/settingsStore";
+import { resetZoom, resetZoomShortcut, useDesktopZoom } from "@/lib/desktopZoom";
+import { createDragClickGuard } from "@/lib/dragClickGuard";
 import { ActivityConsole } from "@/components/ActivityConsole";
 import type { Theme } from "@/api/settings";
 import { EasterEggWand } from "@/components/EasterEggWand";
 import { WandToast } from "@/components/WandToast";
 import { WandToastContext } from "@/components/WandToastContext";
 import { ASTRO_JOKES } from "@/lib/astroJokes";
+import { NoticesPill } from "@/components/notices/NoticesPill";
+import { NoticesPanel } from "@/components/notices/NoticesPanel";
+import { useNotices } from "@/components/notices/useNotices";
+import { UpdateQuestionDialog } from "@/components/notices/UpdateQuestionDialog";
+import { useInstallFlow } from "@/components/notices/InstallUpdateDialog";
+import { AppToast } from "@/components/notices/AppToast";
+import { markVersionSeen, setCheckAutomatically } from "@/api/updates";
+import { onDownloadSaved } from "@/lib/desktopShell";
 
 const DRAWER_WIDTH_OPEN = 220;
 const DRAWER_WIDTH_CLOSED = 52;
@@ -190,13 +201,22 @@ export function AppShell() {
     queryFn: fetchHealth,
     staleTime: Infinity,
   });
+  const queryClient = useQueryClient();
   const statusQuery = useQuery({
     queryKey: ["admin-status"],
     queryFn: fetchAdminStatus,
     staleTime: 60_000,
   });
   const activeDbName = statusQuery.data?.active_db?.name;
+  const installFlow = useInstallFlow();
+  const notices = useNotices(installFlow.start);
+  const [noticeAnchor, setNoticeAnchor] = useState<HTMLElement | null>(null);
+  const [questionDismissed, setQuestionDismissed] = useState(false);
+  const [downloadToast, setDownloadToast] = useState<string | null>(null);
+  const [updatedToastVersion, setUpdatedToastVersion] = useState<string | null>(null);
+  const updateSeen = useRef<string | null>(null);
   const { settings, update } = useSettingsStore();
+  const zoom = useDesktopZoom();
   const currentTheme: Theme = settings?.theme ?? "browser";
 
   const cycleTheme = () => {
@@ -223,6 +243,23 @@ export function AppShell() {
 
   const drawerWidth = navOpen ? DRAWER_WIDTH_OPEN : DRAWER_WIDTH_CLOSED;
 
+  useEffect(() => onDownloadSaved((path) => {
+    // The user chose the folder in the Save dialog, so name it rather than
+    // assuming Downloads.
+    const parts = path.split(/[\\/]/).filter(Boolean);
+    const name = parts.pop() ?? path;
+    const folder = parts.pop();
+    setDownloadToast(folder ? `Saved “${name}” to ${folder}` : `Saved “${name}”`);
+  }), []);
+
+  useEffect(() => {
+    const from = notices.status?.updated_from;
+    if (!from || updateSeen.current === from) return;
+    updateSeen.current = from;
+    setUpdatedToastVersion(notices.status?.current_version ?? null);
+    void markVersionSeen();
+  }, [notices.status?.current_version, notices.status?.updated_from]);
+
   // Resolve the user's saved nav order. Re-normalized every render so a
   // fresh settings hydrate (or a new nav item added in a future version)
   // surfaces immediately.
@@ -244,6 +281,7 @@ export function AppShell() {
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
   );
 
+  const dragClickGuard = useMemo(() => createDragClickGuard(), []);
   const handleDragEnd = (event: DragEndEvent) => {
     const { active, over } = event;
     if (!over || active.id === over.id) return;
@@ -289,7 +327,9 @@ export function AppShell() {
             px: 0.5,
           }}
         >
-          <Tooltip title={navOpen ? "Collapse sidebar" : "Expand sidebar"} arrow placement="right">
+          {/* Remounted on each toggle: the button moves under the pointer, so the
+              open tooltip would otherwise stay put, pointing at the old spot. */}
+          <Tooltip key={navOpen ? "open" : "closed"} title={navOpen ? "Collapse sidebar" : "Expand sidebar"} arrow placement="right">
             <IconButton size="small" onClick={() => setNavOpen(!navOpen)} sx={{ p: 0.25, color: "primary.main" }}>
               {navOpen ? <KeyboardDoubleArrowLeftIcon sx={{ fontSize: 16 }} /> : <KeyboardDoubleArrowRightIcon sx={{ fontSize: 16 }} />}
             </IconButton>
@@ -312,20 +352,24 @@ export function AppShell() {
                 {activeDbName}
               </Typography>
             )}
+            <NoticesPill status={notices.status} expanded onClick={(event) => setNoticeAnchor(event.currentTarget)} />
           </Box>
         ) : (
-          <Box sx={{ display: "flex", justifyContent: "center", py: 2 }}>
+          <Box sx={{ display: "flex", justifyContent: "center", alignItems: "center", py: 2 }}>
             <Tooltip title="NightCrate" placement="right">
               <Typography variant="h6" fontWeight={600} sx={{ fontSize: 14 }}>
                 NC
               </Typography>
             </Tooltip>
+            <NoticesPill status={notices.status} expanded={false} onClick={(event) => setNoticeAnchor(event.currentTarget)} />
           </Box>
         )}
         <Divider />
 
-        {/* Navigation */}
-        <List dense>
+        {/* Navigation: scrolls on its own between the header and the bottom
+            bar, so a zoomed-in or short window keeps the bottom bar (and the
+            zoom reset) reachable. */}
+        <List dense sx={{ flex: "1 1 auto", minHeight: 0, overflowY: "auto" }}>
           {/* Home stays pinned at the top, never reorderable. */}
           <NavItemRow item={HOME_ITEM} navOpen={navOpen} />
           {isTablet ? (
@@ -338,7 +382,12 @@ export function AppShell() {
             <DndContext
               sensors={sensors}
               collisionDetection={closestCenter}
-              onDragEnd={handleDragEnd}
+              onDragStart={dragClickGuard.start}
+              onDragEnd={(event) => {
+                dragClickGuard.stop();
+                handleDragEnd(event);
+              }}
+              onDragCancel={dragClickGuard.stop}
             >
               <SortableContext items={reorderableRoutes} strategy={verticalListSortingStrategy}>
                 {reorderableRoutes.map((route) => {
@@ -351,11 +400,10 @@ export function AppShell() {
           )}
         </List>
 
-        <Box sx={{ flexGrow: 1 }} />
-
         {/* Bottom controls */}
         <Box
           sx={{
+            flexShrink: 0,
             borderTop: 1,
             borderColor: "divider",
             bgcolor: "action.hover",
@@ -378,17 +426,52 @@ export function AppShell() {
               <TimelineIcon sx={{ fontSize: 16 }} />
             </IconButton>
           </Tooltip>
+          {zoom !== 1 && (
+            <Tooltip title={`Back to 100% (${resetZoomShortcut()})`} arrow placement={navOpen ? "top" : "right"}>
+              <Button
+                size="small"
+                onClick={resetZoom}
+                sx={{ minWidth: 0, px: 0.75, py: 0, fontSize: 12, lineHeight: "24px", color: "text.secondary" }}
+              >
+                {Math.round(zoom * 100)}%
+              </Button>
+            </Tooltip>
+          )}
           <Box sx={{ ml: navOpen ? "auto" : 0 }}>
             <EasterEggWand lines={ASTRO_JOKES} tooltip="Words of wisdom" size={16} />
           </Box>
         </Box>
       </Drawer>
 
-      <Box component="main" sx={{ flexGrow: 1, overflow: "auto", display: "flex", flexDirection: "column" }}>
+      {/* `position: relative` keeps absolutely positioned content (such as a
+          visually hidden live region) inside this scroll area; otherwise it is
+          placed against the page and the whole window scrolls as well. */}
+      <Box component="main" sx={{ flexGrow: 1, overflow: "auto", display: "flex", flexDirection: "column", position: "relative" }}>
         <PersistentPages pathname={pathname} />
       </Box>
 
       <ActivityConsole open={activityOpen} onClose={() => setActivityOpen(false)} />
+      <NoticesPanel anchorEl={noticeAnchor} drawerWidth={drawerWidth} status={notices.status} onClose={() => setNoticeAnchor(null)} onDismiss={(id, action) => void notices.dismiss(id, action)} onInstall={(notice) => { setNoticeAnchor(null); void installFlow.start(notice); }} />
+      <UpdateQuestionDialog
+        open={notices.status?.check_automatically === null && !questionDismissed}
+        onDismiss={() => setQuestionDismissed(true)}
+        onAnswer={(answer) => {
+          void setCheckAutomatically(answer).then((status) => {
+            queryClient.setQueryData(["updates"], status);
+            if (answer) void notices.refresh();
+          });
+          setQuestionDismissed(true);
+        }}
+      />
+      {installFlow.dialog}
+      <AppToast
+        message={updatedToastVersion ? `Updated to ${updatedToastVersion}.${notices.status?.backup_taken ? " Your workspace was backed up first." : ""}` : null}
+        linkLabel="What's new"
+        linkHref={`https://github.com/fbaptiste/nightcrate/releases/tag/v${notices.status?.current_version ?? ""}`}
+        left={drawerWidth + 16}
+        onClose={() => setUpdatedToastVersion(null)}
+      />
+      <AppToast message={downloadToast} left={drawerWidth + 16} onClose={() => setDownloadToast(null)} />
       <WandToast
         id={wandToast?.id ?? 0}
         message={wandToast?.message ?? null}
@@ -463,7 +546,16 @@ function SortableNavItemRow({ item, navOpen }: { item: NavItem; navOpen: boolean
       <NavLink
         to={item.to}
         end={item.to === "/"}
-        style={{ textDecoration: "none", width: "100%", color: "inherit" }}
+        // dnd-kit does the reordering; a native drag of the link or its
+        // selected text would start too, and WebKit loads a dropped link.
+        draggable={false}
+        style={{
+          textDecoration: "none",
+          width: "100%",
+          color: "inherit",
+          userSelect: "none",
+          WebkitUserDrag: "none",
+        } as React.CSSProperties}
       >
         {({ isActive }) => (
           <Tooltip title={navOpen ? "" : item.label} placement="right" arrow>

@@ -117,6 +117,7 @@ class ProjectRigSetups:
     rig_id: int
     rig_name: str
     declared: bool
+    in_use: bool
     setups: tuple[ProjectSetup, ...]
     setup_options: tuple[ProjectSetupOption, ...]
     base_parts: RigParts
@@ -199,7 +200,7 @@ async def _record_nights(
     batch_rows: list,
     session_rows: list | None = None,
 ) -> set[tuple[int, str]]:
-    """Return distinct project nights represented by frames, batches, and sessions."""
+    """Return distinct imaging nights represented by lights and capture batches."""
     nights: set[tuple[int, str]] = set()
     timezones: dict[int, str | None] = {}
     for row in frame_rows:
@@ -239,7 +240,8 @@ async def rig_usage(conn: aiosqlite.Connection, rig_id: int) -> RigUsage:
         """
         SELECT sf.project_id, sf.date_obs_utc
         FROM sub_frame sf
-        WHERE sf.rig_id = ?
+        WHERE sf.frame_type = 'light'
+          AND (sf.rig_id = ?
            OR (
                sf.rig_id IS NULL
                AND (SELECT COUNT(*) FROM project_rig pr WHERE pr.project_id = sf.project_id) = 1
@@ -247,7 +249,7 @@ async def rig_usage(conn: aiosqlite.Connection, rig_id: int) -> RigUsage:
                    SELECT 1 FROM project_rig pr
                    WHERE pr.project_id = sf.project_id AND pr.rig_id = ?
                )
-           )
+           ))
         """,
         (rig_id, rig_id),
     )
@@ -261,7 +263,9 @@ async def rig_usage(conn: aiosqlite.Connection, rig_id: int) -> RigUsage:
     batch_rows = await cursor.fetchall()
     cursor = await conn.execute(
         "SELECT project_id, start_utc FROM session "
-        "WHERE rig_id = ? AND project_id IS NOT NULL AND start_utc IS NOT NULL",
+        "WHERE rig_id = ? AND project_id IS NOT NULL AND start_utc IS NOT NULL "
+        "AND EXISTS (SELECT 1 FROM sub_frame sf "
+        "WHERE sf.session_id = session.id AND sf.frame_type = 'light')",
         (rig_id,),
     )
     session_rows = await cursor.fetchall()
@@ -404,6 +408,7 @@ async def _setup_usage(conn: aiosqlite.Connection, rig_id: int, rig_setup_id: in
         FROM sub_frame_rig_setup sfs
         JOIN sub_frame sf ON sf.id = sfs.sub_frame_id
         WHERE sfs.rig_id = ? AND sfs.rig_setup_id = ?
+          AND sf.frame_type = 'light'
           AND (
               sf.rig_id = ?
               OR (
@@ -516,7 +521,8 @@ async def project_setups(conn: aiosqlite.Connection, project_id: int) -> list[Pr
     setup_rigs = await frame_setup_rig_ids(conn, project_id)
 
     cursor = await conn.execute(
-        "SELECT id, date_obs_utc FROM sub_frame WHERE project_id = ?", (project_id,)
+        "SELECT id, date_obs_utc FROM sub_frame WHERE project_id = ? AND frame_type = 'light'",
+        (project_id,),
     )
     frame_rows = await cursor.fetchall()
     cursor = await conn.execute(
@@ -533,6 +539,17 @@ async def project_setups(conn: aiosqlite.Connection, project_id: int) -> list[Pr
         (project_id,),
     )
     batch_rows = await cursor.fetchall()
+
+    cursor = await conn.execute(
+        """
+        SELECT rig_id FROM sub_frame WHERE project_id = ? AND rig_id IS NOT NULL
+        UNION SELECT rig_id FROM session WHERE project_id = ? AND rig_id IS NOT NULL
+        UNION SELECT rig_id FROM project_session WHERE project_id = ? AND rig_id IS NOT NULL
+        """,
+        (project_id, project_id, project_id),
+    )
+    in_use_ids = {row["rig_id"] for row in await cursor.fetchall()}
+    in_use_ids.update(rig_id for rig_id in setup_rigs.values() if rig_id is not None)
 
     rig_ids = set(declared_ids)
     rig_ids.update(rig_id for rig_id in setup_rigs.values() if rig_id is not None)
@@ -621,6 +638,7 @@ async def project_setups(conn: aiosqlite.Connection, project_id: int) -> list[Pr
                 rig_id=rig_id,
                 rig_name=rig["name"],
                 declared=rig_id in declared_ids,
+                in_use=rig_id in in_use_ids,
                 setups=tuple(setup_items),
                 setup_options=setup_options,
                 base_parts=base,

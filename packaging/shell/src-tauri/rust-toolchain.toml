@@ -1,0 +1,4 @@
+[toolchain]
+# A stable release at least 7 days old when pinned (1.99.1: 2026-10-13).
+channel = "1.99.1"
+profile = "minimal"

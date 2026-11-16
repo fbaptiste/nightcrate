@@ -19,8 +19,11 @@ import { useThumbnailCacheStore } from "@/stores/thumbnailCacheStore";
 import { fetchHealth } from "@/api/admin";
 import { fetchThumbnailCacheStats } from "@/api/planner";
 import { SetupWizard } from "@/components/SetupWizard";
+import { ImageViewerPage } from "@/pages/ImageViewerPage";
+import { WorkspaceProblemScreen } from "@/components/workspace/WorkspaceProblemScreen";
 
 const router = createBrowserRouter([
+  { path: "/image-viewer", element: <ImageViewerPage /> },
   {
     path: "/",
     element: <AppShell />,
@@ -87,6 +90,7 @@ function AppContent() {
   }, [health?.db_configured, load]);
 
   if (!healthQuery.isSuccess) return null;
+  if (health?.workspace_problem) return <WorkspaceProblemScreen problem={health.workspace_problem} currentVersion={health.version} />;
   if (!health?.db_configured) return <SetupWizard />;
 
   return <RouterProvider router={router} />;

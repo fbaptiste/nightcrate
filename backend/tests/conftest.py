@@ -105,6 +105,7 @@ async def _test_db(tmp_path: Path, monkeypatch):
     """Point the database at a temp file and create the settings table for all tests."""
     test_db = tmp_path / "test.db"
     monkeypatch.setattr("nightcrate.db.session._db_path", test_db)
+    monkeypatch.setattr("nightcrate.db.session._workspace_problem", None)
     monkeypatch.setattr("nightcrate.core.app_config.APP_DIR", tmp_path)
     monkeypatch.setattr("nightcrate.core.app_config.CONFIG_PATH", tmp_path / "config.json")
 

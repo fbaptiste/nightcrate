@@ -6,9 +6,10 @@ import sqlite3
 from pathlib import Path
 
 import aiosqlite
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status
 
-from nightcrate.core.app_config import load_config, workspace_db_path
+from nightcrate.api.app_activity import admit_work
+from nightcrate.db.session import active_db_path_or_none
 from nightcrate.services import plate_solve
 from nightcrate.services.star_catalog import fetch
 from nightcrate.services.star_catalog.ranges import (
@@ -60,10 +61,9 @@ def _translate_error(exc: Exception) -> HTTPException:
 
 async def _rig_coverage() -> list[RigCoverage]:
     result: list[RigCoverage] = []
-    active_db = load_config().active_db
-    if active_db is None:
+    db_path = active_db_path_or_none()
+    if db_path is None:
         return result
-    db_path = workspace_db_path(Path(active_db))
     if not db_path.is_file():
         logger.warning("[star_catalog] configured database is missing: %s", db_path)
         return result
@@ -172,7 +172,12 @@ async def get_status() -> StarCatalogStatus:
     )
 
 
-@router.post("/download", response_model=fetch.StarOperation, status_code=status.HTTP_202_ACCEPTED)
+@router.post(
+    "/download",
+    response_model=fetch.StarOperation,
+    status_code=status.HTTP_202_ACCEPTED,
+    dependencies=[Depends(admit_work)],
+)
 async def download() -> fetch.StarOperation:
     try:
         return fetch.start_download()
@@ -183,7 +188,12 @@ async def download() -> fetch.StarOperation:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
-@router.post("/import", response_model=fetch.StarOperation, status_code=status.HTTP_202_ACCEPTED)
+@router.post(
+    "/import",
+    response_model=fetch.StarOperation,
+    status_code=status.HTTP_202_ACCEPTED,
+    dependencies=[Depends(admit_work)],
+)
 async def import_file(request: ImportRequest) -> fetch.StarOperation:
     path = Path(request.path)
     if not path.is_file():
@@ -207,7 +217,10 @@ async def cancel() -> fetch.StarOperation:
 
 
 @router.post(
-    "/ranges/build", response_model=fetch.StarOperation, status_code=status.HTTP_202_ACCEPTED
+    "/ranges/build",
+    response_model=fetch.StarOperation,
+    status_code=status.HTTP_202_ACCEPTED,
+    dependencies=[Depends(admit_work)],
 )
 async def build_ranges(request: BuildRequest) -> fetch.StarOperation:
     valid = {item.id for item in FIELD_RANGES}
@@ -223,7 +236,11 @@ async def build_ranges(request: BuildRequest) -> fetch.StarOperation:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
-@router.delete("/ranges/{range_id}", response_model=fetch.StarOperation)
+@router.delete(
+    "/ranges/{range_id}",
+    response_model=fetch.StarOperation,
+    dependencies=[Depends(admit_work)],
+)
 async def remove_range(range_id: str) -> fetch.StarOperation:
     if range_id not in {item.id for item in FIELD_RANGES}:
         raise HTTPException(status_code=422, detail=f"Unknown field range: {range_id}")
@@ -239,7 +256,7 @@ async def remove_range(range_id: str) -> fetch.StarOperation:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
-@router.delete("/", response_model=fetch.StarOperation)
+@router.delete("/", response_model=fetch.StarOperation, dependencies=[Depends(admit_work)])
 async def remove_all() -> fetch.StarOperation:
     try:
         async with plate_solve.solve_slot():

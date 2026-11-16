@@ -1,3 +1,4 @@
+import { useLayoutEffect, useRef, useState } from "react";
 import Box from "@mui/material/Box";
 import Tooltip from "@mui/material/Tooltip";
 import Typography from "@mui/material/Typography";
@@ -28,6 +29,41 @@ interface Props {
   summary: IntegrationSummary;
   compact?: boolean;
   showHeading?: boolean;
+}
+
+function IntegrationLabel({ label, compact }: { label: string; compact: boolean }) {
+  const ref = useRef<HTMLElement | null>(null);
+  const [truncated, setTruncated] = useState(false);
+
+  useLayoutEffect(() => {
+    const element = ref.current;
+    if (!element) return;
+    const update = () => setTruncated(element.scrollWidth > element.clientWidth);
+    update();
+    const observer = new ResizeObserver(update);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [label]);
+
+  return (
+    <Tooltip title={truncated ? label : ""} placement="left">
+      <Typography
+        ref={ref}
+        variant="body2"
+        sx={{
+          minWidth: 0,
+          maxWidth: 160,
+          fontSize: compact ? "13px" : undefined,
+          lineHeight: compact ? 1.45 : undefined,
+          fontWeight: compact ? 400 : 600,
+          cursor: "default",
+          ...ELLIPSIS,
+        }}
+      >
+        {label}
+      </Typography>
+    </Tooltip>
+  );
 }
 
 // Per-filter integration: a horizontal bar of actual time per filter. A read-out,
@@ -72,35 +108,30 @@ export default function IntegrationBars({
         </Typography>
       )}
 
-      <Box sx={{ display: "flex", flexDirection: "column", gap: compact ? "6px" : 1 }}>
+      <Box
+        sx={{
+          display: "grid",
+          gridTemplateColumns: compact
+            ? "fit-content(160px) minmax(80px, 1fr) 64px"
+            : "fit-content(160px) minmax(80px, 1fr) 120px",
+          columnGap: compact ? "12px" : 1,
+          rowGap: compact ? "6px" : 1,
+          alignItems: "center",
+        }}
+      >
         {lines.map((line) => (
           <Box
             key={`${line.label}:${line.not_recorded}`}
-            sx={{ display: "flex", alignItems: "center", gap: compact ? "12px" : 1 }}
+            sx={{ display: "contents" }}
           >
             {/* The label is a free string — a canonical bandpass, or a filter
                 name straight from the FITS header. Truncate rather than wrap. */}
-            <Tooltip title={line.label} placement="left">
-              <Typography
-                variant="body2"
-                sx={{
-                  width: compact ? 48 : 120,
-                  flexShrink: 0,
-                  fontSize: compact ? "13px" : undefined,
-                  lineHeight: compact ? 1.45 : undefined,
-                  fontWeight: compact ? 400 : 600,
-                  cursor: "default",
-                  ...ELLIPSIS,
-                }}
-              >
-                {line.label}
-              </Typography>
-            </Tooltip>
+            <IntegrationLabel label={line.label} compact={compact} />
 
             <Box
               sx={{
                 position: "relative",
-                flexGrow: 1,
+                minWidth: 0,
                 height: compact ? 12 : 18,
                 borderRadius: compact ? "3px" : 0.5,
                 bgcolor: compact
@@ -133,9 +164,7 @@ export default function IntegrationBars({
               variant="caption"
               color="text.secondary"
               sx={{
-                width: compact ? 64 : 120,
-                flexShrink: 0,
-                textAlign: compact ? "right" : "left",
+                textAlign: "right",
                 fontSize: compact ? "13px" : undefined,
                 lineHeight: compact ? 1.45 : undefined,
                 fontVariantNumeric: compact ? "tabular-nums" : undefined,

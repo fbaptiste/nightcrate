@@ -18,6 +18,7 @@ import pytest
 from astropy.io import fits
 from httpx import ASGITransport, AsyncClient
 
+from nightcrate.db.session import get_db
 from nightcrate.main import app
 from nightcrate.services.ingest_classify import (
     CATEGORY_LOG,
@@ -35,6 +36,7 @@ from nightcrate.services.ingest_scanner import (
 )
 from nightcrate.services.ingest_sessions import observing_night
 from nightcrate.services.ingest_sessions import observing_window_utc as _observing_window_utc
+from tests.rig_setup_fixtures import make_equipment, make_rig
 
 # ── Pure: extension classification ───────────────────────────────────────────
 
@@ -533,6 +535,195 @@ class TestFolderBinding:
         pid = await _make_project(client, "NoFolders")
         resp = await client.post(f"/api/projects/{pid}/ingest")
         assert resp.status_code == 422
+
+    async def test_rig_change_rebuilds_existing_auto_batches_only(self, client, tmp_path):
+        folder_path = tmp_path / "rig-change"
+        folder_path.mkdir()
+        _write_fits(folder_path / "light.fits", imagetyp="LIGHT", filt="Ha")
+        pid = await _make_project(client, "Rig change")
+        async with get_db() as conn:
+            equipment = await make_equipment(conn)
+            rig_a = await make_rig(conn, equipment, "Rig A")
+            rig_b = await make_rig(conn, equipment, "Rig B")
+            await conn.executemany(
+                "INSERT INTO project_rig (project_id, rig_id) VALUES (?, ?)",
+                [(pid, rig_a), (pid, rig_b)],
+            )
+            source_id = (
+                await conn.execute(
+                    "INSERT INTO dso_catalog_source "
+                    "(source_id, category, display_name, file_path, file_hash) "
+                    "VALUES ('folder-rig-test', 'nightcrate', 'Folder rig test', "
+                    "'/synthetic/folder-rig.csv', 'folder-rig-hash')"
+                )
+            ).lastrowid
+            dso_id = (
+                await conn.execute(
+                    "INSERT INTO dso "
+                    "(primary_designation, obj_type, source_catalog_id, source_row_hash) "
+                    "VALUES ('Folder Rig Target', 'Other', ?, 'folder-rig-row')",
+                    (source_id,),
+                )
+            ).lastrowid
+            target_id = (
+                await conn.execute(
+                    "INSERT INTO project_target (project_id, dso_id) VALUES (?, ?)",
+                    (pid, dso_id),
+                )
+            ).lastrowid
+            await conn.commit()
+
+        folder = (
+            await client.post(
+                f"/api/projects/{pid}/folders",
+                json={"path": str(folder_path), "rig_id": rig_a},
+            )
+        ).json()
+        assert (await client.post(f"/api/projects/{pid}/ingest")).status_code == 200
+        assert (await client.post(f"/api/projects/{pid}/sessions/derive")).status_code == 200
+
+        manual = (
+            await client.post(
+                f"/api/projects/{pid}/sessions",
+                json={
+                    "rig_id": rig_b,
+                    "line_name": "Oiii",
+                    "exposure_seconds": 180,
+                    "gain": 75,
+                    "num_subs": 7,
+                    "binning": 2,
+                    "session_date": "2026-08-31",
+                    "notes": "Keep every field",
+                },
+            )
+        ).json()
+        async with get_db() as conn:
+            rows = await (
+                await conn.execute(
+                    "SELECT * FROM project_session "
+                    "WHERE project_id = ? AND source = 'auto' ORDER BY id",
+                    (pid,),
+                )
+            ).fetchall()
+            before_target_change = [dict(row) for row in rows]
+
+        target_changed = await client.patch(
+            f"/api/projects/{pid}/folders/{folder['id']}",
+            json={"project_target_id": target_id},
+        )
+        assert target_changed.status_code == 200, target_changed.text
+        async with get_db() as conn:
+            rows = await (
+                await conn.execute(
+                    "SELECT * FROM project_session "
+                    "WHERE project_id = ? AND source = 'auto' ORDER BY id",
+                    (pid,),
+                )
+            ).fetchall()
+            assert [dict(row) for row in rows] == before_target_change
+
+        same_rig = await client.patch(
+            f"/api/projects/{pid}/folders/{folder['id']}", json={"rig_id": rig_a}
+        )
+        assert same_rig.status_code == 200, same_rig.text
+        async with get_db() as conn:
+            rows = await (
+                await conn.execute(
+                    "SELECT * FROM project_session "
+                    "WHERE project_id = ? AND source = 'auto' ORDER BY id",
+                    (pid,),
+                )
+            ).fetchall()
+            assert [dict(row) for row in rows] == before_target_change
+
+        changed = await client.patch(
+            f"/api/projects/{pid}/folders/{folder['id']}", json={"rig_id": rig_b}
+        )
+        assert changed.status_code == 200, changed.text
+        sessions = (await client.get(f"/api/projects/{pid}/sessions")).json()
+        assert {row["rig_id"] for row in sessions if row["source"] == "auto"} == {rig_b}
+        assert next(row for row in sessions if row["source"] == "manual") == manual
+
+        async with get_db() as conn:
+            for table in ("sub_frame", "session", "project_session"):
+                count = await (
+                    await conn.execute(
+                        f"SELECT COUNT(*) AS n FROM {table} "  # nosec B608 - fixed test table names
+                        "WHERE project_id = ? AND rig_id = ?",
+                        (pid, rig_a),
+                    )
+                ).fetchone()
+                assert count["n"] == 0
+
+    async def test_rig_change_does_not_create_first_auto_batch(self, client, tmp_path):
+        folder_path = tmp_path / "rig-change-no-auto"
+        folder_path.mkdir()
+        _write_fits(folder_path / "light.fits", imagetyp="LIGHT", filt="Ha")
+        pid = await _make_project(client, "No automatic batches")
+        async with get_db() as conn:
+            equipment = await make_equipment(conn)
+            rig_a = await make_rig(conn, equipment, "No auto A")
+            rig_b = await make_rig(conn, equipment, "No auto B")
+            await conn.commit()
+        folder = (
+            await client.post(
+                f"/api/projects/{pid}/folders",
+                json={"path": str(folder_path), "rig_id": rig_a},
+            )
+        ).json()
+        await client.post(f"/api/projects/{pid}/ingest")
+
+        changed = await client.patch(
+            f"/api/projects/{pid}/folders/{folder['id']}", json={"rig_id": rig_b}
+        )
+
+        assert changed.status_code == 200, changed.text
+        assert (await client.get(f"/api/projects/{pid}/sessions")).json() == []
+
+    async def test_untagged_frames_use_only_listed_rig_for_removal_guard(self, client, tmp_path):
+        folder_path = tmp_path / "single-rig-fallback"
+        folder_path.mkdir()
+        _write_fits(folder_path / "light.fits", imagetyp="LIGHT", filt="Ha")
+        pid = await _make_project(client, "Single rig fallback")
+        async with get_db() as conn:
+            equipment = await make_equipment(conn)
+            rig_a = await make_rig(conn, equipment, "Fallback A")
+            rig_b = await make_rig(conn, equipment, "Fallback B")
+            await conn.execute(
+                "INSERT INTO project_rig (project_id, rig_id) VALUES (?, ?)",
+                (pid, rig_a),
+            )
+            await conn.commit()
+
+        folder = await _bind_folder(client, pid, folder_path)
+        assert (await client.post(f"/api/projects/{pid}/ingest")).status_code == 200
+
+        setups = (await client.get(f"/api/projects/{pid}/rig-setups")).json()
+        assert [(item["rig_id"], item["in_use"]) for item in setups] == [(rig_a, True)]
+        rejected = await client.put(f"/api/projects/{pid}/rigs", json={"rig_ids": []})
+        assert rejected.status_code == 409
+
+        tagged = await client.patch(
+            f"/api/projects/{pid}/folders/{folder['id']}", json={"rig_id": rig_a}
+        )
+        assert tagged.status_code == 200, tagged.text
+        setups = (await client.get(f"/api/projects/{pid}/rig-setups")).json()
+        assert [(item["rig_id"], item["in_use"]) for item in setups] == [(rig_a, True)]
+        rejected = await client.put(f"/api/projects/{pid}/rigs", json={"rig_ids": []})
+        assert rejected.status_code == 409
+
+        expanded = await client.put(f"/api/projects/{pid}/rigs", json={"rig_ids": [rig_a, rig_b]})
+        assert expanded.status_code == 200, expanded.text
+        cleared = await client.patch(
+            f"/api/projects/{pid}/folders/{folder['id']}", json={"rig_id": None}
+        )
+        assert cleared.status_code == 200, cleared.text
+
+        setups = (await client.get(f"/api/projects/{pid}/rig-setups")).json()
+        assert {item["rig_id"]: item["in_use"] for item in setups} == {
+            rig_a: False,
+            rig_b: False,
+        }
 
 
 class TestIngestEndToEnd:

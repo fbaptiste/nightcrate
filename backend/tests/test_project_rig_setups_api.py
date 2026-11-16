@@ -324,6 +324,11 @@ async def test_setups_include_undeclared_rigs_and_retired_declared_rig(client):
         frame_rig: False,
         batch_rig: False,
     }
+    assert {item["rig_id"]: item["in_use"] for item in setups} == {
+        declared: False,
+        frame_rig: True,
+        batch_rig: True,
+    }
     project = (await client.get(f"/api/projects/{project_id}")).json()
     assert project["rigs"] == [{"id": declared, "name": "Retired", "active": False}]
 
@@ -335,3 +340,73 @@ async def test_project_rigs_include_retired(client):
         await conn.commit()
     project = (await client.get(f"/api/projects/{project_id}")).json()
     assert project["rigs"][0]["active"] is False
+
+
+async def test_project_setup_nights_exclude_calibration_frames(client):
+    async with get_db() as conn:
+        equipment = await make_equipment(conn)
+        rig_id = await make_rig(conn, equipment, "Light-only nights")
+        project_id = await make_project(conn)
+        calibration_project = await make_project(conn, "Calibration only")
+        await conn.executemany(
+            "INSERT INTO project_rig (project_id, rig_id) VALUES (?, ?)",
+            [(project_id, rig_id), (calibration_project, rig_id)],
+        )
+        await make_frame(
+            conn,
+            project_id,
+            "api-light",
+            rig_id=rig_id,
+            date_obs_utc="2026-09-01T03:00:00+00:00",
+        )
+        await make_frame(
+            conn,
+            project_id,
+            "api-flat",
+            rig_id=rig_id,
+            date_obs_utc="2037-12-31T16:06:36+00:00",
+            frame_type="flat",
+        )
+        await make_frame(
+            conn,
+            project_id,
+            "api-dark",
+            rig_id=rig_id,
+            date_obs_utc="2025-06-15T03:00:00+00:00",
+            frame_type="dark",
+        )
+        await make_frame(
+            conn,
+            calibration_project,
+            "api-only-flat",
+            rig_id=rig_id,
+            date_obs_utc="2037-12-31T16:06:36+00:00",
+            frame_type="flat",
+        )
+        await conn.commit()
+
+    used = (await client.get(f"/api/projects/{project_id}/rig-setups")).json()[0]
+    calibration = (await client.get(f"/api/projects/{calibration_project}/rig-setups")).json()[0]
+    assert sum(setup["night_count"] for setup in used["setups"]) == 1
+    assert sum(setup["night_count"] for setup in calibration["setups"]) == 0
+
+
+async def test_project_rig_removal_rejects_used_and_allows_unused(client):
+    equipment, used_rig, project_id = await _project_rig()
+    async with get_db() as conn:
+        unused_rig = await make_rig(conn, equipment, "Unused listed rig")
+        await conn.execute(
+            "INSERT INTO project_rig (project_id, rig_id) VALUES (?, ?)",
+            (project_id, unused_rig),
+        )
+        await conn.commit()
+
+    rejected = await client.put(f"/api/projects/{project_id}/rigs", json={"rig_ids": [unused_rig]})
+    assert rejected.status_code == 409
+    assert rejected.json()["detail"] == (
+        "A rig used by this project's frames or capture batches cannot be removed"
+    )
+
+    removed = await client.put(f"/api/projects/{project_id}/rigs", json={"rig_ids": [used_rig]})
+    assert removed.status_code == 200, removed.text
+    assert [rig["id"] for rig in removed.json()["rigs"]] == [used_rig]

@@ -203,7 +203,9 @@ export default function CatalogFrameTable({
             whiteSpace: "nowrap",
           },
           "& td": { px: "6px", py: "4px", fontSize: "13px" },
-          "& .MuiTableCell-paddingCheckbox": { width: 44, px: "4px", py: 0 },
+          // Two classes: MUI's small-size rule (`&.MuiTableCell-paddingCheckbox`,
+          // width 24) otherwise wins, and the 32 px checkbox covers the thumbnail.
+          "& .MuiTableCell-root.MuiTableCell-paddingCheckbox": { width: 44, px: "4px", py: 0 },
         }}
       >
         <TableHead>

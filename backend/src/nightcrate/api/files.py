@@ -1,8 +1,12 @@
 """File system browsing endpoints."""
 
+import asyncio
 import platform
+import re
 import string
+import subprocess  # nosec B404 - fixed local command, no shell
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from fastapi import APIRouter, HTTPException, Query
 
@@ -14,6 +18,55 @@ PROJECT_EXTENSIONS = {".pxiproject"}
 
 
 _ALL_FILES_SENTINEL: set[str] = {"*"}
+_NETWORK_FILESYSTEMS = {"smbfs", "afpfs", "nfs", "webdav"}
+_MOUNT_LINE = re.compile(r"^(?P<source>.+) on (?P<path>/Volumes/.+) \((?P<fstype>[^, )]+)")
+
+
+def _network_server(source: str, filesystem: str) -> str | None:
+    """Extract a Finder-style server name from a network mount source."""
+    if filesystem == "nfs":
+        server = source.split(":", 1)[0]
+    else:
+        parsed = urlsplit(source if "://" in source else f"smb:{source}")
+        server = parsed.netloc.rsplit("@", 1)[-1]
+        if server.startswith("[") and "]" in server:
+            server = server[1 : server.index("]")]
+        elif ":" in server and server.rsplit(":", 1)[1].isdigit():
+            server = server.rsplit(":", 1)[0]
+    for suffix in ("._afpovertcp._tcp.local", "._smb._tcp.local", ".local"):
+        if server.casefold().endswith(suffix):
+            server = server[: -len(suffix)]
+            break
+    return server or None
+
+
+def _parse_macos_network_mounts(output: str) -> dict[str, str]:
+    """Map /Volumes paths to network server labels from ``mount`` output."""
+    result: dict[str, str] = {}
+    for line in output.splitlines():
+        match = _MOUNT_LINE.match(line)
+        if match is None or match["fstype"] not in _NETWORK_FILESYSTEMS:
+            continue
+        server = _network_server(match["source"], match["fstype"])
+        if server:
+            result[match["path"]] = server
+    return result
+
+
+def _macos_network_mounts() -> dict[str, str]:
+    try:
+        completed = subprocess.run(  # nosec B603 - fixed executable and argument list
+            ["/sbin/mount"],
+            capture_output=True,
+            check=False,
+            text=True,
+            timeout=2,
+        )
+    except OSError, subprocess.SubprocessError:
+        return {}
+    if completed.returncode != 0:
+        return {}
+    return _parse_macos_network_mounts(completed.stdout)
 
 
 def _parse_accept(raw: str | None) -> set[str] | None:
@@ -51,11 +104,15 @@ async def list_volumes() -> list[dict]:
     volumes.append({"name": f"~ ({home.name})", "path": str(home)})
 
     if system == "Darwin":
+        network_mounts = await asyncio.to_thread(_macos_network_mounts)
         vol_root = Path("/Volumes")
         if vol_root.is_dir():
             for entry in sorted(vol_root.iterdir(), key=lambda e: e.name.lower()):
                 if entry.is_dir() and not entry.name.startswith("."):
-                    volumes.append({"name": entry.name, "path": str(entry)})
+                    path = str(entry)
+                    server = network_mounts.get(path)
+                    name = f"{entry.name} ({server})" if server else entry.name
+                    volumes.append({"name": name, "path": path})
     elif system == "Windows":
         for letter in string.ascii_uppercase:
             drive = Path(f"{letter}:\\")

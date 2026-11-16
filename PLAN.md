@@ -1,13 +1,13 @@
 # NightCrate — active plan
 
-**Version:** v0.53.0 — Home page
+**Version:** v0.54.0 — Installers and updates
 
-**Branch:** `v0.53.0/home-page`
+**Branch:** `v0.54.0/installers-and-updates`
 
 **Status:** Complete — awaiting merge
 
-**Next version** (Fred, 2026-11-13): Distribution (installers and one-click
-updates) as v0.54.0.
+**Next version** (Fred, 2026-11-14): LAN mode as v0.55.0, the second half
+of Distribution.
 
 **Tablet and phone review** (Fred, 2026-11-14): "I will do a specific
 targeted review on ipad functionality at a later stage (there's a whole lot
@@ -27,7 +27,306 @@ far:
 - v0.46.0's framing dialog: dragging the frame, and the long-press tooltip;
 - Safari, Firefox and touch devices on v0.48.0's Messier page.
 
+## v0.54.0 — Installers and updates
+
+Fred shaped Distribution on 2026-11-14 and split it in two: this version
+makes NightCrate installable and lets it update itself; LAN mode follows as
+v0.55.0 (see the roadmap). Started on 2026-11-14 from `main` at `93c5766`,
+after v0.53.0 merged.
+
+- [x] Start from updated `main` on `v0.54.0/installers-and-updates`.
+- [x] Throwaway packaging test in a separate worktree, before the spec
+  (2026-11-14; results below):
+  - a frozen backend (cx_Freeze) in a Tauri shell on macOS arm64, Windows
+    x64 and Linux x64;
+  - FastAPI serving the built frontend;
+  - native imports (numpy, scipy, astropy, sep, imagecodecs; mlx on Mac),
+    image decoding and one process-pool job;
+  - one update from build A to build B, and whether it brings back the
+    macOS or Windows warning for unsigned builds.
+
+  Windows and Linux builds ran on GitHub's build machines from a
+  throwaway branch Fred approved; it was deleted afterwards.
+- [x] Spec, with mockups for the alert, the first-run question and Admin's
+  update section: [the spec](docs/superpowers/specs/2026-11-14-v0.54.0-installers-and-updates-design.md),
+  approved by Fred on 2026-11-14. Fred chose the sidebar
+  for notices, test builds on a throwaway branch, LGPL bundling with the
+  sources attached to each release, and accepting macOS's repeated folder
+  prompts after unsigned updates.
+- [x] Plan, with Codex's review: [the plan](docs/superpowers/plans/2026-11-14-v0.54.0-installers-and-updates.md).
+  Five review rounds converged on 2026-11-15, every finding accepted. Claude
+  approved it under Fred's overnight delegation ("If decisions have to be
+  made, please handle it yourself"), pending his review. The spec's
+  "Amended after approval" list shows what changed.
+- [x] Implementation and reviews (2026-11-15). Phases 1–5 were built in the
+  ignored worktree `.superpowers/wt-v0.54.0-build`, each reviewed, with
+  independent Codex reviews of Phase 1 and of Phases 2–5, then moved into
+  the main checkout (staged, uncommitted). The plan's "Implementation and
+  reviews" record has the details.
+  - **Mac check with Fred** (local test builds 0.54.0 → 0.54.1 → 0.54.2):
+    the update installs and keeps the workspace; macOS asks again for
+    protected folders after an unsigned update, as accepted. Fixed from his
+    findings: zoom (now with a level indicator), the sidebar drag reload,
+    downloads (now a Save dialog), the image window's position, a tiny
+    restored window, the sidebar's scrolling when zoomed, a second window
+    scroll bar, a lingering tooltip, the frame table's checkboxes, and a
+    force-quit that left workers running.
+  - **Also from his findings** (Fred, 2026-11-15): a folder's rig change
+    rebuilds the automatic capture batches; a rig the project uses can't be
+    removed from its list; only light frames count as imaging nights; long
+    filter names fit the integration bars; network shares show their
+    server in the folder dialog.
+  - **CI on the throwaway branch `build/v0.54.0`** (builds 1–17): the
+    installers pass freezing, the smoke test, the licence notices, install
+    and the self-test on all three systems. The update rehearsal (a bad
+    signature refused, the good update installed, the workspace backed up
+    and intact) passes on all three; on Windows it first found that every
+    backup failed (a read-only flush), fixed in build 17.
+  - An independent Codex review of the changes since the move found no
+    blockers; its three findings are resolved.
+- [x] Candidate verification (Claude, 2026-11-15): version 0.54.0 in all four
+  places; backend suite 4281 passed, 4 skipped; ruff, format and bandit clean
+  (no findings at any severity); frontend production build; 42 packaging
+  tests; 14 shell tests and a warning-free release build; docs links checked.
+  CI build 18 ran the candidate tree: installers and the update rehearsal pass
+  on all three systems. An independent Codex re-check of the last fixes found
+  nothing.
+- [x] Fred's acceptance test (the installed app, builds 18–26, 2026-11-15).
+  He approved committing and the PR ("yes - but no actual release yet"),
+  then confirmed build 26's folder browsers ("yep. working"). Fixed from
+  it:
+  - "Use My Location" was refused in the app window without a prompt
+    (WebKit on macOS, WebKitGTK on Linux). Fred chose making it work
+    (2026-11-15). Build 21's fix (letting WebKit ask) never prompted: WebKit
+    on macOS has no location source in an app. The Mac app now asks macOS
+    itself; Fred confirmed with a test app that macOS prompts and returns a
+    position for an app signed like NightCrate;
+  - the Locations map opened in the browser and left a blank box; it now
+    loads in the dialog;
+  - test builds also upload each installer on its own, so it downloads in
+    one click (Fred, 2026-11-15);
+  - the night-detail grid's numbers ran together at the default window
+    width; cells now fit their text at every width;
+  - choosing a new workspace's location (first run and Admin) used a
+    separate, simpler folder browser without the volumes list; the
+    workspace screens now use the shared one, which gained New Folder.
+    Its path links and its starting folder beside an open image also
+    work with Windows paths now (they assumed `/`). Codex's review found
+    Admin proposing new workspaces inside the active one on Windows, and
+    that deleting a workspace's folder would delete any workspace inside
+    it, the active one included: both fixed, with tests;
+  - after installing build 24, the app window ran build 21's cached page
+    (its old location code), because the backend served the page without
+    cache headers. Pages and other unhashed files are now revalidated each
+    time; after a real update, the window would otherwise have shown the
+    previous version's page against the new backend;
+  - the GitHub Actions used are now their Node 24 releases (GitHub's Node 20
+    deprecation warnings), and the rehearsal's Windows minisign comes from
+    its signed release, as on Linux, after Chocolatey's feed failed.
+  - Verified (Claude): 25 shell tests; frontend type check, lint and build;
+    the grid measured in headless Chrome at 1024, 1400 and 1920 px, plus a
+    simulated fall-back night; the location button against a stand-in app
+    (success, each failure message, the Windows/Linux fallback). CI build 24
+    ran those fixes: installers and the update rehearsal pass on all three
+    systems, with no Node 20 warnings; its one-click Mac `.dmg` carries the
+    location strings, the entitlement and macOS 11 as the minimum, and its
+    signature verifies. Codex reviews: two minor grid cases, then for the
+    native location a stale-fix issue and three minor ones, all fixed; the
+    last re-check found nothing. Page caching: a serve test (revalidation
+    headers on pages, deep links and root files; 304 when unchanged);
+    Codex found nothing. Folder browser: path checks for POSIX, drive and
+    UNC paths; API tests refusing to delete a folder that holds another
+    workspace (including one spelled in different case); the first-run,
+    Admin and image browsers driven in headless Chrome. Codex's two major
+    findings (above, and the case-insensitive spelling) were fixed; its
+    re-check found nothing.
+  - Final tree (Claude, 2026-11-15): backend suite 4280 passed, 4 skipped;
+    ruff, format and bandit clean (no findings); frontend production build
+    and path checks. CI build 26 ran this tree: installers and the update
+    rehearsal pass on all three systems. Its Mac backend, run from the
+    `.dmg`, serves pages with `no-cache` and an ETag (304 when unchanged)
+    and leaves the hashed scripts cacheable.
+  - Fred's retest of build 24 (2026-11-15): forecast numbers readable, the
+    map in the dialog, and Use My Location prompted, was allowed and filled
+    in the fields (once the stale page copy had expired).
+  - Fred's check of build 26 (2026-11-15), installed over build 24: Create
+    New Database's browser lists his drives and volumes, opens beside the
+    current workspace and offers New Folder; Add Existing Database's lists
+    the workspace's `nightcrate.db` and fills in the dialog.
+
+**Before the first release** (Fred, 2026-11-15: "no actual release yet. we
+still need to work through some additional things"). Merging doesn't
+release; `release.yml` builds a draft only when Fred says "release".
+- [ ] The additional work Fred brings next.
+- [ ] Fred's check on Windows: install, first run, a workspace, Use My
+  Location, and the SmartScreen step. A Windows 11 virtual machine on his
+  Mac runs the x64 installer through Windows' x64 emulation; CI covers
+  native x64. Known before then: a few displayed file names (the image
+  analyzer's title, activity lines, frame names) take the text after the
+  last `/`, so Windows would show whole paths there; switch them to
+  `lib/paths.ts`'s `baseName`, minding archive (`::`) paths.
+- [ ] Fred's check on Linux (x64; the Mac can't run the AppImage natively).
+- [ ] An update test through the app's own update flow, from one build to
+  a newer one, with the page open just before updating: the restarted
+  window shows the new version's page, and the workspace is intact. CI's
+  update rehearsal checks the backend's version after the update, not the
+  window's page; adding that check is part of this item.
+
+### Packaging test results (Claude, 2026-11-14)
+
+Throwaway build in `.superpowers/wt-v0.54.0-spike` (ignored), from `main`
+at `93c5766`: cx_Freeze 8.7.4 on Python 3.14.0, Tauri CLI 2.12.4 (tauri
+2.12.5, updater plugin 2.14.1), Rust 1.100.0. Windows and Linux ran on
+GitHub's runners from the throwaway branch `spike/packaging` (Fred,
+2026-11-14), deleted afterwards.
+
+**macOS arm64 (local, private home folder and ports):**
+- The frozen backend starts in about 1 s and serves the built frontend,
+  deep links included.
+- A new workspace applied all 73 migrations; integrity and foreign-key
+  checks were clean, and the seed data loaded.
+- A scan of 16 FITS and 4 zstd-compressed XISF frames used a 15-worker
+  spawn pool and finished in under 1 s: 20 lights, 2 sessions.
+- FITS and XISF render as PNG; catalog thumbnails work; the compute
+  backend reports `mlx`.
+- Tauri: `.dmg` 210 MB, 563 MB installed; the updater archive is 214 MB.
+  205 MB of that is `mlx.metallib`; the rest of the frozen backend is
+  about 350 MB (scipy 55, imagecodecs 38, timezonefinder data 33,
+  astropy 31).
+- Update A (0.54.0) → B (0.54.1) through a signed manifest: detected,
+  backend stopped, signature verified, installed and relaunched; B found
+  no further update. The updated bundle carries no
+  `com.apple.quarantine` attribute, so Gatekeeper has nothing to assess
+  when it relaunches (inferred from the attribute; a real first-launch
+  prompt wasn't clicked through, since the test ran hidden).
+- Quit from macOS stops the backend.
+
+**GitHub runners** (runs 43674395573 and 43674457696; the same smoke test
+on each: workspace, the 20-file scan, FITS and XISF renders, deep link):
+
+| Runner | Frozen backend | Ready | Installer | Compute |
+|---|---|---|---|---|
+| windows-2022 | 319 MB, frozen in 36 s | 2.8 s | NSIS `.exe`, 100 MB | numpy |
+| ubuntu-22.04 | 472 MB, frozen in 17 s | 1.7 s | AppImage, 243 MB | numpy |
+| macos-15 (arm64) | 494 MB, frozen in 96 s | 3.2 s | `.dmg`, 178 MB | mlx |
+
+- Every runner passed both runs; the shell builds took 5–8 minutes.
+- `macos-14` runners are retired ("configuration not supported"); the Mac
+  job uses `macos-15`.
+- The runners' uv (0.13.8) is outside `backend/pyproject.toml`'s
+  `uv-build>=0.11.2,<0.12.0` build requirement, which uv only warns about.
+  The release workflow pins uv and Python versions.
+- Not tested on Windows or Linux: the app window (WebView2, WebKitGTK),
+  running the installers, the update from A to B, and the SmartScreen
+  warning. Those need the release workflow's own install-and-launch test
+  and a check on a real machine before the first published release.
+
+**Defects the real build must handle:**
+- cx_Freeze dropped the two Python migrations (`0064`, `0067`): their file
+  names aren't module names. The installed app would have skipped them.
+  The build must copy the migrations folder whole and check it against
+  the source.
+- cx_Freeze moved `libmlx.dylib` into `lib/` without `mlx.metallib`. The
+  first GPU render then killed the backend with SIGTRAP, which
+  `core/compute.py`'s import probe can't catch. The build must ship the
+  kernels beside the dylib, and its smoke test must render with the GPU
+  on.
+- A force-quit or crash of the shell leaves the backend running and the
+  database open. The backend must exit when its parent goes away.
+- The frozen app reports version "unknown" (expected; the version comes
+  from package metadata in the real build).
+- On macOS, Tauri relaunches through LaunchServices (`open -n`), which
+  drops the environment. Test builds must not rely on environment
+  variables to isolate their data.
+- Toolchain age: Rust 1.100.0 was 5 days old. The real build pins its
+  toolchain to a release at least 7 days old, as with updated packages.
+
+### Decisions (Fred, 2026-11-14)
+
+- **No code signing at first.** The README carries screenshot walkthroughs
+  for the one-time step: "Open Anyway" in macOS System Settings, and "More
+  info → Run anyway" on Windows. Signing can be added later.
+- **Targets:** macOS on Apple Silicon, Windows x64 and Linux x64. An Intel
+  Mac build can follow if users ask.
+- **Update check:** asked on first launch, with Yes preselected. Admin has
+  an on/off switch and "Check now".
+- **Catalog alerts:** OpenNGC reports a new release. The 50MGC catalog and
+  the Wikidata names have no version numbers, so after six months they get
+  "last downloaded 6 months ago; refresh?", never worded as an update. The
+  VizieR catalogs get no alert; NightCrate's own catalog data arrives with
+  app updates. Catalog work never starts by itself: the alert links to the
+  Catalogs page.
+- **Releases:** merging stays as it is. When Fred says "release", GitHub
+  Actions builds the three installers into a draft release; Fred tries
+  them, then publishes. Only published releases reach the updater.
+- **The installed app is local-only;** LAN mode is v0.55.0.
+- **GCC runtimes of unknown version** (Fred, 2026-11-15). The
+  libgfortran and libquadmath bundled in numpy's and scipy's Linux wheels
+  record no GCC version. For those, notices point to upstream GCC with the
+  wheels' own licence files instead of attaching an exact source.
+
+### Carried from the roadmap (2026-10-24)
+
+- A Tauri shell around a frozen Python backend; cx_Freeze first (PSF
+  licence). PyInstaller (GPL-2.0-or-later with a Bootloader Exception) and
+  Nuitka (AGPL-3.0 with an exception) need Fred's licence ruling.
+- **Production runtime:** FastAPI serves the built frontend; a real
+  entrypoint (no reload, a port choice, a readiness check, a single
+  instance, `freeze_support`); the version from package metadata, not the
+  repository's `VERSION`; rotating log files; CI runs the tests.
+- **Updates:** signed artifacts, with their signatures in an HTTPS manifest
+  on GitHub Releases; downgrades and mismatched versions rejected;
+  signing-key recovery planned. Workers stop before an update installs.
+- On every workspace activation, before migrations or seed and catalog
+  reconciliation, the app refuses a database newer than itself and takes a
+  consistent backup. Tests cover an interrupted install, a failed migration
+  and restoring the backup.
+- App updates and catalog updates stay separate mechanisms.
+- ASTAP stays user-installed. Installers carry the licence obligations
+  listed in v0.42.0's follow-ups for Distribution: the GPL text, the
+  Corresponding Source, the third-party notices with the LGPL (sep, py7zr)
+  and MPL (certifi, lightningcss) obligations, and the sky chart's data
+  notices.
+- Each target gets a clean-machine test of the built artifact.
+
+### Claude's calls, to confirm in the spec
+
+- Windows: a per-user installer with no administrator prompt. Linux: an
+  AppImage only at first.
+- No CUDA in the installers: CuPy isn't a declared dependency, so Windows
+  and Linux use numpy, as a default install does today. Mac includes mlx.
+- The installed app uses the same app-data folder as a development checkout
+  (`core/app_config.py`), so workspaces carry over. The single-instance
+  guard must also keep a development server and the installed app off the
+  same database at once.
+- The update check runs in the frontend, at start and on returning to the
+  window when a day has passed; there is no backend scheduler. The setting
+  starts unanswered, so users from before the installer are asked once too.
+- One alert place in the app shell for app and catalog notices. An app
+  notice shows the version and what's new, with "Install and restart",
+  "Later" and "Skip this version", offered only on the computer running
+  NightCrate. Installing warns if a scan or solve is running, backs up the
+  database, installs and restarts; a failed migration restores the backup
+  and says so.
+
+### From the start sweep (2026-11-14)
+
+- v0.46.0-R1 (one workspace per request): its next check, Distribution's
+  design, is now. The spec decides whether workspace activation's redesign
+  fixes it here or whether it moves to v0.55.0, where several devices
+  share one backend.
+- v0.50.0-D1: no new evidence. Fred's database still has no uncataloged
+  files (read-only count: 0). Three releases have completed since it was
+  raised; Fred closed it as inconclusive (2026-11-14).
+- v0.50.0-R1: no new evidence; this version doesn't change how scans save
+  their results. Three releases have completed; Fred closed it as
+  inconclusive (2026-11-14).
+- v0.47.0-R1 and R2 stay parked, as Fred asked on 2026-11-12.
+
 ## v0.53.0 — Home page
+
+Merged in [PR #32](https://github.com/fbaptiste/nightcrate/pull/32) on
+2026-11-14.
 
 Fred placed the Home page after the sky chart on 2026-11-13 ("let's plan on
 doing this in the next version"). Started on 2026-11-14 from `main` at
@@ -3783,54 +4082,34 @@ records as the very next version after the gallery; it became v0.47.0. The
 Messier checklist became v0.48.0 and object search v0.49.0. The updated XISF
 specification became v0.50.0. On 2026-11-12 Fred placed a cleanup version,
 v0.51.0, before Distribution. On 2026-11-13 he placed the sky chart as
-v0.52.0 and the Home page as v0.53.0 (the active version above), both before
-Distribution, which becomes v0.54.0.
+v0.52.0 and the Home page as v0.53.0, both before Distribution. On
+2026-11-14 he split Distribution in two: installers and updates as v0.54.0
+(the active version above), and LAN mode as v0.55.0.
 Version numbers are otherwise assigned when each version starts.
 
-### Distribution (v0.54.0)
+### LAN mode (v0.55.0)
 
-Make NightCrate installable without Python or Node, and let it update itself.
-A throwaway feasibility spike starts during the gallery work, in a separate
-worktree: static serving, Windows and both Mac architectures, native imports,
-image decoding, one spawned processing job, and one update between test builds.
+The second half of Distribution (Fred, 2026-11-14). Only these decisions
+exist so far; its spec follows v0.54.0.
 
-- **Production runtime.**
-  - FastAPI serves the built frontend.
-  - A real entrypoint: no reload, a port choice, a readiness check, a single
-    instance, and `freeze_support`.
-  - The version comes from package metadata, not the repository's `VERSION`.
-  - Rotating log files.
-  - CI runs the tests.
-- **Packaged app.** A Tauri shell with a frozen Python backend.
-  - cx_Freeze is tried first (PSF licence). PyInstaller (GPL-2.0) and Nuitka
-    (AGPL-3.0) carry exceptions for the apps they build, but need Fred's
-    licence ruling before use.
-  - Targets: macOS arm64, Windows x64 and a Linux x64 AppImage; Intel Mac is
-    Fred's decision.
-  - ASTAP stays user-installed. The package carries sep's and py7zr's LGPL
-    notices and obligations.
-  - Each target gets a clean-machine test of the built artifact.
-  - LAN access is off by default, and needs access protection before a package
-    offers it.
-- **Updates.**
-  - Signed artifacts, with their signatures in an HTTPS manifest on GitHub
-    Releases. The updater rejects downgrades and mismatched versions, and
-    signing-key recovery is planned.
-  - The update check is disclosed, can be turned off, and can be run manually.
-  - Workers stop before an update installs.
-  - On every workspace activation, before migrations or seed and catalog
-    reconciliation, the app refuses a database newer than itself and takes a
-    consistent backup.
-  - Tests cover an interrupted install, a failed migration and restoring the
-    backup.
-  - App updates and catalog updates stay separate.
-- **Decisions for Fred.**
-  - Code signing: the Apple Developer Program costs US$99 a year, and Windows
-    signing goes through SignPath Foundation (free for open source, subject to
-    acceptance) or Azure Artifact Signing.
-  - Intel Mac builds.
-  - Whether the update check is on by default.
-  - LAN access in the packaged app.
+- Off by default. Admin's "Allow other devices on my network" switch needs
+  a restart, offered with "Restart now".
+- **Access: pair each device** (Fred). Admin shows a QR code and a short
+  code to type; paired devices are remembered and listed in Admin with
+  "Forget". The computer running NightCrate needs no pairing.
+- **Certificates: NightCrate's own certificate authority, trusted once per
+  device** (Fred), limited to local names. Trusted HTTPS keeps the copy
+  buttons, "Use my location" and the slideshow's screen wake lock working
+  on other devices, and keeps pairing encrypted on the Wi-Fi. The test
+  confirms that iPad and Android honour the limit.
+- Walkthroughs for each kind of device (iPad and iPhone, Android, Mac,
+  Windows) are served by NightCrate, opened from the pairing QR code.
+- Claude's proposals, to confirm in its spec:
+  - paired devices can do everything except install updates, change LAN
+    mode or manage devices;
+  - the server certificate covers the computer's `.local` name and is
+    renewed at restart when its address changes, without devices
+    reinstalling anything.
 
 ### Project images: file locations, watermarks and export (after Distribution)
 

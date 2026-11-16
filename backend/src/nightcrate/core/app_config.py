@@ -20,6 +20,13 @@ CONFIG_PATH = APP_DIR / "config.json"
 DB_FILENAME = "nightcrate.db"
 
 
+def set_app_dir(path: Path) -> None:
+    """Redirect app data and its config file together."""
+    global APP_DIR, CONFIG_PATH
+    APP_DIR = path
+    CONFIG_PATH = path / "config.json"
+
+
 @dataclass
 class DatabaseEntry:
     name: str

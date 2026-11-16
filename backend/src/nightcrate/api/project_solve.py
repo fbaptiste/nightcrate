@@ -13,10 +13,11 @@ import math
 import shutil
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import FileResponse, Response
 
 from nightcrate.api._common import get_or_404, integrity_guard, load_other_names, row_to_dict
+from nightcrate.api.app_activity import admit_work
 from nightcrate.api.plate_solve import _failure_detail, query_dsos_in_cone
 from nightcrate.api.project_solve_models import (
     FocalLengthEstimate,
@@ -611,7 +612,7 @@ async def _create_solve_claimed(
             return await _require_response(conn, project_id, attempts=result.attempts)
 
 
-@router.post("/{project_id}/solve")
+@router.post("/{project_id}/solve", dependencies=[Depends(admit_work)])
 async def create_solve(project_id: int, body: ProjectSolveRequest) -> ProjectSolveResponse:
     settings = await get_settings()
     solver = body.solver or settings.default_solver

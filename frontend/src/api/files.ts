@@ -106,6 +106,8 @@ export interface HealthInfo {
   status: string;
   version: string;
   db_configured?: boolean;
+  install_kind: "installed" | "source";
+  workspace_problem: import("./admin").WorkspaceProblem | null;
 }
 
 export function fetchHealth(): Promise<HealthInfo> {

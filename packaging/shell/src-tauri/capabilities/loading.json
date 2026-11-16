@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "loading-window",
+  "description": "The local loading window can open the shell log folder.",
+  "windows": ["loading"],
+  "permissions": ["allow-open-log-folder"]
+}

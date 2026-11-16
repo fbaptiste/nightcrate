@@ -1,0 +1,46 @@
+[package]
+name = "nightcrate-shell"
+version = "0.54.0"
+description = "NightCrate desktop shell"
+license = "GPL-3.0-or-later"
+edition = "2021"
+publish = false
+
+[features]
+default = []
+test-devtools = ["tauri/devtools"]
+
+[build-dependencies]
+tauri-build = { version = "=2.7.4", features = [] }
+
+[dependencies]
+tauri = { version = "=2.12.5", features = ["dynamic-acl"] }
+tauri-plugin-single-instance = "=2.5.5"
+tauri-plugin-window-state = "=2.5.0"
+tauri-plugin-updater = "=2.14.1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+rfd = { version = "=0.15.4", default-features = false, features = ["gtk3"] }
+
+# "Use My Location" on macOS (`src/location.rs`): the versions wry already uses.
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "=0.6.5"
+objc2-foundation = { version = "=0.3.2", default-features = false, features = [
+    "std",
+    "NSArray",
+    "NSDate",
+    "NSError",
+    "NSObject",
+] }
+objc2-core-location = { version = "=0.3.2", default-features = false, features = [
+    "std",
+    "CLError",
+    "CLLocation",
+    "CLLocationManager",
+    "CLLocationManagerDelegate",
+] }
+
+[profile.release]
+codegen-units = 1
+lto = true
+strip = true

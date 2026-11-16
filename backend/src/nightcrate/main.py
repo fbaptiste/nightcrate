@@ -1,10 +1,13 @@
 """NightCrate FastAPI application."""
 
+import asyncio
+import dataclasses
 import logging
 import os
 import sqlite3
 import sys
-from contextlib import asynccontextmanager
+from contextlib import AsyncExitStack, asynccontextmanager
+from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
 # Global astropy IERS configuration lives in
@@ -13,13 +16,15 @@ from pathlib import Path
 # ``auto_download=False`` and ``auto_max_age=None`` before the first
 # astropy call.
 import aiosqlite
-import uvicorn
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from platformdirs import user_log_dir
 
 from nightcrate.api import (
     aberration,
     admin,
+    app_activity,
     calculators,
     diagnostics,
     dso,
@@ -47,15 +52,25 @@ from nightcrate.api import (
     rigs,
     settings,
     star_catalog,
+    updates,
     weather,
     wishlist,
 )
 from nightcrate.api.diagnostics import RequestTrackingMiddleware
-from nightcrate.core.app_config import load_config
+from nightcrate.core import child_processes, runtime
+from nightcrate.core.app_config import load_config, workspace_db_path
 from nightcrate.core.compute import set_gpu_enabled
 from nightcrate.core.config import get_settings
-from nightcrate.db.migrations import apply_migrations
-from nightcrate.db.session import get_db, set_db_path
+from nightcrate.core.instance_lock import InstanceLockHeld, acquire_instance_lock
+from nightcrate.core.test_hooks import busy_children
+from nightcrate.db.session import (
+    WorkspaceUnavailable,
+    get_db,
+    set_db_path,
+    set_workspace_problem,
+    workspace_problem,
+)
+from nightcrate.db.workspace_upgrade import WorkspaceRefused, initialize_workspace
 from nightcrate.services import plate_solve as plate_solve_service
 from nightcrate.services.star_catalog import fetch as star_catalog_fetch
 
@@ -64,11 +79,6 @@ _DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
 
 # Tuple constants for narrow except clauses — sidesteps the py314
 # ruff-format bug documented in CLAUDE.md "Gotchas".
-_SEED_EXPECTED_ERRS: tuple[type[BaseException], ...] = (
-    sqlite3.Error,
-    OSError,
-    ValueError,
-)
 _MAINT_EXPECTED_ERRS: tuple[type[BaseException], ...] = (
     sqlite3.Error,
     OSError,
@@ -111,134 +121,125 @@ def _configure_logging() -> None:
         handler._nightcrate_handler = True  # type: ignore[attr-defined]
         nc_logger.addHandler(handler)
 
+    if runtime.production:
+        folder = runtime.log_dir or Path(user_log_dir("NightCrate", appauthor=False))
+        folder.mkdir(parents=True, exist_ok=True)
+        runtime.log_dir = folder
+        log_path = folder / "nightcrate.log"
+        for name in ("nightcrate", "uvicorn", "uvicorn.error", "uvicorn.access"):
+            target = logging.getLogger(name)
+            if not any(getattr(h, "_nightcrate_file_handler", False) for h in target.handlers):
+                file_handler = RotatingFileHandler(
+                    log_path, maxBytes=5_000_000, backupCount=5, encoding="utf-8"
+                )
+                file_handler.setFormatter(formatter)
+                file_handler._nightcrate_file_handler = True  # type: ignore[attr-defined]
+                target.addHandler(file_handler)
+
+
+async def _run_database_maintenance() -> None:
+    """Run non-fatal startup maintenance after guarded activation."""
+    app_settings = await get_settings()
+    set_gpu_enabled(app_settings.gpu_acceleration)
+    startup_logger = logging.getLogger("nightcrate.startup")
+
+    try:
+        async with get_db() as conn:
+            await conn.execute(
+                "DELETE FROM aberration_analysis WHERE created_at < datetime('now', ?)",
+                (f"-{app_settings.aberration_cache_ttl_days} days",),
+            )
+            await conn.commit()
+    except _MAINT_EXPECTED_ERRS:
+        startup_logger.warning("aberration cache purge failed", exc_info=True)
+    try:
+        async with get_db() as conn:
+            await purge_weather_cache(conn)
+    except _MAINT_EXPECTED_ERRS:
+        startup_logger.warning("weather cache purge failed", exc_info=True)
+    try:
+        from nightcrate.services.thumbnails import rehydrate_from_disk as rehydrate_thumbnails
+        from nightcrate.services.thumbnails import sync_orphan_files
+
+        async with get_db() as conn:
+            conn.row_factory = aiosqlite.Row
+            await rehydrate_thumbnails(conn)
+            await sync_orphan_files(conn)
+    except _MAINT_EXPECTED_ERRS:
+        startup_logger.warning("thumbnail cache maintenance failed", exc_info=True)
+    try:
+        from nightcrate.services.sky_tile_cache import (
+            rehydrate_from_disk as rehydrate_sky_tiles,
+        )
+        from nightcrate.services.sky_tile_cache import (
+            sync_orphan_files as sync_sky_tile_orphans,
+        )
+
+        async with get_db() as conn:
+            conn.row_factory = aiosqlite.Row
+            await rehydrate_sky_tiles(conn)
+            await sync_sky_tile_orphans(conn)
+    except _MAINT_EXPECTED_ERRS:
+        startup_logger.warning("sky-tile cache maintenance failed", exc_info=True)
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     _configure_logging()
-
-    # Check if a database is configured and available before running DB operations.
-    # If not configured, the app starts in "unconfigured" mode where only
-    # /api/health and /api/admin/* endpoints are functional.
-    config = load_config()
-    if config.db_configured:
-        from nightcrate.core.app_config import workspace_db_path
-
-        set_db_path(workspace_db_path(Path(config.active_db)))
-        apply_migrations()
-        # Load seed data (first run populates, subsequent runs check for updates).
-        # Uses a separate sync sqlite3 connection — the seed loader is synchronous
-        # and aiosqlite's internal connection has thread restrictions.
-        try:
-            import importlib.resources
-
-            from nightcrate.db.session import get_db_path
-            from nightcrate.seed_loader import load_all
-
-            csv_root = importlib.resources.files("nightcrate") / "data" / "seed"
-            sync_conn = sqlite3.connect(str(get_db_path()))
+    async with AsyncExitStack() as stack:
+        if not runtime.production:
             try:
-                sync_conn.row_factory = sqlite3.Row
-                sync_conn.execute("PRAGMA foreign_keys = ON")
-                load_all(sync_conn, csv_root, "auto")
-                sync_conn.commit()
-            finally:
-                sync_conn.close()
-        except _SEED_EXPECTED_ERRS:
-            # Expected failure modes — bad CSV data, FK mismatch, file missing.
-            # Coding bugs (TypeError, NameError, AttributeError) now crash loudly.
-            logging.getLogger("nightcrate").warning("Seed loader failed", exc_info=True)
-
-        # Load DSO catalogs from the user-writable catalogs dir. Data is
-        # downloaded on demand via Admin → Catalogs; the loader silently
-        # reports `missing` sources when the dir is empty.
-        try:
-            from nightcrate.catalog_loader import load_catalogs
-            from nightcrate.catalog_loader.registry import user_catalogs_root
-            from nightcrate.db.session import get_db_path
-
-            catalogs_conn = sqlite3.connect(str(get_db_path()))
-            try:
-                catalogs_conn.execute("PRAGMA foreign_keys = ON")
-                summary = load_catalogs(catalogs_conn, user_catalogs_root())
-                missing = [r for r in summary.results if r.status == "missing"]
-                if missing and len(missing) == len(summary.results):
-                    logging.getLogger("nightcrate").info(
-                        "[catalog_loader] no catalog files found — fetch from Admin → Catalogs",
-                    )
-            finally:
-                catalogs_conn.close()
-        except _SEED_EXPECTED_ERRS:
-            # Parse failures / DB errors shouldn't crash the app — the DSO
-            # feature is non-critical to imaging workflows.
-            logging.getLogger("nightcrate").warning("DSO catalog loader failed", exc_info=True)
-        # Load app settings + set GPU flag up front so the purges below
-        # don't depend on each other's side effects.
-        app_settings = await get_settings()
-        set_gpu_enabled(app_settings.gpu_acceleration)
-        startup_logger = logging.getLogger("nightcrate.startup")
-
-        # Purge stale aberration cache entries (non-fatal).
-        try:
-            async with get_db() as conn:
-                await conn.execute(
-                    "DELETE FROM aberration_analysis WHERE created_at < datetime('now', ?)",
-                    (f"-{app_settings.aberration_cache_ttl_days} days",),
+                instance_lock = acquire_instance_lock(
+                    runtime.install_kind, runtime.app_version(), None
                 )
-                await conn.commit()
-        except _MAINT_EXPECTED_ERRS:
-            startup_logger.warning("aberration cache purge failed", exc_info=True)
+            except InstanceLockHeld as exc:
+                info = exc.info
+                if info is None:
+                    logging.getLogger("nightcrate.startup").error(
+                        "[startup] NightCrate is already running; quit it first"
+                    )
+                else:
+                    logging.getLogger("nightcrate.startup").error(
+                        "[startup] NightCrate is already running (%s, pid %d, version %s); "
+                        "quit it first",
+                        info.kind,
+                        info.pid,
+                        info.version,
+                    )
+                raise SystemExit(3) from exc
+            stack.callback(instance_lock.release)
 
-        # Purge stale weather cache entries (non-fatal).
+        await stack.enter_async_context(busy_children())
         try:
-            async with get_db() as conn:
-                await purge_weather_cache(conn)
-        except _MAINT_EXPECTED_ERRS:
-            startup_logger.warning("weather cache purge failed", exc_info=True)
+            delay = float(os.getenv("NIGHTCRATE_TEST_STARTUP_DELAY", "0"))
+            if delay:
+                await asyncio.sleep(delay)
 
-        # Thumbnail cache maintenance: rehydrate then sweep. Same
-        # pattern as the sky-tile cache below — JPEGs survive DB
-        # wipes, the filename encodes the cache key, so we can
-        # rebuild the index from disk on startup.
-        try:
-            from nightcrate.services.thumbnails import (
-                rehydrate_from_disk as rehydrate_thumbnails,
-            )
-            from nightcrate.services.thumbnails import (
-                sync_orphan_files,
-            )
-
-            async with get_db() as conn:
-                conn.row_factory = aiosqlite.Row
-                await rehydrate_thumbnails(conn)
-                await sync_orphan_files(conn)
-        except _MAINT_EXPECTED_ERRS:
-            startup_logger.warning("thumbnail cache maintenance failed", exc_info=True)
-
-        # Sky-tile cache maintenance: first rehydrate the DB index from
-        # existing on-disk files (so a user who wipes or switches the
-        # database doesn't lose their cache — the JPEGs are filesystem
-        # state, independent of SQLite), then sweep whatever's left that
-        # still isn't in the index.
-        try:
-            from nightcrate.services.sky_tile_cache import (
-                rehydrate_from_disk as rehydrate_sky_tiles,
-            )
-            from nightcrate.services.sky_tile_cache import (
-                sync_orphan_files as sync_sky_tile_orphans,
-            )
-
-            async with get_db() as conn:
-                conn.row_factory = aiosqlite.Row
-                await rehydrate_sky_tiles(conn)
-                await sync_sky_tile_orphans(conn)
-        except _MAINT_EXPECTED_ERRS:
-            startup_logger.warning("sky-tile cache maintenance failed", exc_info=True)
-
-    try:
-        yield
-    finally:
-        await star_catalog_fetch.shutdown()
-        await plate_solve_service.shutdown()
+            set_workspace_problem(None)
+            config = load_config()
+            if config.db_configured and config.active_db is not None:
+                workspace = Path(config.active_db)
+                entry = config.databases.get(config.active_db)
+                name = entry.name if entry is not None and entry.name else workspace.name
+                try:
+                    result = initialize_workspace(
+                        workspace,
+                        name,
+                        runtime.app_version(),
+                        on_step=lambda step: runtime.report_step(step, name),
+                    )
+                except WorkspaceRefused as exc:
+                    set_workspace_problem(exc.problem)
+                else:
+                    set_db_path(workspace_db_path(workspace))
+                    runtime.last_activation_backup = result.backup_path
+                    await _run_database_maintenance()
+            await updates.record_first_run_version()
+            yield
+        finally:
+            await star_catalog_fetch.shutdown()
+            await plate_solve_service.shutdown()
+            child_processes.terminate_all()
 
 
 openapi_tags = [
@@ -404,6 +405,10 @@ openapi_tags = [
         ),
     },
     {
+        "name": "Updates",
+        "description": "Application update checks, notices, and install coordination.",
+    },
+    {
         "name": "Weather",
         "description": (
             "Personal imaging verdicts (Go / Uncertain / No / Not enough data) "
@@ -417,12 +422,13 @@ app = FastAPI(title="NightCrate", lifespan=lifespan, openapi_tags=openapi_tags)
 
 _LAN_MODE = os.environ.get("NIGHTCRATE_LAN", "").strip() == "1"
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"] if _LAN_MODE else ["http://localhost:5173", "http://127.0.0.1:5173"],
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+if not runtime.production:
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"] if _LAN_MODE else ["http://localhost:5173", "http://127.0.0.1:5173"],
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
 
 app.add_middleware(RequestTrackingMiddleware)
 
@@ -459,21 +465,32 @@ app.include_router(project_targets.links_router)
 app.include_router(settings.router)
 app.include_router(star_catalog.router)
 app.include_router(admin.router)
+app.include_router(updates.router)
+app.include_router(app_activity.router)
 app.include_router(wishlist.router)
 app.include_router(diagnostics.router)
-
-_VERSION_FILE = Path(__file__).resolve().parents[3] / "VERSION"
-APP_VERSION = _VERSION_FILE.read_text().strip() if _VERSION_FILE.exists() else "unknown"
 
 
 @app.get("/api/health", tags=["Administration"])
 async def health() -> dict:
     """Check application health, version, and database configuration status."""
     config = load_config()
-    return {"status": "ok", "version": APP_VERSION, "db_configured": config.db_configured}
+    problem = workspace_problem()
+    return {
+        "status": "ok",
+        "version": runtime.app_version(),
+        "db_configured": config.db_configured and problem is None,
+        "install_kind": runtime.install_kind,
+        "workspace_problem": dataclasses.asdict(problem) if problem is not None else None,
+    }
 
 
-def run() -> None:
-    # Bind-all only in opt-in LAN mode (make dev-lan) for tablet access; defaults to localhost.
-    host = "0.0.0.0" if _LAN_MODE else "127.0.0.1"  # nosec B104 - intentional, LAN mode is opt-in
-    uvicorn.run("nightcrate.main:app", host=host, port=8000, reload=True)
+@app.exception_handler(WorkspaceUnavailable)
+async def workspace_unavailable_handler(
+    _request: Request, _exc: WorkspaceUnavailable
+) -> JSONResponse:
+    problem = workspace_problem()
+    return JSONResponse(
+        status_code=409,
+        content={"detail": {"problem": dataclasses.asdict(problem) if problem else None}},
+    )

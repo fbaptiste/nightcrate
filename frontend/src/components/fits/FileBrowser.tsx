@@ -17,9 +17,11 @@ import ListItemIcon from "@mui/material/ListItemIcon";
 import ListItemText from "@mui/material/ListItemText";
 import Menu from "@mui/material/Menu";
 import MenuItem from "@mui/material/MenuItem";
+import TextField from "@mui/material/TextField";
 import Tooltip from "@mui/material/Tooltip";
 import Typography from "@mui/material/Typography";
 import AccountTreeIcon from "@mui/icons-material/AccountTree";
+import CreateNewFolderIcon from "@mui/icons-material/CreateNewFolder";
 import FolderIcon from "@mui/icons-material/Folder";
 import FolderZipIcon from "@mui/icons-material/FolderZip";
 import ImageIcon from "@mui/icons-material/Image";
@@ -37,7 +39,9 @@ import {
   type ProjectBrowseResult,
   type VolumeEntry,
 } from "@/api/files";
+import { createFolder } from "@/api/admin";
 import { isVirtualPath } from "@/api/images";
+import { baseName, joinPath, parentPath, pathCrumbs } from "@/lib/paths";
 import { useSettingsStore } from "@/stores/settingsStore";
 
 interface Props {
@@ -58,6 +62,18 @@ interface Props {
    * non-selectable context. Archives / PixInsight projects can't be chosen.
    */
   directoryMode?: boolean;
+  /**
+   * Open at this folder instead of the last one browsed. Browsing from here
+   * doesn't change the folder the other browsers remember.
+   */
+  startPath?: string;
+  /**
+   * Plain folders only: archives and PixInsight projects are hidden, since
+   * they can't hold a workspace.
+   */
+  plainFolders?: boolean;
+  /** Offer "New Folder", made inside the folder shown. */
+  allowNewFolder?: boolean;
 }
 
 function formatSize(bytes: number): string {
@@ -75,6 +91,9 @@ export function FileBrowser({
   title = "Open Image File",
   emptyMessage = "No directories or image files here",
   directoryMode = false,
+  startPath,
+  plainFolders = false,
+  allowNewFolder = false,
 }: Props) {
   const { settings, update } = useSettingsStore();
   const initialPath = settings?.last_browse_path ?? "~";
@@ -87,6 +106,7 @@ export function FileBrowser({
   const [error, setError] = useState<string | null>(null);
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
   const [selectedDisplayName, setSelectedDisplayName] = useState<string | null>(null);
+  const [newFolderName, setNewFolderName] = useState<string | null>(null);
 
   // Project browsing state
   const [activeProject, setActiveProject] = useState<string | null>(null);
@@ -111,19 +131,27 @@ export function FileBrowser({
   // Sync initial path when settings load
   const initializedRef = useRef(false);
   useEffect(() => {
-    if (settings?.last_browse_path && !initializedRef.current) {
+    if (settings?.last_browse_path && !initializedRef.current && !startPath) {
       setCurrentPath(settings.last_browse_path);
       initializedRef.current = true;
     }
-  }, [settings?.last_browse_path]);
+  }, [settings?.last_browse_path, startPath]);
 
   // When dialog opens with an active file, navigate to its directory and pre-select it
   const pendingSelect = useRef<string | null>(null);
   const selectedFileRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
     if (!open) return;
+    setNewFolderName(null);
+    if (startPath) {
+      setCurrentPath(startPath);
+      setSelectedFile(null);
+      setActiveProject(null);
+      setActiveArchive(null);
+      return;
+    }
     if (activePath && !isVirtualPath(activePath)) {
-      const parentDir = activePath.substring(0, activePath.lastIndexOf("/")) || "/";
+      const parentDir = parentPath(activePath);
       pendingSelect.current = activePath;
       needsScroll.current = true;
       setSelectedFile(activePath);
@@ -149,22 +177,29 @@ export function FileBrowser({
     if (!pendingSelect.current) {
       setSelectedFile(null);
     }
+    // A slower answer for a folder left behind must not replace this one.
+    let current = true;
     browseDirectory(currentPath, accept)
       .then((data) => {
+        if (!current) return;
         setResult(data);
         setLoading(false);
         pendingSelect.current = null;
         // Persist last browsed path
         const s = settingsRef.current;
-        if (s && data.path !== s.last_browse_path) {
+        if (!startPath && s && data.path !== s.last_browse_path) {
           update({ last_browse_path: data.path });
         }
       })
       .catch((err) => {
+        if (!current) return;
         setError(String(err));
         setLoading(false);
         pendingSelect.current = null;
       });
+    return () => {
+      current = false;
+    };
   }, [currentPath, open]);
 
   // Scroll the pre-selected file into view after the list renders (initial open only)
@@ -250,8 +285,22 @@ export function FileBrowser({
     }
   }
 
+  async function handleCreateFolder() {
+    const name = newFolderName?.trim();
+    if (!name || !result?.path) return;
+    try {
+      const created = await createFolder(joinPath(result.path, name));
+      setNewFolderName(null);
+      navigateTo(created.path);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Couldn't create the folder.");
+    }
+  }
+
   function handleFolderContextMenu(e: React.MouseEvent, folderName: string, folderPath: string) {
     e.preventDefault();
+    // Favorites live in the workspace's settings; first-run setup has none.
+    if (!settings) return;
     setContextMenu({ mouseX: e.clientX, mouseY: e.clientY, folderName, folderPath });
   }
 
@@ -270,8 +319,9 @@ export function FileBrowser({
     update({ browser_favorites: favorites.filter((f) => f.path !== path) });
   }
 
-  // Build breadcrumb segments from resolved path (handle both / and \ separators)
-  const pathSegments = result?.path.split(/[/\\]/).filter(Boolean) ?? [];
+  const crumbs = result ? pathCrumbs(result.path) : [];
+  const projects = plainFolders ? [] : (result?.projects ?? []);
+  const archives = plainFolders ? [] : (result?.archives ?? []);
 
   return (
     <Dialog open={open} onClose={onClose} maxWidth="md" fullWidth>
@@ -338,44 +388,34 @@ export function FileBrowser({
           {/* Breadcrumb navigation */}
           {result && (
             <Breadcrumbs sx={{ pb: 1, fontSize: "0.8rem", "& ol": { flexWrap: "wrap", rowGap: 0.5 }, "& li": { whiteSpace: "nowrap" } }}>
-              <Link
-                component="button"
-                underline="hover"
-                color="inherit"
-                onClick={() => navigateTo("/")}
-                sx={{ fontSize: "0.8rem" }}
-              >
-                /
-              </Link>
-              {pathSegments.map((seg, i) => {
-                const segPath = "/" + pathSegments.slice(0, i + 1).join("/");
-                const isLast = i === pathSegments.length - 1 && !activeProject && !activeArchive;
+              {crumbs.map((crumb, i) => {
+                const isLast = i === crumbs.length - 1 && !activeProject && !activeArchive;
                 return isLast ? (
-                  <Typography key={segPath} color="text.primary" sx={{ fontSize: "0.8rem" }}>
-                    {seg}
+                  <Typography key={crumb.path} color="text.primary" sx={{ fontSize: "0.8rem" }}>
+                    {crumb.name}
                   </Typography>
                 ) : (
                   <Link
-                    key={segPath}
+                    key={crumb.path}
                     component="button"
                     underline="hover"
                     color="inherit"
-                    onClick={() => navigateTo(segPath)}
+                    onClick={() => navigateTo(crumb.path)}
                     sx={{ fontSize: "0.8rem" }}
                   >
-                    {seg}
+                    {crumb.name}
                   </Link>
                 );
               })}
               {activeProject && (
                 <Typography color="text.primary" sx={{ fontSize: "0.8rem" }}>
-                  {activeProject.split("/").pop()}
+                  {baseName(activeProject)}
                 </Typography>
               )}
               {activeArchive && (
                 <Chip
                   icon={<FolderZipIcon sx={{ fontSize: "0.85rem" }} />}
-                  label={activeArchive.split("/").pop()}
+                  label={baseName(activeArchive)}
                   size="small"
                   onClick={() => setArchiveSubdir("")}
                   sx={{ fontSize: "0.75rem", height: 20 }}
@@ -412,6 +452,37 @@ export function FileBrowser({
 
           {error && (
             <Alert severity="warning" variant="outlined" sx={{ fontSize: "0.85rem" }}>{error}</Alert>
+          )}
+
+          {newFolderName !== null && (
+            <Box sx={{ display: "flex", gap: 1, pb: 1 }}>
+              <TextField
+                size="small"
+                label="New folder name"
+                value={newFolderName}
+                onChange={(e) => setNewFolderName(e.target.value)}
+                fullWidth
+                autoFocus
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") void handleCreateFolder();
+                  if (e.key === "Escape") {
+                    e.stopPropagation();
+                    setNewFolderName(null);
+                  }
+                }}
+              />
+              <Button
+                size="small"
+                variant="contained"
+                onClick={() => void handleCreateFolder()}
+                disabled={!newFolderName.trim()}
+              >
+                Create
+              </Button>
+              <Button size="small" onClick={() => setNewFolderName(null)}>
+                Cancel
+              </Button>
+            </Box>
           )}
 
           {result && !loading && !activeProject && !activeArchive && (
@@ -453,7 +524,7 @@ export function FileBrowser({
               ))}
 
               {/* PixInsight projects */}
-              {result.projects.map((proj) => (
+              {projects.map((proj) => (
                 <ListItemButton
                   key={proj.path}
                   onClick={() => { navTimestamp.current = Date.now(); setActiveProject(proj.path); }}
@@ -471,7 +542,7 @@ export function FileBrowser({
               ))}
 
               {/* Archives */}
-              {result.archives?.map((archive) => (
+              {archives.map((archive) => (
                 <ListItemButton
                   key={archive.path}
                   onClick={() => {
@@ -528,7 +599,7 @@ export function FileBrowser({
               ))}
 
               {/* Empty state */}
-              {result.dirs.length === 0 && result.files.length === 0 && result.projects.length === 0 && (result.archives?.length ?? 0) === 0 && (
+              {result.dirs.length === 0 && result.files.length === 0 && projects.length === 0 && archives.length === 0 && (
                 <Typography sx={{ p: 2 }} color="text.secondary" variant="body2">
                   {emptyMessage}
                 </Typography>
@@ -720,6 +791,16 @@ export function FileBrowser({
         </Menu>
       </DialogContent>
       <DialogActions>
+        {allowNewFolder && (
+          <Button
+            startIcon={<CreateNewFolderIcon />}
+            onClick={() => setNewFolderName("")}
+            disabled={!result?.path || loading || newFolderName !== null}
+            sx={{ mr: "auto" }}
+          >
+            New Folder
+          </Button>
+        )}
         <Button onClick={onClose}>Cancel</Button>
         <Button
           variant="contained"

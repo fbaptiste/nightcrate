@@ -30,7 +30,7 @@ help: ## Show help
 		printf "  ${YELLOW}%-$(TARGET_MAX_CHAR_NUM)s${RESET} ${GREEN}%s${RESET}\n", helpCommand, helpMessage; \
 	}' $(MAKEFILE_LIST)
 
-.PHONY: help dev dev-lan backend backend-lan frontend install lint format test test-fast
+.PHONY: help dev dev-lan backend backend-lan frontend start install lint format test test-fast
 
 dev: ## Start backend and frontend together (Ctrl+C stops both). Options: LOG=DEBUG, BROWSER=... or BROWSER=none.
 	@(cd backend && NIGHTCRATE_LOG_LEVEL=$(LOG) uv run uvicorn nightcrate.main:app --reload --port 8000) & \
@@ -54,6 +54,10 @@ backend-lan: ## Start backend only, accessible on LAN
 
 frontend: ## Start frontend only (port 5173)
 	cd frontend && npm run dev
+
+start: ## Build and run the production backend with the bundled frontend
+	cd frontend && npm run build
+	cd backend && uv run python -m nightcrate.serve --open-browser
 
 # `npm ci` installs exactly what package-lock.json lists and never rewrites it.
 # Add or upgrade a frontend package with `npm install <package>` in frontend/.

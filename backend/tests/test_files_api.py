@@ -1,12 +1,15 @@
 """Tests for the file browser API endpoints."""
 
 from pathlib import Path
+from unittest.mock import AsyncMock
 
 import numpy as np
 import pytest
 from astropy.io import fits
 from httpx import ASGITransport, AsyncClient
 
+from nightcrate.api import files as files_api
+from nightcrate.api.files import _parse_macos_network_mounts
 from nightcrate.main import app
 
 
@@ -138,6 +141,40 @@ async def test_volumes(client):
     # First entry should be home
     assert data[0]["name"].startswith("~")
     assert "path" in data[0]
+
+
+@pytest.mark.anyio
+async def test_macos_volume_mount_read_runs_in_thread(monkeypatch):
+    to_thread = AsyncMock(return_value={})
+    monkeypatch.setattr(files_api.platform, "system", lambda: "Darwin")
+    monkeypatch.setattr(files_api.asyncio, "to_thread", to_thread)
+
+    volumes = await files_api.list_volumes()
+
+    assert volumes[0]["name"].startswith("~")
+    to_thread.assert_awaited_once_with(files_api._macos_network_mounts)
+
+
+def test_parse_macos_network_mounts():
+    mounts = _parse_macos_network_mounts(
+        "\n".join(
+            [
+                "//user@HomeNAS._smb._tcp.local/astro on /Volumes/astro "
+                "(smbfs, nodev, nosuid, mounted by user)",
+                "//Archive.local/photos on /Volumes/Shared Photos (smbfs, nodev)",
+                "afp://user@Studio._afpovertcp._tcp.local/Media on /Volumes/Media (afpfs, nodev)",
+                "nasbox:/exports/astro on /Volumes/Astro Data (nfs, nodev)",
+                "/dev/disk3s1 on /Volumes/Local Disk (apfs, local, journaled)",
+            ]
+        )
+    )
+
+    assert mounts == {
+        "/Volumes/astro": "HomeNAS",
+        "/Volumes/Shared Photos": "Archive",
+        "/Volumes/Media": "Studio",
+        "/Volumes/Astro Data": "nasbox",
+    }
 
 
 # ---------------------------------------------------------------------------

@@ -1,0 +1,304 @@
+name: Update rehearsal
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ["build/**"]
+
+permissions:
+  contents: read
+
+jobs:
+  rehearse:
+    timeout-minutes: 150
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-15
+            bundle: app
+          - os: ubuntu-22.04
+            bundle: appimage
+          - os: windows-2022
+            bundle: nsis
+    runs-on: ${{ matrix.os }}
+    env:
+      # NIGHTCRATE_TEST_APP_DIR is set in the first step: the runner context
+      # (runner.temp) isn't available in job-level env.
+      NIGHTCRATE_TEST_PORT: "48125"
+      NIGHTCRATE_TEST_MANIFEST_URL: http://127.0.0.1:48123/latest.json
+      NIGHTCRATE_TEST_RELEASES_URL: http://127.0.0.1:48123/release.json
+      NIGHTCRATE_TEST_AUTO_INSTALL: "1"
+      NIGHTCRATE_TEST_PROBE_URL: http://127.0.0.1:48124/probe.html
+    steps:
+      - name: Set the private app-data folder
+        shell: bash
+        run: echo "NIGHTCRATE_TEST_APP_DIR=$RUNNER_TEMP/nightcrate-update-app-data" >> "$GITHUB_ENV"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: 0.11.2
+          enable-cache: true
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: 3.14.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 25.2.1
+          cache: npm
+          cache-dependency-path: |
+            frontend/package-lock.json
+            packaging/shell/package-lock.json
+      - name: Linux GUI and packaging prerequisites
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libfuse2 xvfb
+      - name: Install minisign on Linux
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          # Ubuntu 22.04 has no minisign package. This is minisign 0.12's
+          # official Linux build; its checksum was recorded after checking the
+          # release signature against the key in minisign's README.
+          curl -fsSL -o "$RUNNER_TEMP/minisign.tar.gz" \
+            https://github.com/jedisct1/minisign/releases/download/0.12/minisign-0.12-linux.tar.gz
+          echo "9a599b48ba6eb7b1e80f12f36b94ceca7c00b7a5173c95c3efc88d9822957e73  $RUNNER_TEMP/minisign.tar.gz" \
+            | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/minisign.tar.gz" -C "$RUNNER_TEMP" minisign-linux/x86_64/minisign
+          sudo install -m 0755 "$RUNNER_TEMP/minisign-linux/x86_64/minisign" /usr/local/bin/minisign
+          minisign -v
+      - name: Install minisign on macOS
+        if: runner.os == 'macOS'
+        run: brew install minisign
+      - name: Install minisign on Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          # minisign 0.12's official Windows build, checked like the Linux one.
+          # Chocolatey's feed once failed and reported success with nothing
+          # installed (2026-11-15).
+          $zip = Join-Path $env:RUNNER_TEMP "minisign.zip"
+          Invoke-WebRequest -OutFile $zip `
+            -Uri https://github.com/jedisct1/minisign/releases/download/0.12/minisign-0.12-win64.zip
+          $hash = (Get-FileHash -Algorithm SHA256 $zip).Hash.ToLowerInvariant()
+          if ($hash -ne "37b600344e20c19314b2e82813db2bfdcc408b77b876f7727889dbd46d539479") {
+            throw "minisign download has checksum $hash"
+          }
+          Expand-Archive -Path $zip -DestinationPath $env:RUNNER_TEMP -Force
+          $bin = Join-Path $env:RUNNER_TEMP "minisign-win64\x86_64"
+          Add-Content -Path $env:GITHUB_PATH -Value $bin
+          & (Join-Path $bin "minisign.exe") -v
+          if ($LASTEXITCODE -ne 0) { throw "minisign -v failed" }
+      - name: Install build tooling
+        shell: bash
+        run: |
+          uv sync --project backend --group packaging
+          (cd frontend && npm ci)
+          (cd packaging/shell && npm ci)
+      - name: Generate throwaway signing keys
+        shell: bash
+        run: |
+          packaging/shell/node_modules/.bin/tauri signer generate \
+            --password rehearsal --write-keys "$RUNNER_TEMP/updater.key" --force --ci
+          packaging/shell/node_modules/.bin/tauri signer generate \
+            --password rehearsal --write-keys "$RUNNER_TEMP/wrong.key" --force --ci
+          python - <<'PY'
+          import json
+          import os
+          import pathlib
+
+          public = (
+              pathlib.Path(os.environ["RUNNER_TEMP"]) / "updater.key.pub"
+          ).read_text(encoding="utf-8").strip()
+          config = {
+              "plugins": {
+                  "updater": {
+                      "pubkey": public,
+                      "dangerousInsecureTransportProtocol": True,
+                      "endpoints": ["http://127.0.0.1:48123/latest.json"],
+                      "requireSignedVersion": True,
+                  }
+              }
+          }
+          path = pathlib.Path(os.environ["RUNNER_TEMP"]) / "tauri-test-config.json"
+          path.write_text(json.dumps(config), encoding="utf-8")
+          PY
+      - name: Build A (0.0.1)
+        shell: bash
+        env:
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: rehearsal
+        run: |
+          python packaging/rehearsal/set_version.py 0.0.1
+          uv sync --project backend --group packaging
+          (cd frontend && npm ci && npm run build)
+          uv run --project backend --group packaging python packaging/freeze.py
+          export TAURI_SIGNING_PRIVATE_KEY
+          TAURI_SIGNING_PRIVATE_KEY=$(cat "$RUNNER_TEMP/updater.key")
+          # The CLI ignores a TAURI_CONFIG variable; merge the test config explicitly.
+          (cd packaging/shell && npx --no-install tauri build --bundles "${{ matrix.bundle }}" --config "$RUNNER_TEMP/tauri-test-config.json")
+          cp -R packaging/build/backend "$RUNNER_TEMP/A-backend"
+          cp -R packaging/shell/src-tauri/target/release/bundle "$RUNNER_TEMP/A-bundle"
+      - name: Build B (0.0.2) and bad-signature C
+        shell: bash
+        env:
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: rehearsal
+        run: |
+          # A's installer and AppImage carry its version in their names, so
+          # clear A's bundle output before building B.
+          rm -rf packaging/shell/src-tauri/target/release/bundle
+          python packaging/rehearsal/set_version.py 0.0.2
+          uv sync --project backend --group packaging
+          (cd frontend && npm ci && npm run build)
+          uv run --project backend --group packaging python packaging/freeze.py
+          export TAURI_SIGNING_PRIVATE_KEY
+          TAURI_SIGNING_PRIVATE_KEY=$(cat "$RUNNER_TEMP/updater.key")
+          # The CLI ignores a TAURI_CONFIG variable; merge the test config explicitly.
+          (cd packaging/shell && npx --no-install tauri build --bundles "${{ matrix.bundle }}" --config "$RUNNER_TEMP/tauri-test-config.json")
+          cp -R packaging/shell/src-tauri/target/release/bundle "$RUNNER_TEMP/B-bundle"
+          archive=$(find "$RUNNER_TEMP/B-bundle" -type f \
+            \( -name '*.app.tar.gz' -o -name '*.AppImage' -o -name '*-setup.exe' \) -print -quit)
+          test -n "$archive"
+          test -f "$archive.sig"
+          cp "$archive" "$RUNNER_TEMP/bad-update.bin"
+          # TAURI_SIGNING_PRIVATE_KEY (exported above for B's build) would clash
+          # with --private-key-path, so drop it for this one command.
+          env -u TAURI_SIGNING_PRIVATE_KEY packaging/shell/node_modules/.bin/tauri signer sign \
+            --private-key-path "$RUNNER_TEMP/wrong.key" \
+            --password rehearsal \
+            --app-version 0.0.2 \
+            "$RUNNER_TEMP/bad-update.bin"
+          printf 'B_ARCHIVE=%s\nB_GOOD_SIG=%s\nB_BAD_SIG=%s\n' \
+            "$archive" "$archive.sig" "$RUNNER_TEMP/bad-update.bin.sig" >> "$GITHUB_ENV"
+      - name: Cryptographically verify updater signatures
+        shell: bash
+        run: |
+          python - <<'PY'
+          import base64
+          import binascii
+          import os
+          import pathlib
+          import subprocess
+
+          temporary = pathlib.Path(os.environ["RUNNER_TEMP"])
+
+          def decode(source, destination, label):
+              try:
+                  payload = base64.b64decode(
+                      pathlib.Path(source).read_text(encoding="utf-8").strip(),
+                      validate=True,
+                  )
+              except (binascii.Error, UnicodeDecodeError) as exc:
+                  raise SystemExit(f"invalid {label}: {exc}") from exc
+              destination.write_bytes(payload)
+              return payload
+
+          public_key = temporary / "updater-decoded.pub"
+          decode(temporary / "updater.key.pub", public_key, "updater public key")
+          signature = temporary / "good-update.minisig"
+          signature_payload = decode(
+              os.environ["B_GOOD_SIG"], signature, "good updater signature"
+          ).decode("utf-8")
+          trusted = next(
+              (
+                  line
+                  for line in signature_payload.splitlines()
+                  if line.startswith("trusted comment:")
+              ),
+              None,
+          )
+          if trusted is None or "version:0.0.2" not in trusted.split():
+              raise SystemExit(f"wrong trusted comment in good signature: {trusted!r}")
+
+          command = [
+              "minisign",
+              "-V",
+              "-p",
+              str(public_key),
+              "-m",
+              os.environ["B_ARCHIVE"],
+              "-x",
+              str(signature),
+          ]
+          verification = subprocess.run(command, capture_output=True, text=True)
+          if verification.returncode != 0:
+              detail = verification.stderr.strip() or verification.stdout.strip()
+              raise SystemExit(f"good updater signature was rejected: {detail}")
+
+          wrong_signature = temporary / "wrong-update.minisig"
+          decode(
+              os.environ["B_BAD_SIG"],
+              wrong_signature,
+              "wrong-key updater signature",
+          )
+          command[-1] = str(wrong_signature)
+          rejection = subprocess.run(command, capture_output=True, text=True)
+          if rejection.returncode == 0:
+              raise SystemExit("wrong-key updater signature was accepted")
+          PY
+      - name: Make the 20-file fixture
+        shell: bash
+        run: uv run --project backend python packaging/make_test_data.py "$RUNNER_TEMP/rehearsal-images"
+      - name: Rehearse update on macOS
+        if: runner.os == 'macOS'
+        timeout-minutes: 20
+        shell: bash
+        run: |
+          app=$(find "$RUNNER_TEMP/A-bundle" -type d -name 'NightCrate.app' -print -quit)
+          test -n "$app"
+          uv run --project backend python packaging/rehearsal/harness.py \
+            --backend "$RUNNER_TEMP/A-backend/nightcrate-backend" \
+            --app-dir "$NIGHTCRATE_TEST_APP_DIR" \
+            --workspace "$RUNNER_TEMP/rehearsal-workspace" \
+            --data-dir "$RUNNER_TEMP/rehearsal-images" \
+            --archive "$B_ARCHIVE" \
+            --good-signature "$B_GOOD_SIG" \
+            --bad-signature "$B_BAD_SIG" \
+            --probe packaging/rehearsal/probe.html \
+            -- "$app/Contents/MacOS/nightcrate-shell"
+      - name: Rehearse update on Linux
+        if: runner.os == 'Linux'
+        timeout-minutes: 20
+        shell: bash
+        run: |
+          appimage=$(find "$RUNNER_TEMP/A-bundle" -type f -name '*.AppImage' -print -quit)
+          cp "$appimage" "$RUNNER_TEMP/NightCrate-A.AppImage"
+          chmod +x "$RUNNER_TEMP/NightCrate-A.AppImage"
+          xvfb-run -a uv run --project backend python packaging/rehearsal/harness.py \
+            --backend "$RUNNER_TEMP/A-backend/nightcrate-backend" \
+            --app-dir "$NIGHTCRATE_TEST_APP_DIR" \
+            --workspace "$RUNNER_TEMP/rehearsal-workspace" \
+            --data-dir "$RUNNER_TEMP/rehearsal-images" \
+            --archive "$B_ARCHIVE" \
+            --good-signature "$B_GOOD_SIG" \
+            --bad-signature "$B_BAD_SIG" \
+            --probe packaging/rehearsal/probe.html \
+            -- "$RUNNER_TEMP/NightCrate-A.AppImage"
+      - name: Install and rehearse update on Windows
+        if: runner.os == 'Windows'
+        timeout-minutes: 20
+        shell: pwsh
+        run: |
+          $installer = Get-ChildItem "$env:RUNNER_TEMP/A-bundle" -Recurse -Filter '*-setup.exe' | Select-Object -First 1
+          $install = Join-Path $env:RUNNER_TEMP 'NightCrate-install'
+          Start-Process $installer.FullName -ArgumentList '/S', "/D=$install" -Wait
+          $app = Get-ChildItem $install -Filter '*.exe' | Where-Object { $_.Name -notlike 'uninstall*' } | Select-Object -First 1
+          uv run --project backend python packaging/rehearsal/harness.py `
+            --backend "$env:RUNNER_TEMP/A-backend/nightcrate-backend.exe" `
+            --app-dir "$env:NIGHTCRATE_TEST_APP_DIR" `
+            --workspace "$env:RUNNER_TEMP/rehearsal-workspace" `
+            --data-dir "$env:RUNNER_TEMP/rehearsal-images" `
+            --archive "$env:B_ARCHIVE" `
+            --good-signature "$env:B_GOOD_SIG" `
+            --bad-signature "$env:B_BAD_SIG" `
+            --probe packaging/rehearsal/probe.html `
+            -- $app.FullName
+      - name: Upload rehearsal logs
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: update-rehearsal-${{ runner.os }}
+          path: |
+            ${{ runner.temp }}/nightcrate-update-app-data/logs/**
+            ${{ runner.temp }}/rehearsal-workspace/backups/**
+          if-no-files-found: warn
