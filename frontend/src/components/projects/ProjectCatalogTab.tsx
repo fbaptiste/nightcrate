@@ -20,6 +20,7 @@ import TextField from "@mui/material/TextField";
 import CircularProgress from "@mui/material/CircularProgress";
 import { fetchRigs } from "@/api/rigs";
 import { invalidateProjectInfo } from "@/api/projectInfo";
+import { invalidateProjectLinks } from "@/api/projectTargetLinks";
 import { fetchProject, fetchProjectRigSetups } from "@/api/projects";
 import { listProjectTargets } from "@/api/projectTargets";
 import Snackbar from "@mui/material/Snackbar";
@@ -338,6 +339,8 @@ export default function ProjectCatalogTab({ projectId }: Props) {
     queryClient.invalidateQueries({ queryKey: ["project-solve", projectId] });
     void invalidateProjectInfo(queryClient, projectId);
     queryClient.invalidateQueries({ queryKey: ["equipment-usage"] });
+    queryClient.invalidateQueries({ queryKey: ["home"] });
+    void invalidateProjectLinks(queryClient);
   };
 
   /** Replace one row in the loaded pages instead of refetching the whole

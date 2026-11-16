@@ -1,12 +1,15 @@
 """Tests for main.py — health endpoint, lifespan startup, and helpers."""
 
 import logging
+import tomllib
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from nightcrate.main import APP_VERSION, app
+from nightcrate.core import runtime
+from nightcrate.main import app
 
 
 @pytest.fixture
@@ -51,11 +54,14 @@ async def test_health_returns_expected_fields(client):
 
 
 @pytest.mark.anyio
-async def test_health_version_matches_app_version(client):
-    """The version in health response matches the module-level APP_VERSION."""
+async def test_health_reports_package_version_and_kind(client):
+    """Health reports package metadata and the source install kind."""
     resp = await client.get("/api/health")
     data = resp.json()
-    assert data["version"] == APP_VERSION
+    pyproject = tomllib.loads((Path(__file__).parents[1] / "pyproject.toml").read_text())
+    assert data["version"] == pyproject["project"]["version"]
+    assert data["install_kind"] == "source"
+    assert data["workspace_problem"] is None
 
 
 @pytest.mark.anyio
@@ -103,17 +109,9 @@ def test_configure_logging():
         logger.removeHandler(handler)
 
 
-# ---------------------------------------------------------------------------
-# APP_VERSION
-# ---------------------------------------------------------------------------
-
-
 def test_app_version_not_unknown():
-    """APP_VERSION should be read from the VERSION file."""
-    # In the dev environment, VERSION file should exist
-    assert APP_VERSION != "unknown" or True  # pass even if VERSION missing in CI
-    assert isinstance(APP_VERSION, str)
-    assert len(APP_VERSION) > 0
+    """Package metadata provides a concrete application version."""
+    assert runtime.app_version() != "unknown"
 
 
 # ---------------------------------------------------------------------------
@@ -159,7 +157,7 @@ async def test_lifespan_seed_failure_non_fatal(configured_db):
 
     test_app = FastAPI()
     with patch(
-        "nightcrate.seed_loader.load_all",
+        "nightcrate.db.workspace_upgrade.load_all",
         side_effect=ValueError("Malformed seed CSV"),
     ):
         # Should not raise — a data-level seed failure is non-fatal.
@@ -177,25 +175,9 @@ async def test_lifespan_seed_coding_bug_propagates(configured_db):
 
     test_app = FastAPI()
     with patch(
-        "nightcrate.seed_loader.load_all",
+        "nightcrate.db.workspace_upgrade.load_all",
         side_effect=TypeError("Missing positional arg"),
     ):
         with pytest.raises(TypeError, match="Missing positional arg"):
             async with lifespan(test_app):
                 pass
-
-
-# ---------------------------------------------------------------------------
-# run() function
-# ---------------------------------------------------------------------------
-
-
-def test_run_calls_uvicorn():
-    """run() should call uvicorn.run with expected arguments."""
-    with patch("nightcrate.main.uvicorn.run") as mock_run:
-        from nightcrate.main import run
-
-        run()
-        mock_run.assert_called_once_with(
-            "nightcrate.main:app", host="127.0.0.1", port=8000, reload=True
-        )

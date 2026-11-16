@@ -469,6 +469,44 @@ async def set_project_rigs(project_id: int, body: ProjectRigsSet) -> ProjectResp
         for rig_id in rig_ids:
             await get_or_404(conn, "rig", rig_id, "Rig")
 
+        cursor = await conn.execute(
+            "SELECT rig_id FROM project_rig WHERE project_id = ?", (project_id,)
+        )
+        declared_ids = {row["rig_id"] for row in await cursor.fetchall()}
+        removed_ids = declared_ids - set(rig_ids)
+        if removed_ids:
+            placeholders = ",".join("?" * len(removed_ids))
+            params = (project_id, *sorted(removed_ids))
+            cursor = await conn.execute(
+                f"""
+                SELECT 1 FROM (
+                    SELECT rig_id FROM sub_frame
+                    WHERE project_id = ? AND rig_id IN ({placeholders})
+                    UNION ALL
+                    SELECT rig_id FROM session
+                    WHERE project_id = ? AND rig_id IN ({placeholders})
+                    UNION ALL
+                    SELECT rig_id FROM project_session
+                    WHERE project_id = ? AND rig_id IN ({placeholders})
+                ) LIMIT 1
+                """,  # nosec B608 - placeholders are generated from a set length
+                (*params, *params, *params),
+            )
+            used_rig_removed = await cursor.fetchone() is not None
+            if not used_rig_removed and len(declared_ids) == 1 and declared_ids <= removed_ids:
+                cursor = await conn.execute(
+                    "SELECT 1 FROM sub_frame WHERE project_id = ? AND rig_id IS NULL LIMIT 1",
+                    (project_id,),
+                )
+                used_rig_removed = await cursor.fetchone() is not None
+            if used_rig_removed:
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        "A rig used by this project's frames or capture batches cannot be removed"
+                    ),
+                )
+
         await conn.execute("DELETE FROM project_rig WHERE project_id = ?", (project_id,))
         for rig_id in rig_ids:
             await conn.execute(

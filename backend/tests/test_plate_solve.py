@@ -6,6 +6,7 @@ import contextlib
 import io
 import logging
 import math
+import os
 import threading
 import time
 from pathlib import Path
@@ -16,6 +17,7 @@ import numpy as np
 import pytest
 from astropy.io import fits as astro_fits
 
+from nightcrate.core import child_processes
 from nightcrate.services import plate_solve, solve_operations
 from nightcrate.services.coordinate_format import format_dec_dms, format_ra_hms
 from nightcrate.services.plate_solve import (
@@ -637,6 +639,19 @@ class TestGetImageDimensions:
 
 
 class TestRunAstap:
+    async def test_ensure_running_blocks_new_astap(self, tmp_path, monkeypatch):
+        launch = AsyncMock()
+        monkeypatch.setattr(plate_solve.asyncio, "create_subprocess_exec", launch)
+        child_processes.begin_shutdown()
+        try:
+            with pytest.raises(child_processes.ShuttingDown):
+                await plate_solve._run_astap(
+                    ["astap", "image.fits"], tmp_path / "result", 60, 100, 100
+                )
+            launch.assert_not_awaited()
+        finally:
+            child_processes._reset_for_tests()
+
     async def test_launch_failure_is_configuration_error(self, tmp_path, monkeypatch):
         async def fail_launch(*_args, **_kwargs):
             raise FileNotFoundError("missing executable")
@@ -871,7 +886,7 @@ async def test_astap_repeated_cancellation_wins_late_worker_failure(tmp_path, mo
 
 def _sleeping_astap(tmp_path: Path) -> Path:
     astap = tmp_path / "astap"
-    astap.write_text("#!/usr/bin/env python3\nimport time\ntime.sleep(30)\n")
+    astap.write_text("#!/usr/bin/env python3\nimport time\ntime.sleep(300)\n")
     astap.chmod(0o755)
     return astap
 
@@ -882,6 +897,43 @@ async def _wait_for_astap_process() -> asyncio.subprocess.Process:
             return plate_solve._solve_process
         await asyncio.sleep(0.01)
     raise AssertionError("ASTAP process did not start")
+
+
+@pytest.mark.skipif(os.name == "nt", reason="uvloop is POSIX-only")
+def test_astap_child_is_registered(tmp_path):
+    uvloop = pytest.importorskip("uvloop")
+
+    async def run():
+        _reset_solve_state()
+        astap = _sleeping_astap(tmp_path)
+        image = tmp_path / "image.fits"
+        astro_fits.PrimaryHDU(np.zeros((10, 10), dtype=np.float32)).writeto(image)
+        task = asyncio.create_task(
+            plate_solve.run_solve(
+                solver="astap",
+                astap_path=str(astap),
+                image_path=str(image),
+                hdu=0,
+                ra_hint=None,
+                dec_hint=None,
+                fov_hint=None,
+                timeout=600,
+            )
+        )
+        proc = await _wait_for_astap_process()
+        try:
+            assert proc.pid in child_processes.registered_pids()
+            await asyncio.to_thread(child_processes.terminate_all)
+            await asyncio.wait_for(task, timeout=5)
+            assert proc.returncode is not None
+            assert proc.pid not in child_processes.registered_pids()
+        finally:
+            if not task.done():
+                task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await task
+
+    uvloop.run(run())
 
 
 async def test_astap_task_cancellation_waits_for_process_exit(tmp_path):

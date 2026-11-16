@@ -8,9 +8,9 @@ ways to get one:
 * **Derived** (``source='auto'``) — ``POST /sessions/derive`` rebuilds one row per
   (observing night, rig, filter, exposure, gain, binning) from the project's
   cataloged light frames. The rig is what splits a simultaneous dual-rig night
-  into two sessions rather than colliding them into one. Explicit and
-  user-initiated; ingest never does this on its own. Derived rows are read-only,
-  because the next derive replaces them.
+  into two sessions rather than colliding them into one. The first build is
+  explicit and user-initiated; a later folder rig change refreshes existing auto
+  rows. Derived rows are read-only, because the next derive replaces them.
 
 Per-filter integration is computed here from the sessions (exposure x sub count),
 along with a sub count per filter and exposure (v0.41.8). Per-filter goals were
@@ -181,7 +181,7 @@ async def derive_project_sessions(project_id: int) -> DerivationSummary:
     """Rebuild the project's derived sessions from its cataloged light frames.
 
     Replaces every ``source='auto'`` row; ``source='manual'`` rows are untouched.
-    Never runs on its own — ingest catalogs frames and stops there.
+    This endpoint is the explicit first-build path; ingest never creates rows.
     """
     async with get_db() as conn:
         await conn.execute("PRAGMA foreign_keys = ON")

@@ -18,6 +18,7 @@ from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from nightcrate.core import child_processes
 from nightcrate.services.ingest_classify import (
     CATEGORY_SUB,
     classify_extension,
@@ -352,6 +353,7 @@ def make_pool(n_workers: int) -> ProcessPoolExecutor:
     import multiprocessing as mp
 
     ctx = mp.get_context("spawn")
+    child_processes.ensure_running()
     pool = ProcessPoolExecutor(max_workers=max(1, n_workers), mp_context=ctx)
     logger.info("%s created ProcessPool with %d workers", _LOG_PREFIX, max(1, n_workers))
     return pool

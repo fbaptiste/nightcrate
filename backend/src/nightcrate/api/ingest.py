@@ -13,9 +13,10 @@ resolver and the rig-attribution pass): a project carries its rigs via
 project_rig, and that is the equipment context. ``sub_frame.filter_name_hint``
 holds the header's filter name and is the only filter fact.
 
-Ingest also never writes ``project_session`` — building the user-facing session
-list from these frames is an explicit action on the Sessions tab
-(``services/session_derivation.py``).
+Ingest does not create ``project_session`` rows. Building the user-facing session
+list for the first time is an explicit action on the Sessions tab. Once automatic
+rows exist, changing a source folder's rig rebuilds them so they cannot retain the
+old rig (``services/session_derivation.py``).
 
 This module owns the transaction; the pure services (ingest_scanner,
 ingest_classify, ingest_sessions) never commit. One ingest runs at a time per
@@ -31,14 +32,16 @@ import asyncio
 import json
 import logging
 import os
+from contextlib import ExitStack
 from pathlib import Path
 from typing import get_args
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import FileResponse, Response
 
 from nightcrate.api._common import bool_fields, get_or_404, row_to_dict
-from nightcrate.core import app_config
+from nightcrate.api.app_activity import admit_work
+from nightcrate.core import app_config, child_processes
 from nightcrate.core.compute import effective_worker_count
 from nightcrate.core.config import get_settings
 from nightcrate.db.session import get_db
@@ -92,6 +95,7 @@ from nightcrate.services.ingest_sessions import (
     project_geo_timezone,
 )
 from nightcrate.services.line_names import canonicalize_line_name
+from nightcrate.services.session_derivation import derive_sessions
 
 logger = logging.getLogger("nightcrate.ingest")
 _LOG_PREFIX = "[ingest]"
@@ -159,6 +163,7 @@ router = APIRouter(prefix="/api/projects", tags=["Projects"])
 
 # Single-flight guard: at most one ingest run in flight per process.
 _INGEST_LOCK = asyncio.Lock()
+_active_ingest_project_id: int | None = None
 
 # Separate from _INGEST_LOCK: the quality pass reads files and writes only the
 # quality columns, so it need not queue behind a folder re-scan (and vice versa).
@@ -309,7 +314,7 @@ async def update_folder(project_id: int, folder_id: int, body: SourceFolderUpdat
     """
     async with get_db() as conn:
         await conn.execute("PRAGMA foreign_keys = ON")
-        await _get_folder_or_404(conn, project_id, folder_id)
+        folder = await _get_folder_or_404(conn, project_id, folder_id)
         sent = body.model_fields_set
         if not ({"rig_id", "project_target_id"} & sent):
             return await _fetch_folder(conn, folder_id)
@@ -317,6 +322,14 @@ async def update_folder(project_id: int, folder_id: int, body: SourceFolderUpdat
             await get_or_404(conn, "rig", body.rig_id, "Rig")
         if "project_target_id" in sent:
             await _validate_folder_target(conn, project_id, body.project_target_id)
+        rig_changed = "rig_id" in sent and body.rig_id != folder["rig_id"]
+        had_auto_batches = False
+        if rig_changed:
+            cursor = await conn.execute(
+                "SELECT 1 FROM project_session WHERE project_id = ? AND source = 'auto' LIMIT 1",
+                (project_id,),
+            )
+            had_auto_batches = await cursor.fetchone() is not None
         # Only the fields actually sent are written, so tagging a rig can't clear
         # a target that was set separately.
         sets = [f"{f} = ?" for f in ("rig_id", "project_target_id") if f in sent]
@@ -326,9 +339,10 @@ async def update_folder(project_id: int, folder_id: int, body: SourceFolderUpdat
             f"UPDATE project_source_folder SET {', '.join(sets)} WHERE id = ?",  # nosec B608
             (*params, folder_id),
         )
-        await assign_rigs_and_sessions(
-            conn, project_id, await project_geo_timezone(conn, project_id)
-        )
+        tz_name = await project_geo_timezone(conn, project_id)
+        await assign_rigs_and_sessions(conn, project_id, tz_name)
+        if rig_changed and had_auto_batches:
+            await derive_sessions(conn, project_id, tz_name=tz_name)
         await conn.commit()
         return await _fetch_folder(conn, folder_id)
 
@@ -416,7 +430,9 @@ async def _get_folder_or_404(conn, project_id: int, folder_id: int) -> dict:
 # ── Ingest run ────────────────────────────────────────────────────────────────
 
 
-@router.post("/{project_id}/ingest", response_model=IngestStatus)
+@router.post(
+    "/{project_id}/ingest", response_model=IngestStatus, dependencies=[Depends(admit_work)]
+)
 async def start_ingest(
     project_id: int,
     folder_id: int | None = Query(default=None, description="Scan only this source folder"),
@@ -446,8 +462,13 @@ async def start_ingest(
 
     # Hold the lock for the whole synchronous-within-request run. Ingest is fast
     # enough (parse fan-out is parallel) to run inline; status is queryable after.
+    global _active_ingest_project_id
     async with _INGEST_LOCK:
-        return await _run_ingest(project_id, folders)
+        _active_ingest_project_id = project_id
+        try:
+            return await _run_ingest(project_id, folders)
+        finally:
+            _active_ingest_project_id = None
 
 
 async def _run_ingest(project_id: int, folders: list[str]) -> IngestStatus:
@@ -472,25 +493,28 @@ async def _run_ingest(project_id: int, folders: list[str]) -> IngestStatus:
         # worker processes linger (which would wedge `uvicorn --reload` restarts).
         # n_workers == 1 → parse inline, no pool at all.
         pool = make_pool(n_workers) if n_workers > 1 else None
-        try:
-            for folder in folders:
-                await _ingest_folder(conn, project_id, run_id, folder, pool, errors, counters)
-            await _reclassify_dark_flats(conn, project_id)
-            # Rig + session are assigned in one post-pass rather than per file: a
-            # frame's rig depends on which bound folder *innermost* contains it,
-            # which isn't known until every folder is on the table. The pass also
-            # sweeps sessions a re-scan emptied. The user-facing project_session
-            # rows are never touched by ingest — deriving those is an explicit
-            # action on the Sessions tab.
-            await assign_rigs_and_sessions(conn, project_id, tz_name)
-            status = "completed"
-        except Exception as exc:  # noqa: BLE001 - record failure on the run, re-raise after commit
-            logger.exception("%s run %d failed", _LOG_PREFIX, run_id)
-            errors.append({"path": None, "error": f"{type(exc).__name__}: {exc}"})
-            status = "failed"
-        finally:
+        with ExitStack() as stack:
             if pool is not None:
-                pool.shutdown(wait=True, cancel_futures=True)
+                stack.enter_context(child_processes.registered_pool(pool))
+            try:
+                for folder in folders:
+                    await _ingest_folder(conn, project_id, run_id, folder, pool, errors, counters)
+                await _reclassify_dark_flats(conn, project_id)
+                # Rig + session are assigned in one post-pass rather than per file: a
+                # frame's rig depends on which bound folder *innermost* contains it,
+                # which isn't known until every folder is on the table. The pass also
+                # sweeps sessions a re-scan emptied. The user-facing project_session
+                # rows are never touched by ingest — deriving those is an explicit
+                # action on the Sessions tab.
+                await assign_rigs_and_sessions(conn, project_id, tz_name)
+                status = "completed"
+            except Exception as exc:  # noqa: BLE001 - record failure on the run
+                logger.exception("%s run %d failed", _LOG_PREFIX, run_id)
+                errors.append({"path": None, "error": f"{type(exc).__name__}: {exc}"})
+                status = "failed"
+            finally:
+                if pool is not None:
+                    pool.shutdown(wait=True, cancel_futures=True)
 
         await conn.execute(
             "UPDATE ingestion_run SET status = ?, files_scanned = ?, subs_inserted = ?, "
@@ -1294,7 +1318,11 @@ async def catalog_analyze_summary(
     )
 
 
-@router.post("/{project_id}/catalog/analyze", response_model=QualityAnalyzeResult)
+@router.post(
+    "/{project_id}/catalog/analyze",
+    response_model=QualityAnalyzeResult,
+    dependencies=[Depends(admit_work)],
+)
 async def catalog_analyze(
     project_id: int,
     body: QualityAnalyzeRequest,
@@ -1383,12 +1411,13 @@ async def _analyze_in_pool(todo: list[dict], n_workers: int) -> list[dict]:
     if n_workers <= 1 or len(args) == 1:
         return [analyze_frame_file(p, s) for p, s in args]
     pool = make_pool(n_workers)
-    try:
-        loop = asyncio.get_running_loop()
-        futures = [loop.run_in_executor(pool, analyze_frame_file, p, s) for p, s in args]
-        return list(await asyncio.gather(*futures))
-    finally:
-        pool.shutdown(wait=True, cancel_futures=True)
+    with child_processes.registered_pool(pool):
+        try:
+            loop = asyncio.get_running_loop()
+            futures = [loop.run_in_executor(pool, analyze_frame_file, p, s) for p, s in args]
+            return list(await asyncio.gather(*futures))
+        finally:
+            pool.shutdown(wait=True, cancel_futures=True)
 
 
 async def _write_quality(

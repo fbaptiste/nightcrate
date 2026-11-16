@@ -92,6 +92,7 @@ export interface ProjectRigSetups {
   rig_id: number;
   rig_name: string;
   declared: boolean;
+  in_use: boolean;
   setups: ProjectSetup[];
   setup_options: ProjectSetupOption[];
   base_parts: RigPartsInput;

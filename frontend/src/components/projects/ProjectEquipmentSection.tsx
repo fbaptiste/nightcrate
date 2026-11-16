@@ -15,6 +15,7 @@ import Button from "@mui/material/Button";
 import IconButton from "@mui/material/IconButton";
 import Paper from "@mui/material/Paper";
 import TextField from "@mui/material/TextField";
+import Tooltip from "@mui/material/Tooltip";
 import Typography from "@mui/material/Typography";
 import {
   setProjectRigs,
@@ -265,24 +266,29 @@ export default function ProjectEquipmentSection({
                       {rig.rig_name}
                     </Typography>
                     {!rig.declared && (
-                      <Box
-                        component="span"
-                        sx={(theme) => ({
-                          display: "inline-flex",
-                          alignItems: "center",
-                          height: "18px",
-                          ml: "6px",
-                          px: "7px",
-                          border: `1px solid ${theme.palette.mode === "dark" ? "rgba(255,255,255,0.23)" : "#c4c1bb"}`,
-                          borderRadius: "9px",
-                          color: "text.secondary",
-                          fontSize: "11px",
-                          lineHeight: "18px",
-                          whiteSpace: "nowrap",
-                        })}
+                      <Tooltip
+                        title="This project's files or capture batches use this rig, but it isn't in the project's rig list. To give those files a different rig, change the rig on their folder in the Files tab."
+                        placement="top"
                       >
-                        used, not listed
-                      </Box>
+                        <Box
+                          component="span"
+                          sx={(theme) => ({
+                            display: "inline-flex",
+                            alignItems: "center",
+                            height: "18px",
+                            ml: "6px",
+                            px: "7px",
+                            border: `1px solid ${theme.palette.mode === "dark" ? "rgba(255,255,255,0.23)" : "#c4c1bb"}`,
+                            borderRadius: "9px",
+                            color: "text.secondary",
+                            fontSize: "11px",
+                            lineHeight: "18px",
+                            whiteSpace: "nowrap",
+                          })}
+                        >
+                          used, not listed
+                        </Box>
+                      </Tooltip>
                     )}
                   </Box>
                   {setup && (
@@ -340,7 +346,7 @@ export default function ProjectEquipmentSection({
                   </Typography>
                 </Box>
               </Box>
-              {rig.declared && (
+              {rig.declared && !rig.in_use && (
                 <IconButton
                   size="small"
                   onClick={(event) => removeRig(event, rig.rig_id)}

@@ -109,6 +109,13 @@ Shared architecture, checks, and privacy rules live in [CLAUDE.md](../CLAUDE.md)
   still dispatch pre-resolved sources separately; a new format affects all three.
 - Aberration detection uses `sep` and `sep.flux_radius` for HFR. Cache by
   `(file_path, hdu, settings_json)` with configurable TTL; debounce edits 500 ms.
+- **One file browser** (`components/fits/FileBrowser.tsx`) serves every file
+  and folder chooser, workspace locations included (`plainFolders`,
+  `allowNewFolder`, `startPath`; v0.54.0). Workspace screens once had their
+  own copy without the volumes list; Fred had to climb from home to
+  `/Volumes` to pick a drive. Paths arrive in the system's own form; split
+  and join them with `lib/paths.ts`, which handles `C:\` and
+  `\\server\share` paths.
 - File browser: a single click opens a folder or selects a file; a double click
   opens the file. Stretch sliders change local state and render only on
   **Apply**; the Auto/None and Linked/Unlinked toggles and Reset apply at once.
@@ -118,13 +125,19 @@ Shared architecture, checks, and privacy rules live in [CLAUDE.md](../CLAUDE.md)
 
 ## App shell
 
-- Users run the app through the Vite development server (`make dev`); the
-  backend does not serve a built frontend. Vite's development-server advisories
-  therefore reach users. For example, Vite 8.0.3's open-in-editor route could
-  leak a Windows password hash to any web page visited while NightCrate ran.
-  So `vite`, `@vitejs/plugin-react`, and `@vitejs/plugin-basic-ssl` are listed
-  under `dependencies`, which means `npm audit --omit=dev` covers them.
-  `make install` uses `npm ci` so that installs never rewrite the lockfile.
+- **Three ways to run NightCrate** (v0.54.0):
+  - **the installed app:** the Tauri shell runs the frozen backend;
+  - **`make start`:** the production entrypoint, `nightcrate.serve`, serves
+    the built frontend at `127.0.0.1:8765`;
+  - **`make dev`:** the Vite development server, for development.
+
+  Development runs still expose Vite's development-server advisories. For
+  example, Vite 8.0.3's open-in-editor route could leak a Windows password
+  hash to any web page visited while NightCrate ran. So `vite`,
+  `@vitejs/plugin-react` and `@vitejs/plugin-basic-ssl` stay listed under
+  `dependencies`, where `npm audit --omit=dev` covers them. `make install`
+  uses `npm ci`, so installs never rewrite the lockfile. See Distribution
+  and the installed app, below.
 - `AppShell` keeps the Image Analyzer, Planner, PHD2 Analyzer, DSO Catalog,
   Weather, Gallery and Messier pages mounted after their first visit, hidden with `display: none`, so
   nested state such as chart zoom survives navigation. To add a page, register
@@ -286,6 +299,12 @@ Since v0.47.0. Spec: [v0.47.0 design](superpowers/specs/2026-11-07-v0.47.0-desig
 - **In use** means any `project_rig`, `project_session`, `session`,
   `sub_frame` or `project_source_folder` row. Wishlist plans and planner
   settings look forward and always use the current setup.
+- **A project's rig list can't drop a rig the project uses** (Fred,
+  2026-11-15): its frames, sessions or capture batches, or its untagged frames
+  when it is the project's only rig. `PUT /api/projects/{id}/rigs` returns 409
+  and the Equipment section shows no ×; dropping it only made the row come back
+  as "used, not listed". A rig used but not listed gets a hover note pointing
+  to the folder's rig in the Files tab.
 - **Equipment changes on a rig in use need `apply_mode`.** Without it,
   `PUT /api/rigs/{id}` returns 409 `rig_change_needs_choice` (counts and the
   changed parts) and writes nothing. Name, description, notes, default and
@@ -465,8 +484,14 @@ Since v0.47.0. Spec: [v0.47.0 design](superpowers/specs/2026-11-07-v0.47.0-desig
   `line_names` service supplies canonical bandpasses. Keep its 15-value vocabulary,
   the TypeScript copy, and the database CHECK synchronized (including `R+`).
 - `session` is the ingest rig/night group; `project_session` is a capture batch.
-  Derive capture batches **only on request**, never during ingest. Replace auto
-  rows and preserve manual rows. Derived rows are read-only (409 on edit/delete).
+  Derive capture batches for the first time **only on request**, never during
+  ingest. Once auto batches exist, a folder rig change rebuilds them in the same
+  transaction (Fred, 2026-11-15), because a stale batch keeps the old rig in use.
+  Replace auto rows and preserve manual rows. Derived rows are read-only (409 on
+  edit/delete).
+- Night counts and first/last imaging dates use light frames only. Calibration
+  frames never count because they are often reused across projects (Fred,
+  2026-11-15); their ingest rig/night groups still exist for calibration matching.
 - **Night notes** (`project_night_note`, v0.47.0) hold one note per project
   and observing night, keyed by the civil night date (`YYYY-MM-DD`; the API
   rejects anything that doesn't round-trip, such as week dates). They live
@@ -1871,6 +1896,18 @@ archived in [imaging-quality-model.md](archive/imaging-quality-model.md).
   row for each of ECMWF, GFS and ICON, unticked ones marked "Not used for the
   cloud decision"; with one ticked, only that row, plus a "Show each model's
   cloud" toggle.
+- **Night-detail hour cells.** A cell fits three characters ("-74", "8.3")
+  at 12 px: hour columns are at least 26 px, the hours track grows with the
+  number of columns (so the darkness band, which spans the track, stays
+  aligned), and a narrower window scrolls the panel sideways. Decimal values
+  keep one decimal only while they fit in three characters ("4.5", but "16"
+  for 16.1); the night summary and checklist keep the exact figure. Longer
+  text ("fair", inches like "1.25") uses 10 px; inches drop the leading zero
+  (".02"). Transparency's "no aerosol data" note is in the cell's tooltip.
+  On a daylight-saving fall-back night one clock column holds two hours, so
+  every column widens to fit two cells. Wind and gusts have a row each even
+  when the wind rule is off ("12/34" in one cell couldn't fit). At 28 px
+  columns, "16.1" ran into the next hour (Fred, 2026-11-15).
 - **Darkness band.** The Tonight card and the night-detail grid draw darkness
   from each night's `darkness_intervals` (exact −6°/−12°/−18° crossings), not
   from the per-hour `darkness_category`: one label per hour hides the half-hour
@@ -2053,3 +2090,182 @@ archived in [imaging-quality-model.md](archive/imaging-quality-model.md).
 - Diagnostics middleware records requests. Use `X-Activity` for fetch and
   `_activity` for image URLs; keep an image's activity label stable from file
   open so cache busting does not split request groups.
+
+## Distribution and the installed app
+
+v0.54.0. The design is in the spec
+(`docs/superpowers/specs/2026-11-14-v0.54.0-installers-and-updates-design.md`);
+these are the constraints and traps found while building it.
+
+- **One backend per app-data folder.** Every backend, `make dev` included,
+  takes an OS lock on `APP_DIR/instance.lock`, and `APP_DIR/instance.json`
+  says who holds it. The installed app and a source run share
+  `APP_DIR`. So with the lock in place, never run them at once against the
+  same workspace; the second one refuses with a clear message.
+- **Workspace activation is one guarded path,**
+  `db/workspace_upgrade.initialize_workspace`. It runs at startup, from
+  setup, and from Admin. In order:
+  1. a marker classification from files only;
+  2. SQLite's own journal recovery;
+  3. a read-only refusal of newer databases (yoyo's API would create or
+     upgrade its tables, so it isn't used for that);
+  4. a backup;
+  5. migrations;
+  6. loaders;
+  7. a durable completion record.
+
+  A leftover `backups/upgrade-in-progress.json` marker restores its backup
+  unless `nightcrate-workspace.json`'s `completed_upgrade` matches the
+  marker's id. **Residual:** versions before v0.54.0 ignore markers; if one
+  opens a half-upgraded workspace, its writes are lost when a later version
+  restores.
+- **Removing a workspace with its folder deletes the whole folder,** so
+  `DELETE /api/admin/database?delete_file=true` refuses when the folder
+  holds another known workspace (the active one included). New workspaces
+  default to the folder *beside* the active one; on Windows a `/`-only
+  parent rule once proposed a folder inside it (v0.54.0).
+- **While a workspace is refused, nothing opens its database.**
+  `get_db_path()` raises `WorkspaceUnavailable`, which becomes a 409, and
+  code that read `config.active_db` itself uses `active_db_path_or_none()`.
+  New database openers must use one of the two.
+- **`with sqlite3.connect(...) as conn` doesn't close the connection.** Use
+  `contextlib.closing`. On Windows an open connection blocks `os.replace`
+  of the database, so a backup or a restore would fail.
+- **Durability:** backups, markers and the workspace file are written with
+  `db/durable_fs.py` (fsync of the file and of its directory). Windows has
+  no directory fsync; NTFS journaling covers the rename.
+- **Hard-linked `nightcrate.db` files are refused,** and symlinked ones are
+  resolved: a restore replaces only one directory entry.
+- **Child processes:** every pool, standalone process and subprocess is
+  registered in `core/child_processes.py`. Shutdown and the shell-EOF
+  deadline call `terminate_all()`, which rescans until no child is left,
+  with handle-based termination. **uvicorn runs on uvloop** wherever it's
+  installed (`uvicorn[standard]`, not Windows), and uvloop's subprocess
+  transport exposes no `Popen`. Asyncio children (ASTAP) therefore use a
+  POSIX adapter. Tests that run on pytest's standard loop can't see this;
+  `test_terminate_all_under_uvloop` covers it.
+- **The production entrypoint's stdout is a protocol:** `NIGHTCRATE_STEP`,
+  `NIGHTCRATE_ALIVE`, `NIGHTCRATE_READY` and `NIGHTCRATE_LOCKED`, plus
+  exit codes 3–6. The shell must keep draining stdout and stderr after
+  ready, or the backend blocks once the pipe fills.
+- **Port binding:** `choose_port` sets `SO_REUSEADDR` on POSIX
+  (`SO_EXCLUSIVEADDRUSE` on Windows). Without it, ports in TIME_WAIT after
+  a quit can't be re-bound for a while, so the app would move off 8765 and
+  lose its `localStorage` origin.
+- **The Host check compares the full `host:port`.** Starlette's
+  `TrustedHostMiddleware` ignores the port.
+- **The page is served with `Cache-Control: no-cache`** (`serve.py`), as
+  are the other unhashed files; `/assets` names carry a content hash. The
+  app keeps its origin across updates, so without it the window reused
+  the previous version's `index.html`, and with it the old scripts, for a
+  tenth of that file's age at download: in Fred's acceptance test, build
+  24's backend ran build 21's page (2026-11-15).
+- **`APP_DIR/updates.json`, not `config.json`,** holds the update answers,
+  because older versions rewrite `config.json` and drop unknown keys.
+  Automatic checks run only when the frontend asks and 24 h have passed
+  since the last *attempt*. "Check now" and opening the Catalogs section
+  still contact GitHub.
+- **The install reservation** (`api/app_activity.py`) is owned by a token;
+  the shell renews it while downloading and sets a non-expiring barrier
+  just before stopping the backend. `admit_work` guards every
+  work-starting route. The decision uses only in-memory signals, with no
+  `await` between check and set.
+- **The app's version** lives in `VERSION`, `backend/pyproject.toml`,
+  `frontend/package.json` and the shell's `Cargo.toml`.
+  `tauri.conf.json` reads `frontend/package.json` (it said `0.0.0` until
+  v0.54.0), and `release.yml` checks that all four agree.
+- **cx_Freeze:**
+  - it drops migrations whose file names aren't module names, so
+    `freeze.py` copies the migrations folder whole and `check_build.py`
+    compares it;
+  - on macOS it moves `libmlx.dylib` without `mlx.metallib`, and the first
+    GPU call then kills the process;
+  - on Linux it rewrites RPATHs, so the frozen files' hashes differ from
+    their wheels' `RECORD` entries;
+  - its interpreter leaves SIGPIPE at the default, unlike standard
+    Python. A force-quit shell closes the backend's stdin and stdout
+    together, and the backend died logging "Shutting down", leaving its
+    workers running. `serve.py` ignores SIGPIPE and sends its output to the
+    null device when stdin closes; `smoke.py` checks the force-quit case
+    on the frozen build.
+- **Windows refuses `os.fsync` on a read-only handle** (EBADF). Flush
+  through a handle opened for writing; until v0.54.0's update rehearsal,
+  every workspace backup and restore failed on Windows this way.
+- **Tauri:**
+  - on macOS it refuses to run from a path with a symlink in any ancestor
+    (`/var` → `/private/var` breaks CI temp folders);
+  - `open_devtools` exists only in debug builds or with the
+    `test-devtools` feature;
+  - the resource path in `tauri.conf.json` is relative to
+    `packaging/shell/src-tauri`;
+  - the main window's IPC permission is added at runtime for exactly
+    `http://127.0.0.1:{port}`;
+  - a locked macOS screen suspends WebKit pages, so a local self-test needs
+    an unlocked session;
+  - the window-state plugin restores a saved size after the window is
+    built, whatever it is; the shell resets a too-small main window on
+    `Resized`. Calling `restore_state` by hand deadlocked on the plugin's
+    lock. Test builds keep their own state file;
+  - `on_download` runs on the main thread, where the Save dialog (`rfd`)
+    opens; on macOS the finished event never carries the path, so the shell
+    remembers the chosen one;
+  - only one instance per app ID runs: a second copy hands over to the
+    first and exits, so a test build can't start beside an open one.
+- **The page in the installed app (WebKit):**
+  - it handles the zoom keys itself (`lib/desktopZoom.ts`, through
+    `set_webview_zoom`, allowed for the main window only) so it can show
+    the level; Tauri's own zoom keys are off;
+  - WebKit loads a dropped link when the page *declines* the drop;
+    `lib/dropGuard.ts` accepts stray drops and ignores them;
+  - dnd-kit stops the click that ends a drag from propagating but doesn't
+    cancel it, so a sortable link navigates by itself: a full page load.
+    `lib/dragClickGuard.ts` cancels it (the sidebar is the only sortable
+    list with links);
+  - `<main>` is `position: relative`, or an absolutely positioned hidden
+    element escapes it and the whole window scrolls;
+  - "Use My Location": on macOS, WebKit fetches a location for a page
+    only when the app gives it a location provider; wry doesn't, so the
+    page's own request either fails at once or waits forever (WebKit's
+    `WebGeolocationManagerProxy::providerStartUpdating`; Codex, confirmed
+    with a test app, 2026-11-15). The page calls the shell's
+    `current_location` command instead (`shell/src-tauri/src/location.rs`,
+    `lib/currentLocation.ts`), which asks Core Location on the main thread,
+    so macOS shows its own prompt the first time. It needs the
+    `NSLocation…UsageDescription` strings (`Info.plist`) and, under the
+    hardened runtime, the location entitlement (`Entitlements.plist`).
+    Each failure has its own code and message; the deadline is 2 minutes,
+    since it includes the first prompt, and covers the Location Services
+    check too. It listens for continuous updates and takes the first reading
+    under a minute old: Core Location may first deliver a cached position
+    from wherever the computer last was. Windows and Linux answer
+    "unsupported" and use the browser's request, which
+    `on_permission_request` allows for the backend's page (WebKitGTK
+    refuses by default; on Linux it also needs a working GeoClue). An
+    ad-hoc signed update counts as a new app, so macOS asks again (seen
+    with a rebuilt test app), or may not ask at all, which the page reports
+    as no answer (Fred, 2026-11-15);
+  - wry asks `on_navigation` about loads inside frames too, so the
+    Locations map (`https://www.openstreetmap.org/export/embed.html`) is
+    allowed by URL in `links.rs`; anything else from outside still opens in
+    the browser.
+- **Test hooks**, read only when set: `NIGHTCRATE_TEST_STARTUP_DELAY`,
+  `NIGHTCRATE_TEST_BUSY_POOL` and `NIGHTCRATE_TEST_BASE_PORT` (backend);
+  the `NIGHTCRATE_TEST_*` compile-time options (shell), which
+  `release.yml` refuses in release builds.
+- **Licences:** `packaging/notices.py` inventories every native file the
+  installers ship, fails closed, and renders `licences/` plus a
+  per-platform LGPL source archive. The policy and the reasoning behind
+  each accepted licence are in `packaging/licence_policy.toml`. The MSVC
+  runtime counts as a GPLv3 System Library. GCC runtimes whose exact
+  release can't be determined (numpy's and scipy's Linux wheels) are
+  flagged; with `--allow-unresolved-gcc`, which release builds pass too
+  (Fred, 2026-11-15), they point to upstream GCC's source and carry the
+  wheels' own licence files. Vendor builds are treated the same: GNU
+  releases are numbered X.Y.0, so scipy's GCC 14.2.1 (a gcc-toolset
+  snapshot) has no upstream source to attach.
+- **App icon:** the source drawing is `packaging/shell/app-icon.svg`;
+  `npx tauri icon app-icon.svg` in `packaging/shell` regenerates the set;
+  keep only the seven desktop files already in `src-tauri/icons/` and delete
+  the mobile and Windows Store sizes it also writes.
+  `frontend/public/favicon.svg` is the same drawing cropped to the rounded
+  square.

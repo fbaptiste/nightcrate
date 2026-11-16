@@ -300,6 +300,38 @@ async def test_list_setups_newest_first(client):
     assert [item["night_count"] for item in setups] == [1, 1]
 
 
+async def test_setup_history_nights_exclude_calibration_frames(client):
+    equipment, rig_id, project_id, _frame_ids = await _rig_in_project(nights=1)
+    async with get_db() as conn:
+        await make_frame(
+            conn,
+            project_id,
+            "history-flat",
+            rig_id=rig_id,
+            date_obs_utc="2037-12-31T16:06:36+00:00",
+            frame_type="flat",
+        )
+        await make_frame(
+            conn,
+            project_id,
+            "history-dark",
+            rig_id=rig_id,
+            date_obs_utc="2025-06-15T03:00:00+00:00",
+            frame_type="dark",
+        )
+        await conn.commit()
+
+    split = await client.put(
+        f"/api/rigs/{rig_id}",
+        json={"camera_id": equipment.camera_b, "apply_mode": "from_now_on"},
+    )
+    assert split.status_code == 200, split.text
+
+    setups = (await client.get(f"/api/rigs/{rig_id}/setups")).json()
+    assert len(setups) == 1
+    assert setups[0]["night_count"] == 1
+
+
 async def test_clone_is_mine(client):
     _equipment, rig_id, _project_id, _frame_ids = await _rig_in_project(nights=0)
     clone = await client.post(f"/api/rigs/{rig_id}/clone")

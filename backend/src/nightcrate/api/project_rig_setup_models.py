@@ -34,6 +34,7 @@ class ProjectRigSetupsOut(BaseModel):
     rig_id: int
     rig_name: str
     declared: bool
+    in_use: bool
     setups: list[ProjectSetupOut]
     setup_options: list[ProjectSetupOptionOut]
     base_parts: RigPartsIn

@@ -7,10 +7,10 @@ gain and sub count per row). The rig comes from the frame, which inherited it
 from its source folder's user-declared tag, so it only splits a group when two
 rigs really did shoot the same filter on the same night.
 
-**Never runs automatically.** Ingest catalogs frames and stops there; a project
-may legitimately hold no subs at all and still keep a full hand-entered session
-record. The user asks for a derive from the Sessions tab, and the pass replaces
-every ``source='auto'`` row while leaving ``source='manual'`` rows untouched.
+The first build is always requested from the Sessions tab; ingest never creates
+these rows. Once ``source='auto'`` rows exist, changing a source folder's rig also
+runs the pass so those batches follow their frames. Every pass replaces automatic
+rows while leaving ``source='manual'`` rows untouched.
 
 Pure service: takes an open connection and **never commits** — the caller owns
 the transaction, same contract as ``ingest_sessions``.

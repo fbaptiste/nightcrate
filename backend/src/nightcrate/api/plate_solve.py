@@ -5,10 +5,11 @@ import logging
 import math
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
 from nightcrate.api._common import load_other_names, row_to_dict
+from nightcrate.api.app_activity import admit_work
 from nightcrate.core.config import get_settings
 from nightcrate.db.session import get_db
 from nightcrate.services import solve_operations
@@ -65,7 +66,7 @@ async def _read_image_value(reader, *args, path: str):
         raise HTTPException(status_code=500, detail="Internal processing error") from exc
 
 
-@router.post("/solve")
+@router.post("/solve", dependencies=[Depends(admit_work)])
 async def solve(request: PlateSolveRequest) -> PlateSolveResult:
     """Plate solve an image with the selected solver."""
     logger.info(

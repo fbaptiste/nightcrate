@@ -9,6 +9,17 @@ export interface AppInfo {
   workspace_dir: string | null;
   projects_dir: string | null;
   python_version: string;
+  log_dir: string | null;
+  licences_dir: string | null;
+}
+
+export interface WorkspaceProblem {
+  kind: "newer" | "unreadable" | "backup_failed" | "upgrade_failed" | "restore_failed";
+  workspace_path: string;
+  workspace_name: string;
+  last_opened_by: string | null;
+  error: string | null;
+  backup_path: string | null;
 }
 
 export interface DatabaseInfo {
@@ -24,16 +35,12 @@ export interface AdminStatus {
   known_databases: DatabaseInfo[];
 }
 
-export interface BrowseResult {
-  path: string;
-  dirs: { name: string; path: string }[];
-  files: { name: string; path: string; size: number }[];
-}
-
 export interface HealthResponse {
   status: string;
   version: string;
   db_configured: boolean;
+  install_kind: "installed" | "source";
+  workspace_problem: WorkspaceProblem | null;
 }
 
 export const fetchAdminInfo = () => apiFetch<AppInfo>("/admin/info");
@@ -77,17 +84,6 @@ export const removeDatabase = (path: string, deleteFile = false) =>
       body: JSON.stringify({ path }),
     },
   );
-
-export const browseForDatabase = (path = "~") =>
-  apiFetch<BrowseResult>(`/admin/browse?path=${encodeURIComponent(path)}`);
-
-export interface Shortcuts {
-  home: string;
-  documents: string;
-  app_data: string;
-}
-
-export const fetchShortcuts = () => apiFetch<Shortcuts>("/admin/shortcuts");
 
 export const createFolder = (path: string) =>
   apiFetch<{ path: string }>("/admin/mkdir", {

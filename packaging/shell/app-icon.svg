@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+<defs>
+  <linearGradient id="night" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#26354f"/><stop offset="1" stop-color="#0f131b"/></linearGradient>
+  <radialGradient id="glow" cx="0.5" cy="0.5" r="0.5"><stop offset="0" stop-color="#f2c477" stop-opacity="0.45"/><stop offset="1" stop-color="#f2c477" stop-opacity="0"/></radialGradient>
+</defs>
+<rect x="96" y="96" width="832" height="832" rx="190" fill="url(#night)"/>
+<circle cx="512" cy="512" r="300" fill="url(#glow)"/>
+<g fill="none" stroke="#d4993f" stroke-width="48" stroke-linecap="square">
+  <path d="M244 372 V244 H372"/><path d="M652 244 H780 V372"/>
+  <path d="M780 652 V780 H652"/><path d="M372 780 H244 V652"/>
+</g>
+<path d="M512 262 L534 512 L512 762 L490 512 Z" fill="#fff1d6"/>
+<path d="M262 512 L512 534 L762 512 L512 490 Z" fill="#fff1d6"/>
+<circle cx="512" cy="512" r="54" fill="#fff8ec"/>
+<circle cx="372" cy="640" r="9" fill="#c9d6e6"/>
+<circle cx="660" cy="384" r="7" fill="#c9d6e6"/>
+</svg>

@@ -425,7 +425,7 @@ export default function CatalogsAdminSection() {
   };
 
   return (
-    <>
+    <Box id="catalogs" sx={{ scrollMarginTop: 16 }}>
       <Typography variant="h6" sx={{ mb: 1, mt: 3 }}>
         Catalogs
       </Typography>
@@ -727,6 +727,6 @@ export default function CatalogsAdminSection() {
           </Button>
         </DialogActions>
       </Dialog>
-    </>
+    </Box>
   );
 }
