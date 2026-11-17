@@ -180,9 +180,8 @@ def _setup(
     )
 
 
-def test_upgrade_preserves_records(tmp_path: Path):
-    db_path = tmp_path / "upgrade.db"
-    _apply_through(db_path, MIGRATION_0068)
+def test_upgrade_preserves_records(pre_migration_db):
+    db_path = pre_migration_db(MIGRATION_0069)
     with sqlite3.connect(db_path) as conn:
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA foreign_keys = ON")

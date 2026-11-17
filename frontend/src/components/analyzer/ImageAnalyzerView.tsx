@@ -876,6 +876,7 @@ export default function ImageAnalyzerView({
               )}
               {!headerQuery.isLoading && headerQuery.data && (
                 <FitsHeaderTable
+                  key={`${activePath}:${selectedHdu}`}
                   cards={headerQuery.data}
                   editable={!isVirtualPath(activePath) && isFitsPath(activePath)}
                   path={activePath}
@@ -1122,7 +1123,14 @@ export default function ImageAnalyzerView({
               .map(([key, label]) => {
                 let val: React.ReactNode = String(meta[key]);
                 if (key === "exposure_time") val = `${meta[key]}s`;
-                if (key === "sensor_temp") val = `${meta[key]}\u00B0C`;
+                if (key === "sensor_temp") {
+                  // The header map sends the value as text ("-5.30000019073486").
+                  const sensorTemp = meta[key];
+                  const celsius = typeof sensorTemp === "number" ? sensorTemp : Number(sensorTemp);
+                  val = Number.isFinite(celsius)
+                    ? `${celsius.toFixed(1).replace("-", "−")} °C`
+                    : `${sensorTemp}\u00B0C`;
+                }
                 if (key === "focal_length") {
                   val = <>{Number(meta[key]).toFixed(0)} mm{meta["focal_ratio"] != null && <span style={{ color: "var(--mui-palette-text-secondary)" }}> (f/{Number(meta["focal_ratio"]).toFixed(1)})</span>}</>;
                 }

@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   useInfiniteQuery,
   useMutation,
@@ -22,7 +22,6 @@ import { fetchRigs } from "@/api/rigs";
 import { invalidateProjectInfo } from "@/api/projectInfo";
 import { invalidateProjectLinks } from "@/api/projectTargetLinks";
 import { fetchProject, fetchProjectRigSetups } from "@/api/projects";
-import { listProjectTargets } from "@/api/projectTargets";
 import Snackbar from "@mui/material/Snackbar";
 import Stack from "@mui/material/Stack";
 import Tab from "@mui/material/Tab";
@@ -43,6 +42,7 @@ import FrameCorrectionsDialog from "./FrameCorrectionsDialog";
 import { formatExposure } from "./CatalogCards";
 import FilterSwatch from "./FilterSwatch";
 import CatalogFrameTable from "./CatalogFrameTable";
+import IngestProgressPanel from "./IngestProgressPanel";
 import CatalogThumbnailSheet from "./CatalogThumbnailSheet";
 import CatalogMasterTable from "./CatalogMasterTable";
 import CatalogOtherTable from "./CatalogOtherTable";
@@ -60,6 +60,7 @@ import {
   deleteCatalogItems,
   fetchCatalogFilterSummary,
   fetchCatalogFrames,
+  fetchIngestProgress,
   fetchCatalogMasters,
   fetchCatalogOthers,
   fetchCatalogSummary,
@@ -70,7 +71,6 @@ import {
   listFolders,
   removeFolder,
   setFolderRig,
-  setFolderTarget,
   startIngest,
   type CatalogFrame,
   type FramePill,
@@ -78,9 +78,12 @@ import {
   type CatalogMaster,
   type CatalogOther,
   type CatalogSort,
+  type IngestProgress,
 } from "@/api/projectCatalog";
 import { useAnalyzeRun } from "@/lib/useAnalyzeRun";
+import { ingestCompletionAction } from "@/lib/ingestCompletion";
 import { RIG_BLUE } from "@/lib/rigColors";
+import { useIngestProgressStore } from "@/stores/ingestProgressStore";
 import {
   compareFilters,
   notRecordedFilter,
@@ -155,7 +158,6 @@ export default function ProjectCatalogTab({ projectId }: Props) {
   // A folder chosen in the browser, held until its rig is declared.
   const [pendingPath, setPendingPath] = useState<string | null>(null);
   const [pendingRigId, setPendingRigId] = useState<number | "">("");
-  const [pendingTargetId, setPendingTargetId] = useState<number | "">("");
   const [tab, setTab] = useState<TabKey>("light");
   const [lightView, setLightView] = useState<"table" | "thumbnails">("table");
   // Active filter-pill scope on the Lights / Flats lists (null = show all).
@@ -233,11 +235,6 @@ export default function ProjectCatalogTab({ projectId }: Props) {
     queryFn: () => fetchUncatalogedFiles(projectId),
     enabled: tab === "uncataloged",
   });
-  // The project's targets are the only values a folder's target tag may take.
-  const { data: projectTargets = [] } = useQuery({
-    queryKey: ["project-targets", projectId],
-    queryFn: () => listProjectTargets(projectId),
-  });
   const { data: project } = useQuery({
     queryKey: ["project", projectId],
     queryFn: () => fetchProject(projectId),
@@ -246,9 +243,6 @@ export default function ProjectCatalogTab({ projectId }: Props) {
     queryKey: ["project-rig-setups", projectId],
     queryFn: () => fetchProjectRigSetups(projectId),
   });
-  const targetLabel = (t: { common_name: string | null; primary_designation: string }) =>
-    t.common_name ?? t.primary_designation;
-
   const {
     data,
     isLoading,
@@ -280,7 +274,9 @@ export default function ProjectCatalogTab({ projectId }: Props) {
   const items: CatalogItem[] = useMemo(() => data?.pages.flatMap((p) => p.rows) ?? [], [data]);
   // Kept current for `toggleSelect`, which reads it through the ref so its own
   // identity can stay stable across renders.
-  itemsRef.current = items;
+  useEffect(() => {
+    itemsRef.current = items;
+  }, [items]);
   const tz = tab === "uncataloged"
     ? uncatalogedQuery.data?.timezone ?? "UTC"
     : data?.pages[0]?.timezone ?? "UTC";
@@ -309,7 +305,7 @@ export default function ProjectCatalogTab({ projectId }: Props) {
    * missing this left "Re-analyze 2,548 lights" on screen after every frame had
    * been removed with its source folder.
    */
-  const invalidateCounts = () => {
+  const invalidateCounts = useCallback(() => {
     queryClient.invalidateQueries({
       queryKey: ["project-catalog-summary", projectId],
     });
@@ -320,15 +316,15 @@ export default function ProjectCatalogTab({ projectId }: Props) {
     queryClient.invalidateQueries({
       queryKey: ["project-catalog-uncataloged", projectId],
     });
-  };
+  }, [projectId, queryClient]);
 
   /** The counts above, plus the row data itself. */
-  const invalidateCatalog = () => {
+  const invalidateCatalog = useCallback(() => {
     invalidateCounts();
     queryClient.invalidateQueries({ queryKey: ["project-catalog", projectId] });
-  };
+  }, [invalidateCounts, projectId, queryClient]);
 
-  const invalidateRigDependent = () => {
+  const invalidateRigDependent = useCallback(() => {
     queryClient.invalidateQueries({ queryKey: ["rigs"] });
     queryClient.invalidateQueries({ queryKey: ["rig-setups"] });
     queryClient.invalidateQueries({ queryKey: ["project-rig-setups", projectId] });
@@ -341,7 +337,7 @@ export default function ProjectCatalogTab({ projectId }: Props) {
     queryClient.invalidateQueries({ queryKey: ["equipment-usage"] });
     queryClient.invalidateQueries({ queryKey: ["home"] });
     void invalidateProjectLinks(queryClient);
-  };
+  }, [invalidateCatalog, projectId, queryClient]);
 
   /** Replace one row in the loaded pages instead of refetching the whole
    *  infinite query. A full invalidate refetches EVERY page already loaded, so
@@ -367,21 +363,35 @@ export default function ProjectCatalogTab({ projectId }: Props) {
     invalidateCounts();
   };
 
-  const invalidateFolders = () =>
-    queryClient.invalidateQueries({ queryKey: ["project-folders", projectId] });
+  const invalidateFolders = useCallback(
+    () => queryClient.invalidateQueries({ queryKey: ["project-folders", projectId] }),
+    [projectId, queryClient],
+  );
 
   // Which folder row is currently (re-)scanning, for its inline spinner.
   const [scanningFolderId, setScanningFolderId] = useState<number | null>(null);
   const ingestMut = useMutation({
     mutationFn: (folderId: number) => startIngest(projectId, folderId),
     onMutate: (folderId: number) => setScanningFolderId(folderId),
-    onSuccess: (s) => {
+    onSuccess: (result) => {
       invalidateRigDependent();
-      setSnack(
-        `Scan ${s.status}: ${s.subs_inserted} new, ${s.subs_updated} updated` +
-          (s.errors_count ? `, ${s.errors_count} errors` : "") +
-          (s.first_error ? ` — ${s.first_error}` : ""),
-      );
+      void invalidateFolders();
+
+      const progressKey = ["ingest-progress", projectId];
+      const recordStartedScan = (progress: IngestProgress | null | undefined) => {
+        if (progress?.run_id === result.run_id) {
+          useIngestProgressStore.getState().markObserved(progress.scan_id);
+        }
+      };
+      recordStartedScan(queryClient.getQueryData<IngestProgress | null>(progressKey));
+      void fetchIngestProgress(projectId)
+        .then((progress) => {
+          recordStartedScan(progress);
+          queryClient.setQueryData(progressKey, progress);
+        })
+        .catch(() => {
+          void queryClient.invalidateQueries({ queryKey: progressKey });
+        });
     },
     onError: (e: Error) => setSnack(e.message),
     onSettled: () => setScanningFolderId(null),
@@ -417,9 +427,7 @@ export default function ProjectCatalogTab({ projectId }: Props) {
           (p.unreadable ? `, ${p.unreadable} unreadable` : ""),
       );
     },
-    // invalidateCatalog is stable in practice (queryClient + projectId).
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [projectId],
+    [invalidateCatalog],
   );
   const { progress: analyzeProgress, start: startAnalyze, cancel: cancelAnalyze } =
     useAnalyzeRun(projectId, onAnalyzeFinished);
@@ -460,28 +468,14 @@ export default function ProjectCatalogTab({ projectId }: Props) {
     },
   });
 
-  const folderTargetMut = useMutation({
-    mutationFn: ({ folderId, targetId }: { folderId: number; targetId: number | null }) =>
-      setFolderTarget(projectId, folderId, targetId),
-    onSuccess: () => {
-      invalidateFolders();
-      // Re-tagging re-assigns already-cataloged lights, so the rows move too.
-      invalidateCatalog();
-      setSnack("Folder target updated");
-    },
-    onError: (e: Error) => setSnack(e.message),
-  });
-
   const addMut = useMutation({
     mutationFn: ({
       path,
       rigId,
-      targetId,
     }: {
       path: string;
       rigId: number | null;
-      targetId: number | null;
-    }) => addFolder(projectId, path, false, rigId, targetId),
+    }) => addFolder(projectId, path, false, rigId),
     onSuccess: (folder) => {
       invalidateFolders();
       setSnack("Folder added — scanning…");
@@ -489,6 +483,54 @@ export default function ProjectCatalogTab({ projectId }: Props) {
     },
     onError: (e: Error) => setSnack(e.message),
   });
+  const ingestProgressQuery = useQuery({
+    queryKey: ["ingest-progress", projectId],
+    queryFn: () => fetchIngestProgress(projectId),
+    refetchInterval: (query) =>
+      query.state.data?.running || ingestMut.isPending || addMut.isPending
+        ? 500
+        : 5_000,
+  });
+  const ingestProgress = ingestProgressQuery.data;
+  const scanBusy = Boolean(
+    ingestProgress?.running || ingestMut.isPending || addMut.isPending,
+  );
+
+  useEffect(() => {
+    if (!ingestProgress) return;
+    const scans = useIngestProgressStore.getState();
+    const action = ingestCompletionAction({
+      running: ingestProgress.running,
+      handled: scans.handledScanIds.has(ingestProgress.scan_id),
+      observed: scans.observedScanIds.has(ingestProgress.scan_id),
+      startPending: ingestMut.isPending,
+      startedHere: ingestMut.data?.run_id === ingestProgress.run_id,
+    });
+    if (action === "none") return;
+    if (action === "observe") {
+      scans.markObserved(ingestProgress.scan_id);
+      return;
+    }
+
+    if (action === "show" && ingestProgress.result) {
+      invalidateRigDependent();
+      void invalidateFolders();
+      const result = ingestProgress.result;
+      const summaryMessage =
+        `Scan ${result.status}: ${result.subs_inserted} new, ${result.subs_updated} updated` +
+          (result.errors_count ? `, ${result.errors_count} errors` : "") +
+          (result.first_error ? ` — ${result.first_error}` : "");
+      queueMicrotask(() => setSnack(summaryMessage));
+    }
+    if (action === "show") scans.markObserved(ingestProgress.scan_id);
+    scans.markHandled(ingestProgress.scan_id);
+  }, [
+    ingestMut.data?.run_id,
+    ingestMut.isPending,
+    ingestProgress,
+    invalidateFolders,
+    invalidateRigDependent,
+  ]);
   const removeMut = useMutation({
     mutationFn: (id: number) => removeFolder(projectId, id),
     onSuccess: () => {
@@ -585,8 +627,6 @@ export default function ProjectCatalogTab({ projectId }: Props) {
   const showRigColumn = new Set(
     folders.flatMap((folder) => folder.rig_id == null ? [] : [folder.rig_id]),
   ).size > 1;
-  const showTargetColumn = projectTargets.length > 1;
-
   /** Edit one unclassified frame from the Others tab.
    *
    *  Routes through the bulk dialog with a single id rather than the per-frame
@@ -643,6 +683,7 @@ export default function ProjectCatalogTab({ projectId }: Props) {
           variant="outlined"
           size="small"
           onClick={() => setPickerOpen(true)}
+          disabled={scanBusy}
           sx={{ minHeight: 32 }}
         >
           + Add folder
@@ -666,20 +707,17 @@ export default function ProjectCatalogTab({ projectId }: Props) {
           </Typography>
         )}
         {folders.map((f) => {
-          const scanning = scanningFolderId === f.id;
+          const scanning =
+            scanningFolderId === f.id ||
+            (ingestProgress?.running === true && ingestProgress.folder === f.path);
           const rigValue =
             f.rig_id != null && rigs.some((rig) => rig.id === f.rig_id) ? f.rig_id : "";
-          const targetValue =
-            f.project_target_id != null &&
-            projectTargets.some((target) => target.id === f.project_target_id)
-              ? f.project_target_id
-              : "";
           return (
             <Box
               key={f.id}
               sx={(theme) => ({
                 display: "grid",
-                gridTemplateColumns: "minmax(180px, 1fr) auto auto auto auto",
+                gridTemplateColumns: "minmax(180px, 1fr) auto auto auto",
                 gap: "12px",
                 alignItems: "center",
                 px: "14px",
@@ -735,40 +773,10 @@ export default function ProjectCatalogTab({ projectId }: Props) {
                   </MenuItem>
                 ))}
               </TextField>
-              {/* No Tooltip wrapper here, unlike elsewhere: an open tooltip sits
-                  over this select's own menu and swallows the click on the
-                  option beneath it. The Rig select next to it is bare for the
-                  same reason, and the add-folder dialog carries the explanation. */}
-              {projectTargets.length > 0 && (
-                <TextField
-                  select
-                  size="small"
-                  value={targetValue}
-                  onChange={(e) =>
-                    folderTargetMut.mutate({
-                      folderId: f.id,
-                      targetId: e.target.value === "" ? null : Number(e.target.value),
-                    })
-                  }
-                  disabled={folderTargetMut.isPending}
-                  inputProps={{ "aria-label": `Target for ${folderName(f.path)}` }}
-                  SelectProps={{ displayEmpty: true }}
-                  sx={{ minWidth: 170, "& .MuiOutlinedInput-root": { height: 32 }, "& em": { color: "text.secondary", fontStyle: "normal" } }}
-                >
-                  <MenuItem value="">
-                    <em>Target</em>
-                  </MenuItem>
-                  {projectTargets.map((t) => (
-                    <MenuItem key={t.id} value={t.id}>
-                      {targetLabel(t)}
-                  </MenuItem>
-                ))}
-                </TextField>
-              )}
               <Button
                 size="small"
                 onClick={() => ingestMut.mutate(f.id)}
-                disabled={ingestMut.isPending}
+                disabled={scanBusy}
                 startIcon={scanning ? <CircularProgress size={14} /> : undefined}
                 sx={{ minHeight: 32, whiteSpace: "nowrap" }}
               >
@@ -1096,7 +1104,9 @@ export default function ProjectCatalogTab({ projectId }: Props) {
         </Stack>
       )}
 
-      {tab === "uncataloged" ? (
+      {ingestProgress?.running ? (
+        <IngestProgressPanel progress={ingestProgress} />
+      ) : tab === "uncataloged" ? (
         <UncatalogedFileTable
           rows={uncatalogedQuery.data?.files ?? []}
           timezone={tz}
@@ -1153,7 +1163,6 @@ export default function ProjectCatalogTab({ projectId }: Props) {
           sort={sort}
           calibration={tab !== "light"}
           showRig={showRigColumn}
-          showTarget={showTargetColumn}
           selected={selected}
           onToggleSelect={toggleSelect}
           onSort={(next) => {
@@ -1179,7 +1188,6 @@ export default function ProjectCatalogTab({ projectId }: Props) {
           // files everything under "not stated".
           setPendingPath(path);
           setPendingRigId("");
-          setPendingTargetId("");
         }}
         directoryMode
         title="Add source folder"
@@ -1220,41 +1228,17 @@ export default function ProjectCatalogTab({ projectId }: Props) {
               </MenuItem>
             ))}
           </TextField>
-          {projectTargets.length > 0 && (
-            <TextField
-              select
-              fullWidth
-              size="small"
-              label="Target"
-              value={pendingTargetId}
-              onChange={(e) =>
-                setPendingTargetId(e.target.value === "" ? "" : Number(e.target.value))
-              }
-              sx={{ mt: 2 }}
-              helperText="Which target this folder holds. Auto uses the project's target when it has exactly one — set it explicitly when a project covers several."
-            >
-              <MenuItem value="">
-                <em>Auto</em>
-              </MenuItem>
-              {projectTargets.map((t) => (
-                <MenuItem key={t.id} value={t.id}>
-                  {targetLabel(t)}
-                </MenuItem>
-              ))}
-            </TextField>
-          )}
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setPendingPath(null)}>Cancel</Button>
           <Button
             variant="contained"
-            disabled={addMut.isPending}
+            disabled={scanBusy}
             onClick={() => {
               if (pendingPath === null) return;
               addMut.mutate({
                 path: pendingPath,
                 rigId: pendingRigId === "" ? null : pendingRigId,
-                targetId: pendingTargetId === "" ? null : pendingTargetId,
               });
               setPendingPath(null);
               setPickerOpen(false);

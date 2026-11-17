@@ -716,16 +716,17 @@ class TestFolderRigTag:
         assert new_rig != rig, "the removed folder's rig must not linger"
         assert new_rig in (rig_a, rig_b)
 
-    def test_folder_prefix_uses_the_os_separator(self):
+    def test_folder_prefix_uses_the_os_separator(self, tmp_path: Path):
         """Paths are stored with the OS-native separator, so the prefix must be
         built in Python. A hardcoded '/' matches nothing on Windows and rig
         tagging would silently never apply there."""
-        assert folder_prefix("/data/rig-b") == os.path.join("/data/rig-b", "")
-        assert folder_prefix("/data/rig-b").endswith(os.sep)
+        folder = str(tmp_path / "data" / "rig-b")
+        assert folder_prefix(folder) == os.path.join(folder, "")
+        assert folder_prefix(folder).endswith(os.sep)
         # A trailing separator on the stored path must not double up.
-        assert folder_prefix("/data/rig-b" + os.sep) == folder_prefix("/data/rig-b")
+        assert folder_prefix(folder + os.sep) == folder_prefix(folder)
 
-    def test_folder_prefix_handles_archives(self):
+    def test_folder_prefix_handles_archives(self, tmp_path: Path):
         """An archive's children are separated by `::`, not by a path separator.
 
         A folder bound at an archive's ROOT is stored as `/data/n.zip` while its
@@ -734,23 +735,24 @@ class TestFolderRigTag:
         directions: the rig tag never lands, and removing the folder deletes no
         file_location row, so the frames outlive their folder.
         """
-        root = "/data/night.zip"
-        inside = "/data/night.zip::lights"
-        frame = "/data/night.zip::lights/frame.fits"
+        root = str(tmp_path / "data" / "night.zip")
+        inside = f"{root}::lights"
+        frame = f"{inside}/frame.fits"
 
-        assert folder_prefix(root) == "/data/night.zip::"
+        assert folder_prefix(root) == f"{root}::"
         assert frame.startswith(folder_prefix(root))
 
         # Already past the `::`, so a plain separator is right — and it is always
         # `/`, because archive entry paths use `/` on every platform.
-        assert folder_prefix(inside) == "/data/night.zip::lights/"
+        assert folder_prefix(inside) == f"{inside}/"
         assert frame.startswith(folder_prefix(inside))
 
         # A sibling directory inside the same archive must not be captured.
-        assert not "/data/night.zip::darks/frame.fits".startswith(folder_prefix(inside))
+        assert not f"{root}::darks/frame.fits".startswith(folder_prefix(inside))
 
         # A plain directory is unaffected.
-        assert folder_prefix("/data/lights") == os.path.join("/data/lights", "")
+        plain = str(tmp_path / "data" / "lights")
+        assert folder_prefix(plain) == os.path.join(plain, "")
 
     async def test_underscores_in_paths_are_not_wildcards(self, client, tmp_path: Path):
         """The match is a fixed-length substring compare, not LIKE — otherwise `_`

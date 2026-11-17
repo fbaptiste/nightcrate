@@ -1,6 +1,6 @@
 ---
 name: finalize-session
-description: Prepare a release candidate for Fred's acceptance test, then publish it (commit, push, PR) once he authorizes. Release tags come from release.yml.
+description: Prepare a release candidate for Fred's acceptance test, then publish it once he authorizes (commit, local review, push, and the PR opened last). Release tags come from release.yml.
 ---
 
 # Finalize session
@@ -52,28 +52,43 @@ publication. Never force-push.
 
 ## Publish (after Fred's authorization)
 
+The PR is opened last (Fred, 2026-11-15): "do not open the PR until the very
+last moment when everything is ready". Every push to an open PR reruns the
+required checks on three systems, so no PR exists while work continues, and
+once it is open, further pushes are avoided.
+
 1. Confirm the staged tree still matches the accepted candidate, or that any
    difference is version/docs metadata Fred has seen.
 2. Set `PLAN.md` to **Complete — awaiting merge**. Commit with a concise
    message explaining the change. Use the actual running
    agent's harness-provided attribution; never copy a model name or invent a
    co-author address. Pass multiline bodies through a temporary file.
-3. Don't tag. From v0.54.0, `release.yml` creates the version tag on the
+3. Review the committed branch diff locally, before anything is pushed:
+   - run the available review workflow against the branch (not a PR);
+   - cover changes made after the candidate's independent reviews, and any
+     remaining findings.
+   Report the findings for Fred to decide which to address. Authorized
+   fixes go into a follow-up commit, with the affected checks re-run and
+   the docs updated.
+4. Don't tag. From v0.54.0, `release.yml` creates the version tag on the
    merged commit it builds, when Fred says "release" (spec v0.54.0 §10).
    A tag made at PR time could end up behind the merged code. Push the
    branch with upstream tracking, and verify the remote branch SHA equals
    local HEAD (`git ls-remote`).
-4. Create a PR to `main`, or update the existing branch PR. Keep the title under
-   70 characters. Describe the final scope and relevant validation; omit tool
-   marketing and canned boilerplate.
-5. Use `gh pr create/edit --body-file` for multiline text. Check off only items
-   actually verified and name the verifier (the running agent, Codex, or Fred).
-   Leave necessary unperformed manual checks open; do not add irrelevant UI
-   checks to documentation changes.
-6. Run the available PR review workflow for changes made after the candidate's
-   independent reviews and for remaining findings. Report findings for Fred to
-   decide which to address. For authorized fixes, rerun affected checks, update
-   docs, then commit/push within the granted scope. Do not rewrite published
-   history.
-7. Report the version, PR URL, verification results and outstanding findings or
+5. **Open the PR to `main` as the last step.** Keep the title under 70
+   characters. Describe the final scope and relevant validation; omit tool
+   marketing and canned boilerplate. Use `gh pr create --body-file` for
+   multiline text. Check off only items actually verified and name the
+   verifier (the running agent, Codex, or Fred). Leave necessary unperformed
+   manual checks open; do not add irrelevant UI checks to documentation
+   changes.
+6. Merging requires the three `checks` jobs to pass (Fred's admin override
+   aside). If one fails, report it; a fix is a new commit and push to the
+   open PR, within Fred's authorization. Do not rewrite published history.
+7. Report the version, PR URL, check results and outstanding findings or
    manual checks.
+
+A version that changes CI or the test setup is measured first on a throwaway
+`ci/<version>` branch (which `checks.yml` runs on push), with Fred's
+authorization, and the branch is deleted afterwards. The PR then opens only
+once its checks are known to pass.

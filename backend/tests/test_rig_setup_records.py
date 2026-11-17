@@ -1,5 +1,7 @@
 """Record-level setup history regressions for frames, batches, and solves."""
 
+from pathlib import Path
+
 import pytest
 from httpx import ASGITransport, AsyncClient
 
@@ -335,7 +337,7 @@ async def test_rescan_through_scan_endpoint_keeps_stamps(client, tmp_path):
     assert scan.status_code == 200, scan.text
 
     rows = await _frames(client, project_id)
-    by_name = {row["path"].rsplit("/", 1)[-1]: row for row in rows}
+    by_name = {Path(row["path"]).name: row for row in rows}
     assert round(by_name["old.fits"]["pixel_scale_arcsec"], 2) == 0.90
     assert round(by_name["new.fits"]["pixel_scale_arcsec"], 2) == 1.41
     assert by_name["old.fits"]["full_scale_adu"] == 4095

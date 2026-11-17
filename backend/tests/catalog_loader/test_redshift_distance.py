@@ -8,6 +8,7 @@ curated or 50 MGC distance. Verifies the precedence chain
 
 from __future__ import annotations
 
+import shutil
 import sqlite3
 from pathlib import Path
 
@@ -21,40 +22,13 @@ from nightcrate.services.astronomy import (
 )
 
 
-def _apply_full_schema(db: sqlite3.Connection) -> None:
-    """Run every migration from 0005 onward — same pattern as conftest.py."""
-    import importlib.resources
-
-    # Migration 0011 reshapes an existing settings table; create a placeholder
-    # so the migration's ALTER/INSERT statements resolve.
-    db.executescript(
-        """
-        CREATE TABLE IF NOT EXISTS settings (
-            id INTEGER PRIMARY KEY CHECK (id = 1),
-            data TEXT NOT NULL DEFAULT '{}'
-        );
-        INSERT OR IGNORE INTO settings (id, data) VALUES (1, '{}');
-        """
-    )
-
-    migrations_dir = importlib.resources.files("nightcrate") / "db" / "migrations"
-    for name in sorted(f.name for f in migrations_dir.iterdir() if f.name.endswith(".sql")):
-        if name >= "0005":
-            body = "\n".join(
-                line
-                for line in (migrations_dir / name).read_text().split("\n")
-                if not line.strip().startswith("-- depends:")
-            )
-            db.executescript(body)
-    db.commit()
-
-
 @pytest.fixture
-def db(tmp_path: Path) -> sqlite3.Connection:
-    conn = sqlite3.connect(str(tmp_path / "redshift.db"))
+def db(tmp_path: Path, unseeded_template_db: Path):
+    path = tmp_path / "redshift.db"
+    shutil.copyfile(unseeded_template_db, path)
+    conn = sqlite3.connect(str(path))
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
-    _apply_full_schema(conn)
     # A catalog source row is required by dso.source_catalog_id FK.
     conn.execute(
         """
@@ -64,7 +38,8 @@ def db(tmp_path: Path) -> sqlite3.Connection:
         """
     )
     conn.commit()
-    return conn
+    yield conn
+    conn.close()
 
 
 def _insert_dso(

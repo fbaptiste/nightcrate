@@ -2,16 +2,27 @@
 
 import importlib.resources
 import logging
+import os
+import shutil
+import socket
+import sqlite3
 import zoneinfo
+from contextlib import closing
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 from zoneinfo import ZoneInfo
 
-import aiosqlite
 import numpy as np
 import pytest
+import yoyo.backends.base
 from astropy.io import fits
-from yoyo import get_backend, read_migrations
+from yoyo import read_migrations
+from yoyo.connections import parse_uri
+from yoyo.migrations import default_migration_table
+
+from nightcrate.db.migrations import MIGRATIONS_DIR, MigrationSQLiteBackend
+from tests.shard_selection import ShardItem, parse_shard, select_shard
 
 
 @pytest.fixture(autouse=True)
@@ -100,109 +111,173 @@ def _no_cloud_model_network(monkeypatch):
     )
 
 
+class _TemplateMigrationBackend(MigrationSQLiteBackend):
+    """Give every yoyo connection the template-only fast-write pragmas."""
+
+    def init_connection(self, connection) -> None:
+        super().init_connection(connection)
+        connection.execute("PRAGMA journal_mode = MEMORY")
+        connection.execute("PRAGMA synchronous = OFF")
+
+
+def _template_migration_backend(path: Path) -> _TemplateMigrationBackend:
+    """Open the test-only backend used to build closed database templates."""
+    backend = _TemplateMigrationBackend(parse_uri(f"sqlite:///{path}"), default_migration_table)
+    backend.init_database()
+    return backend
+
+
+def _seed_test_database(path: Path) -> None:
+    """Seed a closed copy of the migrated template."""
+
+    # Load seed data (filter_type and any other seed CSVs).
+    from nightcrate.seed_loader import load_all
+
+    csv_root = importlib.resources.files("nightcrate") / "data" / "seed"
+    with closing(sqlite3.connect(path)) as conn:
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA journal_mode = MEMORY")
+        conn.execute("PRAGMA synchronous = OFF")
+        conn.execute("PRAGMA foreign_keys = ON")
+        load_all(conn, csv_root, mode="first_run")
+        conn.commit()
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _yoyo_without_hostname_lookup():
+    """Give yoyo a deterministic hostname without changing ``socket`` itself."""
+
+    class SocketNamespace(SimpleNamespace):
+        def __getattr__(self, name):
+            return getattr(socket, name)
+
+    yoyo_socket = SocketNamespace(getfqdn=lambda: "nightcrate-tests")
+    with pytest.MonkeyPatch.context() as monkeypatch:
+        monkeypatch.setattr(yoyo.backends.base, "socket", yoyo_socket)
+        yield
+
+
+@pytest.fixture(scope="session")
+def _migration_template_chain(tmp_path_factory) -> tuple[Path, dict[str, Path]]:
+    """Build one migration chain and closed snapshots per pytest worker."""
+    template_dir = tmp_path_factory.mktemp("migration-template-chain")
+    template_db = template_dir / "test.db"
+    snapshots: dict[str, Path] = {}
+    migrations = read_migrations(str(MIGRATIONS_DIR))
+
+    with pytest.MonkeyPatch.context() as monkeypatch:
+        monkeypatch.setattr("nightcrate.db.session._db_path", template_db)
+        monkeypatch.setattr("nightcrate.core.app_config.APP_DIR", template_dir)
+        monkeypatch.setattr("nightcrate.core.app_config.CONFIG_PATH", template_dir / "config.json")
+
+        with _template_migration_backend(template_db) as backend:
+            migration_ids = [migration.id for migration in backend.to_apply(migrations)]
+
+        for migration_id in migration_ids:
+            if migration_id >= "0064.project_solve_row_order":
+                snapshot = template_dir / f"before-{migration_id.split('.', 1)[0]}.db"
+                shutil.copyfile(template_db, snapshot)
+                snapshots[migration_id] = snapshot
+
+            with _template_migration_backend(template_db) as backend:
+                current = backend.to_apply(migrations).filter(
+                    lambda migration, expected=migration_id: migration.id == expected
+                )
+                if len(current) != 1:
+                    raise RuntimeError(f"expected one pending migration for {migration_id}")
+                backend.apply_migrations(current)
+
+        for path in [template_db, *snapshots.values()]:
+            for suffix in ("-journal", "-wal", "-shm"):
+                assert not Path(f"{path}{suffix}").exists()
+
+    return template_db, snapshots
+
+
+@pytest.fixture(scope="session")
+def unseeded_template_db(_migration_template_chain) -> Path:
+    """Return the closed, fully migrated end of the worker's template chain."""
+    template_db, _ = _migration_template_chain
+    return template_db
+
+
+@pytest.fixture(scope="session")
+def pre_migration_template(_migration_template_chain):
+    """Look up closed databases immediately before migrations under test."""
+    _, snapshots = _migration_template_chain
+
+    def lookup(migration_id: str) -> Path:
+        try:
+            return snapshots[migration_id]
+        except KeyError as exc:
+            raise ValueError(f"no pre-migration snapshot for {migration_id}") from exc
+
+    return lookup
+
+
+@pytest.fixture
+def pre_migration_db(tmp_path, pre_migration_template):
+    """Copy a cached pre-migration database for one preservation test."""
+
+    def copy(migration_id: str, name: str = "upgrade.db") -> Path:
+        path = tmp_path / name
+        shutil.copyfile(pre_migration_template(migration_id), path)
+        return path
+
+    return copy
+
+
+@pytest.fixture(scope="session")
+def _template_db(tmp_path_factory, unseeded_template_db) -> Path:
+    """Seed one closed copy of the migrated template per pytest worker."""
+    template_dir = tmp_path_factory.mktemp("seeded-template")
+    template_db = template_dir / "test.db"
+    shutil.copyfile(unseeded_template_db, template_db)
+    _seed_test_database(template_db)
+    for suffix in ("-journal", "-wal", "-shm"):
+        assert not Path(f"{template_db}{suffix}").exists()
+    return template_db
+
+
 @pytest.fixture(autouse=True)
-async def _test_db(tmp_path: Path, monkeypatch):
-    """Point the database at a temp file and create the settings table for all tests."""
+def _test_db(tmp_path: Path, monkeypatch, _template_db):
+    """Give each test an independent copy of the database template."""
     test_db = tmp_path / "test.db"
+    shutil.copyfile(_template_db, test_db)
     monkeypatch.setattr("nightcrate.db.session._db_path", test_db)
     monkeypatch.setattr("nightcrate.db.session._workspace_problem", None)
     monkeypatch.setattr("nightcrate.core.app_config.APP_DIR", tmp_path)
     monkeypatch.setattr("nightcrate.core.app_config.CONFIG_PATH", tmp_path / "config.json")
 
-    async with aiosqlite.connect(test_db) as conn:
-        await conn.execute("""
-            CREATE TABLE IF NOT EXISTS settings (
-                id INTEGER PRIMARY KEY CHECK (id = 1),
-                data TEXT NOT NULL DEFAULT '{}'
-            )
-        """)
-        await conn.execute("INSERT OR IGNORE INTO settings (id, data) VALUES (1, '{}')")
-        await conn.execute("""
-            CREATE TABLE IF NOT EXISTS recent_files (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                path TEXT NOT NULL UNIQUE,
-                opened_at TEXT NOT NULL DEFAULT (datetime('now'))
-            )
-        """)
-        await conn.execute("""
-            CREATE TABLE IF NOT EXISTS phd2_recent_files (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                path TEXT NOT NULL UNIQUE,
-                opened_at TEXT NOT NULL DEFAULT (datetime('now'))
-            )
-        """)
-        await conn.execute("""
-            CREATE TABLE IF NOT EXISTS aberration_analysis (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                file_path TEXT NOT NULL,
-                hdu INTEGER NOT NULL DEFAULT 0,
-                created_at TEXT NOT NULL DEFAULT (datetime('now')),
-                image_width INTEGER NOT NULL,
-                image_height INTEGER NOT NULL,
-                settings_json TEXT NOT NULL,
-                star_count INTEGER NOT NULL,
-                median_fwhm REAL,
-                median_hfr REAL,
-                median_eccentricity REAL,
-                UNIQUE(file_path, hdu, settings_json)
-            )
-        """)
-        await conn.execute("""
-            CREATE TABLE IF NOT EXISTS aberration_stars (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                analysis_id INTEGER NOT NULL REFERENCES aberration_analysis(id) ON DELETE CASCADE,
-                x REAL NOT NULL,
-                y REAL NOT NULL,
-                fwhm REAL NOT NULL,
-                hfr REAL NOT NULL,
-                eccentricity REAL NOT NULL,
-                elongation_angle_deg REAL NOT NULL,
-                peak_adu REAL NOT NULL,
-                flux REAL NOT NULL,
-                snr REAL NOT NULL,
-                semi_major REAL NOT NULL,
-                semi_minor REAL NOT NULL
-            )
-        """)
 
-        # Apply equipment schema migrations (0005, 0006)
-        migrations_dir = importlib.resources.files("nightcrate") / "db" / "migrations"
-        for migration_name in sorted(
-            f.name for f in migrations_dir.iterdir() if f.name.endswith(".sql")
-        ):
-            if migration_name >= "0005":
-                sql = (migrations_dir / migration_name).read_text()
-                body = "\n".join(
-                    line for line in sql.split("\n") if not line.strip().startswith("-- depends:")
+def pytest_collection_modifyitems(config, items):
+    """Select one stable CI shard when NIGHTCRATE_TEST_SHARD is set."""
+    raw = os.environ.get("NIGHTCRATE_TEST_SHARD")
+    if not raw:
+        return
+    try:
+        shard = parse_shard(raw)
+        shard_items = []
+        for item in items:
+            marker = item.get_closest_marker("xdist_group")
+            if marker is None:
+                key = item.nodeid
+            elif marker.args:
+                key = marker.args[0]
+            elif "name" in marker.kwargs:
+                key = marker.kwargs["name"]
+            else:
+                raise ValueError(f"{item.nodeid} has an xdist_group marker without a name")
+            shard_items.append(
+                ShardItem(
+                    key=key,
+                    pin_to_first=item.get_closest_marker("requires_frontend") is not None,
                 )
-                await conn.executescript(body)
-
-        await conn.commit()
-
-        # The fixture materializes SQL migrations directly above for speed.
-        # Mark those exact migrations as applied, then let yoyo load and run
-        # Python migrations in their required module-loading context.
-        with get_backend(f"sqlite:///{test_db}") as backend:
-            migrations = read_migrations(str(migrations_dir))
-            sql_migrations = [
-                migration for migration in migrations if Path(migration.path).suffix == ".sql"
-            ]
-            backend.mark_migrations(sql_migrations)
-            backend.apply_migrations(backend.to_apply(migrations))
-
-    # Load seed data (filter_type and any other seed CSVs) using a separate
-    # sync connection — aiosqlite's internal connection has thread restrictions.
-    import sqlite3
-
-    from nightcrate.seed_loader import load_all
-
-    csv_root = importlib.resources.files("nightcrate") / "data" / "seed"
-    sync_conn = sqlite3.connect(str(test_db))
-    sync_conn.row_factory = sqlite3.Row
-    sync_conn.execute("PRAGMA foreign_keys = ON")
-    load_all(sync_conn, csv_root, mode="first_run")
-    sync_conn.commit()
-    sync_conn.close()
+            )
+        keep = select_shard(shard_items, shard)
+    except ValueError as exc:
+        raise pytest.UsageError(f"invalid NIGHTCRATE_TEST_SHARD: {exc}") from exc
+    items[:] = [item for item, selected in zip(items, keep, strict=True) if selected]
 
 
 @pytest.fixture

@@ -376,12 +376,10 @@ def test_one_time_step_on_legacy_fixture(db: sqlite3.Connection):
     db.execute("INSERT INTO project_target (project_id, dso_id) VALUES (?, 1)", (project_id,))
     target_id = int(db.execute("SELECT id FROM project_target").fetchone()[0])
     db.execute(
-        """
-        INSERT INTO sub_frame (project_id, content_hash, project_target_id, date_obs_utc)
-        VALUES (?, 'legacy-frame', ?, '2026-01-01')
-        """,
-        (project_id, target_id),
+        "CREATE TABLE zz_project_target_child "
+        "(project_target_id INTEGER REFERENCES project_target(id))"
     )
+    db.execute("INSERT INTO zz_project_target_child VALUES (?)", (target_id,))
     db.execute(
         """
         INSERT INTO project_solve (
@@ -414,7 +412,10 @@ def test_one_time_step_on_legacy_fixture(db: sqlite3.Connection):
     assert db.execute("SELECT dso_id FROM favorite_target").fetchone()[0] == 5
     assert db.execute("SELECT dso_id FROM project_target").fetchone()[0] == 1
     assert db.execute("SELECT dso_id FROM project_dso").fetchone()[0] == 3
-    assert db.execute("SELECT project_target_id FROM sub_frame").fetchone()[0] == target_id
+    assert (
+        db.execute("SELECT project_target_id FROM zz_project_target_child").fetchone()[0]
+        == target_id
+    )
 
 
 def test_openngc_barnard_own_name_merges_matching_catalog_row(db: sqlite3.Connection):

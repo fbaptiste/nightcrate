@@ -1,7 +1,7 @@
 import { apiFetch } from "./client";
 
 export interface ProjectTarget {
-  /** project_target PK — what sub_frame.project_target_id references. */
+  /** Project-level link between this project and one catalog object. */
   id: number;
   dso_id: number;
   active: boolean;

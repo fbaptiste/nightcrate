@@ -42,7 +42,6 @@ interface Props {
   sort: CatalogSort;
   calibration: boolean;
   showRig: boolean;
-  showTarget: boolean;
   selected: Set<CatalogSelectionKey>;
   onToggleSelect: (key: CatalogSelectionKey, shift: boolean) => void;
   onSort: (sort: CatalogSort) => void;
@@ -161,7 +160,6 @@ export default function CatalogFrameTable({
   sort,
   calibration,
   showRig,
-  showTarget,
   selected,
   onToggleSelect,
   onSort,
@@ -174,7 +172,7 @@ export default function CatalogFrameTable({
 }: Props) {
   const timeSorted = sort === "date_desc" || sort === "date";
   const measuredColumns = calibration ? 2 : 4;
-  const columnCount = 8 + measuredColumns + 2 + Number(showRig) + Number(showTarget);
+  const columnCount = 8 + measuredColumns + 2 + Number(showRig);
 
   return (
     <CatalogInfiniteScroller
@@ -190,7 +188,7 @@ export default function CatalogFrameTable({
         size="small"
         sx={{
           width: "100%",
-          minWidth: 980 + Number(showRig) * 120 + Number(showTarget) * 140,
+          minWidth: 980 + Number(showRig) * 120,
           tableLayout: "fixed",
           border: 1,
           borderColor: "divider",
@@ -280,7 +278,6 @@ export default function CatalogFrameTable({
               onClick={() => onSort("path")}
             />
             {showRig && <TableCell sx={{ width: 120 }}>Rig</TableCell>}
-            {showTarget && <TableCell sx={{ width: 140 }}>Target</TableCell>}
             <TableCell sx={{ width: 76 }} />
           </TableRow>
         </TableHead>
@@ -299,7 +296,6 @@ export default function CatalogFrameTable({
                 columnCount={columnCount}
                 calibration={calibration}
                 showRig={showRig}
-                showTarget={showTarget}
                 selected={selected.has(subFrameSelectionKey(row.id))}
                 onToggleSelect={onToggleSelect}
                 onOpen={onOpen}
@@ -322,7 +318,6 @@ interface RowProps {
   columnCount: number;
   calibration: boolean;
   showRig: boolean;
-  showTarget: boolean;
   selected: boolean;
   onToggleSelect: (key: CatalogSelectionKey, shift: boolean) => void;
   onOpen: (row: CatalogFrame) => void;
@@ -338,7 +333,6 @@ const FrameRows = memo(function FrameRows({
   columnCount,
   calibration,
   showRig,
-  showTarget,
   selected,
   onToggleSelect,
   onOpen,
@@ -441,7 +435,6 @@ const FrameRows = memo(function FrameRows({
           </Tooltip>
         </TableCell>
         {showRig && <TableCell>{row.rig_name ?? ""}</TableCell>}
-        {showTarget && <TableCell>{row.target_name ?? ""}</TableCell>}
         <TableCell align="right" sx={{ py: "0 !important", whiteSpace: "nowrap" }}>
           {row.path && (
             <Tooltip title="Open in the Image Analyzer">
@@ -450,7 +443,7 @@ const FrameRows = memo(function FrameRows({
               </IconButton>
             </Tooltip>
           )}
-          <Tooltip title="Classification (frame type / target)">
+          <Tooltip title="Frame type">
             <IconButton size="small" aria-label="correct classification" onClick={() => onCorrect(row)} sx={{ minWidth: 32, minHeight: 32 }}>
               <EditNoteIcon fontSize="small" />
             </IconButton>

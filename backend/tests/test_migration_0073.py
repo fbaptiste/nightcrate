@@ -145,9 +145,8 @@ def _seed_parent_graph(conn: sqlite3.Connection) -> tuple[int, list[str]]:
     return int(project_id), tables
 
 
-def test_upgrade_preserves_project_graph_schema_objects_and_sequence(tmp_path: Path):
-    db_path = tmp_path / "upgrade.db"
-    _apply_through(db_path, MIGRATION_0072)
+def test_upgrade_preserves_project_graph_schema_objects_and_sequence(pre_migration_db):
+    db_path = pre_migration_db(MIGRATION_0073)
     with sqlite3.connect(db_path) as conn:
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA foreign_keys = ON")

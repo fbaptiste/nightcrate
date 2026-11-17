@@ -549,28 +549,6 @@ class TestFolderBinding:
                 "INSERT INTO project_rig (project_id, rig_id) VALUES (?, ?)",
                 [(pid, rig_a), (pid, rig_b)],
             )
-            source_id = (
-                await conn.execute(
-                    "INSERT INTO dso_catalog_source "
-                    "(source_id, category, display_name, file_path, file_hash) "
-                    "VALUES ('folder-rig-test', 'nightcrate', 'Folder rig test', "
-                    "'/synthetic/folder-rig.csv', 'folder-rig-hash')"
-                )
-            ).lastrowid
-            dso_id = (
-                await conn.execute(
-                    "INSERT INTO dso "
-                    "(primary_designation, obj_type, source_catalog_id, source_row_hash) "
-                    "VALUES ('Folder Rig Target', 'Other', ?, 'folder-rig-row')",
-                    (source_id,),
-                )
-            ).lastrowid
-            target_id = (
-                await conn.execute(
-                    "INSERT INTO project_target (project_id, dso_id) VALUES (?, ?)",
-                    (pid, dso_id),
-                )
-            ).lastrowid
             await conn.commit()
 
         folder = (
@@ -605,22 +583,7 @@ class TestFolderBinding:
                     (pid,),
                 )
             ).fetchall()
-            before_target_change = [dict(row) for row in rows]
-
-        target_changed = await client.patch(
-            f"/api/projects/{pid}/folders/{folder['id']}",
-            json={"project_target_id": target_id},
-        )
-        assert target_changed.status_code == 200, target_changed.text
-        async with get_db() as conn:
-            rows = await (
-                await conn.execute(
-                    "SELECT * FROM project_session "
-                    "WHERE project_id = ? AND source = 'auto' ORDER BY id",
-                    (pid,),
-                )
-            ).fetchall()
-            assert [dict(row) for row in rows] == before_target_change
+            before_rig_change = [dict(row) for row in rows]
 
         same_rig = await client.patch(
             f"/api/projects/{pid}/folders/{folder['id']}", json={"rig_id": rig_a}
@@ -634,7 +597,7 @@ class TestFolderBinding:
                     (pid,),
                 )
             ).fetchall()
-            assert [dict(row) for row in rows] == before_target_change
+            assert [dict(row) for row in rows] == before_rig_change
 
         changed = await client.patch(
             f"/api/projects/{pid}/folders/{folder['id']}", json={"rig_id": rig_b}
@@ -1909,5 +1872,5 @@ class TestClassificationRefinements:
         assert sb["logs"] == 2
         # Others listing is likewise scoped to each project's folder.
         oa = (await client.get(f"/api/projects/{pa}/catalog/others")).json()["rows"]
-        assert all("/projA/" in r["path"] for r in oa if r["path"])
-        assert all("/projB/" not in (r["path"] or "") for r in oa)
+        assert all(Path(r["path"]).is_relative_to(a) for r in oa if r["path"])
+        assert all(not Path(r["path"]).is_relative_to(b) for r in oa if r["path"])

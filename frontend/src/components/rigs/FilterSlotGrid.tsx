@@ -4,7 +4,7 @@ import TextField from "@mui/material/TextField";
 import Typography from "@mui/material/Typography";
 import StarIcon from "@mui/icons-material/Star";
 import type { FilterOption } from "@/api/rigs";
-import { withMineGroup } from "@/components/rigs/mineGroup";
+import { mineOptionKey, withMineGroup } from "@/components/rigs/mineGroup";
 import {
   retainedGroup,
   retainedLabel,
@@ -57,6 +57,7 @@ export default function FilterSlotGrid({
             <Autocomplete<RetainedOption<FilterOption> & { __mine_group?: string }>
               size="small"
               options={groupedOptions}
+              getOptionKey={mineOptionKey}
               groupBy={(o) => retainedGroup(o, o.__mine_group ?? o.manufacturer_name)}
               value={selectedFilter}
               onChange={(_e, value) => handleSlotChange(slotNumber, value)}

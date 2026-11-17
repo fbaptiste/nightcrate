@@ -7,6 +7,7 @@ import io
 import logging
 import math
 import os
+import sys
 import threading
 import time
 from pathlib import Path
@@ -109,6 +110,7 @@ class TestResolveAstapBinary:
         with pytest.raises(ValueError, match="not found"):
             resolve_astap_binary("/nonexistent/astap")
 
+    @pytest.mark.skipif(os.name == "nt", reason="Windows has no POSIX execute permission bit")
     def test_non_executable_raises(self, tmp_path):
         f = tmp_path / "astap"
         f.write_text("not executable")
@@ -884,11 +886,39 @@ async def test_astap_repeated_cancellation_wins_late_worker_failure(tmp_path, mo
     assert solve_operations.active_operation() is None
 
 
-def _sleeping_astap(tmp_path: Path) -> Path:
+def _sleeping_astap(
+    tmp_path: Path,
+    monkeypatch,
+    substituted_launches: list[Path] | None = None,
+) -> Path:
     astap = tmp_path / "astap"
     astap.write_text("#!/usr/bin/env python3\nimport time\ntime.sleep(300)\n")
     astap.chmod(0o755)
+    _adapt_fake_astap_launch(astap, monkeypatch, substituted_launches)
     return astap
+
+
+def _adapt_fake_astap_launch(
+    astap: Path,
+    monkeypatch,
+    substituted_launches: list[Path] | None = None,
+) -> None:
+    real_start = asyncio.create_subprocess_exec
+    if substituted_launches is None:
+        substituted_launches = []
+
+    async def launch(program, *args, **kwargs):
+        if Path(program) == astap:
+            substituted_launches.append(Path(program))
+            return await real_start(
+                sys.executable,
+                str(astap),
+                *args,
+                **kwargs,
+            )
+        return await real_start(program, *args, **kwargs)
+
+    monkeypatch.setattr(plate_solve.asyncio, "create_subprocess_exec", launch)
 
 
 async def _wait_for_astap_process() -> asyncio.subprocess.Process:
@@ -900,12 +930,12 @@ async def _wait_for_astap_process() -> asyncio.subprocess.Process:
 
 
 @pytest.mark.skipif(os.name == "nt", reason="uvloop is POSIX-only")
-def test_astap_child_is_registered(tmp_path):
+def test_astap_child_is_registered(tmp_path, monkeypatch):
     uvloop = pytest.importorskip("uvloop")
 
     async def run():
         _reset_solve_state()
-        astap = _sleeping_astap(tmp_path)
+        astap = _sleeping_astap(tmp_path, monkeypatch)
         image = tmp_path / "image.fits"
         astro_fits.PrimaryHDU(np.zeros((10, 10), dtype=np.float32)).writeto(image)
         task = asyncio.create_task(
@@ -936,9 +966,10 @@ def test_astap_child_is_registered(tmp_path):
     uvloop.run(run())
 
 
-async def test_astap_task_cancellation_waits_for_process_exit(tmp_path):
+async def test_astap_task_cancellation_waits_for_process_exit(tmp_path, monkeypatch):
     _reset_solve_state()
-    astap = _sleeping_astap(tmp_path)
+    substituted_launches: list[Path] = []
+    astap = _sleeping_astap(tmp_path, monkeypatch, substituted_launches)
     image = tmp_path / "image.fits"
     astro_fits.PrimaryHDU(np.zeros((10, 10), dtype=np.float32)).writeto(image)
     task = asyncio.create_task(
@@ -963,6 +994,7 @@ async def test_astap_task_cancellation_waits_for_process_exit(tmp_path):
     assert proc.returncode is not None
     assert plate_solve._solve_process is None
     assert solve_operations.active_operation() is None
+    assert substituted_launches == [astap]
 
 
 async def test_wait_for_process_exit_reports_cancellation_after_exit():
@@ -987,7 +1019,7 @@ async def test_wait_for_process_exit_reports_cancellation_after_exit():
 
 async def test_cancel_solve_during_astap_preparation_prevents_process_start(tmp_path, monkeypatch):
     _reset_solve_state()
-    astap = _sleeping_astap(tmp_path)
+    astap = _sleeping_astap(tmp_path, monkeypatch)
     image = tmp_path / "image.fits"
     astro_fits.PrimaryHDU(np.zeros((10, 10), dtype=np.float32)).writeto(image)
     started = threading.Event()
@@ -1035,7 +1067,7 @@ async def test_cancel_solve_during_astap_preparation_prevents_process_start(tmp_
 
 async def test_astap_source_read_runs_off_loop_and_cancel_starts_no_process(tmp_path, monkeypatch):
     _reset_solve_state()
-    astap = _sleeping_astap(tmp_path)
+    astap = _sleeping_astap(tmp_path, monkeypatch)
     image = tmp_path / "image.fits"
     astro_fits.PrimaryHDU(np.zeros((10, 10), dtype=np.float32)).writeto(image)
     read_started = threading.Event()
@@ -1135,7 +1167,7 @@ async def test_astap_source_preparation_worker_failure_is_propagated(tmp_path, m
 
 async def test_shutdown_during_astap_preparation_prevents_process_start(tmp_path, monkeypatch):
     _reset_solve_state()
-    astap = _sleeping_astap(tmp_path)
+    astap = _sleeping_astap(tmp_path, monkeypatch)
     image = tmp_path / "image.fits"
     astro_fits.PrimaryHDU(np.zeros((10, 10), dtype=np.float32)).writeto(image)
     started = threading.Event()
@@ -1179,7 +1211,7 @@ async def test_shutdown_during_astap_preparation_prevents_process_start(tmp_path
 
 async def test_cancel_solve_between_astap_steps_prevents_blind(tmp_path, monkeypatch):
     _reset_solve_state()
-    astap = _sleeping_astap(tmp_path)
+    astap = _sleeping_astap(tmp_path, monkeypatch)
     image = tmp_path / "image.fits"
     astro_fits.PrimaryHDU(np.zeros((10, 10), dtype=np.float32)).writeto(image)
     first_attempt_done = asyncio.Event()
@@ -1225,7 +1257,7 @@ async def test_cancel_solve_between_astap_steps_prevents_blind(tmp_path, monkeyp
 
 async def test_cancel_solve_during_astap_launch_kills_new_process(tmp_path, monkeypatch):
     _reset_solve_state()
-    astap = _sleeping_astap(tmp_path)
+    astap = _sleeping_astap(tmp_path, monkeypatch)
     image = tmp_path / "image.fits"
     astro_fits.PrimaryHDU(np.zeros((10, 10), dtype=np.float32)).writeto(image)
     real_start = asyncio.create_subprocess_exec
@@ -1268,9 +1300,9 @@ async def test_cancel_solve_during_astap_launch_kills_new_process(tmp_path, monk
     assert solve_operations.active_operation() is None
 
 
-async def test_shutdown_waits_for_astap_process_exit(tmp_path):
+async def test_shutdown_waits_for_astap_process_exit(tmp_path, monkeypatch):
     _reset_solve_state()
-    astap = _sleeping_astap(tmp_path)
+    astap = _sleeping_astap(tmp_path, monkeypatch)
     image = tmp_path / "image.fits"
     astro_fits.PrimaryHDU(np.zeros((10, 10), dtype=np.float32)).writeto(image)
     task = asyncio.create_task(
@@ -1636,10 +1668,11 @@ CD2_2=0.0003
 """
 
 
-def _scripted_astap(tmp_path: Path, body: str) -> Path:
+def _scripted_astap(tmp_path: Path, monkeypatch, body: str) -> Path:
     script = tmp_path / "astap"
     script.write_text("#!/usr/bin/env python3\n" + body)
     script.chmod(0o755)
+    _adapt_fake_astap_launch(script, monkeypatch)
     return script
 
 
@@ -1649,7 +1682,7 @@ async def _run_chain(
     *,
     position=(120.0, 30.0),
     scale=1.5,
-    timeout=2.0,
+    timeout=30.0,
 ):
     operation = solve_operations.claim(uuid4(), "astap")
     try:
@@ -1670,11 +1703,12 @@ async def _run_chain(
         solve_operations.release(operation)
 
 
-async def test_astap_near_miss_advances_to_blind(tmp_path):
+async def test_astap_near_miss_advances_to_blind(tmp_path, monkeypatch):
     _reset_solve_state()
     calls = tmp_path / "calls"
     astap = _scripted_astap(
         tmp_path,
+        monkeypatch,
         f"""import pathlib, sys
 calls = pathlib.Path({str(calls)!r})
 count = int(calls.read_text()) + 1 if calls.exists() else 1
@@ -1701,6 +1735,7 @@ async def test_astap_near_timeout_advances_to_blind(tmp_path, monkeypatch):
     calls = tmp_path / "calls"
     astap = _scripted_astap(
         tmp_path,
+        monkeypatch,
         f"""import pathlib, sys, time
 calls = pathlib.Path({str(calls)!r})
 count = int(calls.read_text()) + 1 if calls.exists() else 1
@@ -1722,11 +1757,12 @@ else:
     assert [attempt.outcome for attempt in attempts] == ["step_timeout", "solved"]
 
 
-async def test_astap_database_error_stops_chain(tmp_path):
+async def test_astap_database_error_stops_chain(tmp_path, monkeypatch):
     _reset_solve_state()
     calls = tmp_path / "calls"
     astap = _scripted_astap(
         tmp_path,
+        monkeypatch,
         f"""import pathlib
 calls = pathlib.Path({str(calls)!r})
 calls.write_text(str(int(calls.read_text()) + 1 if calls.exists() else 1))
@@ -1745,9 +1781,9 @@ raise SystemExit(32)
     assert attempts[0].outcome == "error"
 
 
-async def test_astap_too_few_stars_has_shared_failure_reason(tmp_path):
+async def test_astap_too_few_stars_has_shared_failure_reason(tmp_path, monkeypatch):
     _reset_solve_state()
-    astap = _scripted_astap(tmp_path, "raise SystemExit(2)\n")
+    astap = _scripted_astap(tmp_path, monkeypatch, "raise SystemExit(2)\n")
     image = tmp_path / "image.fits"
     image.write_bytes(b"input")
 
@@ -1758,11 +1794,12 @@ async def test_astap_too_few_stars_has_shared_failure_reason(tmp_path):
     assert attempts[0].outcome == "too_few_stars"
 
 
-async def test_astap_stale_ini_is_not_reused_by_blind_step(tmp_path):
+async def test_astap_stale_ini_is_not_reused_by_blind_step(tmp_path, monkeypatch):
     _reset_solve_state()
     calls = tmp_path / "calls"
     astap = _scripted_astap(
         tmp_path,
+        monkeypatch,
         f"""import pathlib, sys
 calls = pathlib.Path({str(calls)!r})
 count = int(calls.read_text()) + 1 if calls.exists() else 1
@@ -1783,11 +1820,12 @@ if count == 1:
     assert [attempt.outcome for attempt in attempts] == ["no_match", "error"]
 
 
-async def test_astap_without_position_runs_blind_with_explicit_zero_fov(tmp_path):
+async def test_astap_without_position_runs_blind_with_explicit_zero_fov(tmp_path, monkeypatch):
     _reset_solve_state()
     recorded = tmp_path / "args"
     astap = _scripted_astap(
         tmp_path,
+        monkeypatch,
         f"""import pathlib, sys
 pathlib.Path({str(recorded)!r}).write_text(' '.join(sys.argv[1:]))
 raise SystemExit(1)
@@ -1836,10 +1874,51 @@ async def test_astap_expired_preparation_deadline_starts_no_process(tmp_path, mo
     start.assert_not_awaited()
 
 
+async def test_astap_blind_step_timeout_uses_overall_timeout(tmp_path, monkeypatch):
+    _reset_solve_state()
+    image = tmp_path / "image.fits"
+    image.write_bytes(b"input")
+    operation = solve_operations.claim(uuid4(), "astap")
+    step = AsyncMock(
+        return_value=plate_solve._AstapRun(
+            PlateSolveResult(solved=False),
+            "step_timeout",
+        )
+    )
+    monkeypatch.setattr(plate_solve, "_run_astap_step", step)
+    try:
+        result = await plate_solve.run_astap_chain(
+            tmp_path / "astap",
+            image,
+            position=None,
+            scale_arcsec=None,
+            image_width=100,
+            image_height=80,
+            deadline=time.monotonic() + 30,
+            stop=operation.stop,
+            reporter=operation,
+            operation=operation,
+        )
+        attempts = operation.attempts()
+    finally:
+        solve_operations.release(operation)
+
+    assert not result.solved
+    assert result.failure_reason == "time_limit"
+    assert result.error_message == "ASTAP solve timed out."
+    assert attempts[0].outcome == "overall_timeout"
+
+
 async def test_astap_private_home_preserves_user_config(tmp_path, monkeypatch):
     _reset_solve_state()
     user_home = tmp_path / "user"
-    config = user_home / ".config" / "astap" / "astap.cfg"
+    if sys.platform == "win32":
+        config = user_home / "astap" / "astap.cfg"
+        monkeypatch.setenv("LOCALAPPDATA", str(user_home))
+        private_config = "pathlib.Path(os.environ['LOCALAPPDATA']) / 'astap' / 'astap.cfg'"
+    else:
+        config = user_home / ".config" / "astap" / "astap.cfg"
+        private_config = "pathlib.Path(os.environ['HOME']) / '.config' / 'astap' / 'astap.cfg'"
     config.parent.mkdir(parents=True)
     config.write_text("user-settings")
     copied = tmp_path / "copied"
@@ -1848,8 +1927,9 @@ async def test_astap_private_home_preserves_user_config(tmp_path, monkeypatch):
     monkeypatch.setenv("ASTAP_COPIED", str(copied))
     astap = _scripted_astap(
         tmp_path,
-        """import os, pathlib
-cfg = pathlib.Path(os.environ['HOME']) / '.config' / 'astap' / 'astap.cfg'
+        monkeypatch,
+        f"""import os, pathlib
+cfg = {private_config}
 pathlib.Path(os.environ['ASTAP_COPIED']).write_text(cfg.read_text())
 cfg.write_text('changed-by-astap')
 raise SystemExit(1)

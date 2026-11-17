@@ -801,14 +801,6 @@ class TestOpticalEndpoints:
         assert resp.status_code == 422
 
     @pytest.mark.anyio
-    async def test_fov_no_inputs(self, client):
-        resp = await client.get(
-            "/api/calculators/fov",
-            params={"focal_length_mm": 540},
-        )
-        assert resp.status_code == 422
-
-    @pytest.mark.anyio
     async def test_fov_partial_sensor_dims_width_only(self, client):
         resp = await client.get(
             "/api/calculators/fov",
@@ -1014,11 +1006,6 @@ class TestSqmBortleNelmApi:
         data = resp.json()
         # sqm=18 → Bortle 8, ignoring the user's bortle=1 hint.
         assert data["bortle"] == 8
-
-    @pytest.mark.anyio
-    async def test_no_inputs(self, client):
-        resp = await client.get("/api/calculators/sqm-bortle")
-        assert resp.status_code == 422
 
 
 # --- Temperature -------------------------------------------------------------

@@ -2,21 +2,28 @@ name: Checks
 
 on:
   pull_request:
+  workflow_dispatch:
   push:
-    branches: [main]
+    branches: ["ci/**"]
+
+concurrency:
+  group: checks-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
 
 jobs:
-  checks:
-    timeout-minutes: 60
-    continue-on-error: ${{ matrix.os == 'windows-2022' }}
+  macos_shards:
+    name: macos-15 shard ${{ matrix.shard }}/3
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-15, ubuntu-22.04, windows-2022]
-    runs-on: ${{ matrix.os }}
+        shard: [1, 2, 3]
+    runs-on: macos-15
+    env:
+      NIGHTCRATE_TEST_SHARD: ${{ matrix.shard }}/3
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
@@ -27,6 +34,7 @@ jobs:
         with:
           python-version: 3.14.0
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        if: matrix.shard == 1
         with:
           node-version: 25.2.1
           cache: npm
@@ -34,21 +42,154 @@ jobs:
       - name: Install backend
         working-directory: backend
         run: uv sync --frozen
+      - name: Install frontend
+        if: matrix.shard == 1
+        working-directory: frontend
+        run: npm ci
       - name: Ruff
+        if: matrix.shard == 1
         working-directory: backend
         run: uv run ruff check src/ tests/
       - name: Ruff format
+        if: matrix.shard == 1
         working-directory: backend
         run: uv run ruff format --check src/ tests/
       - name: Bandit
+        if: matrix.shard == 1
         working-directory: backend
         run: uv run bandit -r src/
       - name: Backend tests
         working-directory: backend
-        run: uv run pytest -n auto
-      - name: Install frontend
-        working-directory: frontend
-        run: npm ci
+        run: uv run pytest -n logical --dist=loadgroup -o faulthandler_timeout=600 --durations=20
       - name: Build frontend
+        if: matrix.shard == 1
         working-directory: frontend
         run: npm run build
+
+  ubuntu_shards:
+    name: ubuntu-22.04 shard ${{ matrix.shard }}/4
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+    runs-on: ubuntu-22.04
+    env:
+      NIGHTCRATE_TEST_SHARD: ${{ matrix.shard }}/4
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: 0.11.2
+          enable-cache: true
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: 3.14.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        if: matrix.shard == 1
+        with:
+          node-version: 25.2.1
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install backend
+        working-directory: backend
+        run: uv sync --frozen
+      - name: Install frontend
+        if: matrix.shard == 1
+        working-directory: frontend
+        run: npm ci
+      - name: Ruff
+        if: matrix.shard == 1
+        working-directory: backend
+        run: uv run ruff check src/ tests/
+      - name: Ruff format
+        if: matrix.shard == 1
+        working-directory: backend
+        run: uv run ruff format --check src/ tests/
+      - name: Bandit
+        if: matrix.shard == 1
+        working-directory: backend
+        run: uv run bandit -r src/
+      - name: Backend tests
+        working-directory: backend
+        run: uv run pytest -n logical --dist=loadgroup -o faulthandler_timeout=600 --durations=20
+      - name: Build frontend
+        if: matrix.shard == 1
+        working-directory: frontend
+        run: npm run build
+
+  windows_shards:
+    name: windows-2022 shard ${{ matrix.shard }}/6
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4, 5, 6]
+    runs-on: windows-2022
+    env:
+      NIGHTCRATE_TEST_SHARD: ${{ matrix.shard }}/6
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: 0.11.2
+          enable-cache: true
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: 3.14.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        if: matrix.shard == 1
+        with:
+          node-version: 25.2.1
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install backend
+        working-directory: backend
+        run: uv sync --frozen
+      - name: Install frontend
+        if: matrix.shard == 1
+        working-directory: frontend
+        run: npm ci
+      - name: Ruff
+        if: matrix.shard == 1
+        working-directory: backend
+        run: uv run ruff check src/ tests/
+      - name: Ruff format
+        if: matrix.shard == 1
+        working-directory: backend
+        run: uv run ruff format --check src/ tests/
+      - name: Bandit
+        if: matrix.shard == 1
+        working-directory: backend
+        run: uv run bandit -r src/
+      - name: Backend tests
+        working-directory: backend
+        run: uv run pytest -n logical --dist=loadgroup -o faulthandler_timeout=600 --durations=20
+      - name: Build frontend
+        if: matrix.shard == 1
+        working-directory: frontend
+        run: npm run build
+
+  checks-macos:
+    name: checks (macos-15)
+    if: always()
+    needs: macos_shards
+    runs-on: ubuntu-22.04
+    steps:
+      - run: test '${{ needs.macos_shards.result }}' = success
+
+  checks-ubuntu:
+    name: checks (ubuntu-22.04)
+    if: always()
+    needs: ubuntu_shards
+    runs-on: ubuntu-22.04
+    steps:
+      - run: test '${{ needs.ubuntu_shards.result }}' = success
+
+  checks-windows:
+    name: checks (windows-2022)
+    if: always()
+    needs: windows_shards
+    runs-on: ubuntu-22.04
+    steps:
+      - run: test '${{ needs.windows_shards.result }}' = success

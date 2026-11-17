@@ -20,7 +20,11 @@ import ToggleButtonGroup from "@mui/material/ToggleButtonGroup";
 import Typography from "@mui/material/Typography";
 import FilterSlotGrid from "@/components/rigs/FilterSlotGrid";
 import RigChangePrompt from "@/components/rigs/RigChangePrompt";
-import { withMineGroup } from "@/components/rigs/mineGroup";
+import {
+  MY_SOFTWARE_LABEL,
+  mineOptionKey,
+  withMineGroup,
+} from "@/components/rigs/mineGroup";
 import { orderSoftwareOptions } from "@/components/shared/softwareOrder";
 import {
   keepRetiredSelected,
@@ -372,6 +376,17 @@ export default function RigFormDialog({
     ),
     [options?.software, form.software_ids, rig],
   );
+  const groupedSoftware = useMemo(
+    () => withMineGroup(
+      [
+        ...orderedSoftware.filter((option) => !option.retired),
+        ...orderedSoftware.filter((option) => option.retired),
+      ],
+      MY_SOFTWARE_LABEL,
+      () => 0,
+    ),
+    [orderedSoftware],
+  );
 
   // ── Selected items for preview ─────────────────────────────────────────
 
@@ -542,6 +557,7 @@ export default function RigFormDialog({
             </Typography>
             <Autocomplete
               options={withMineGroup(telescopeConfigOptions)}
+              getOptionKey={mineOptionKey}
               groupBy={(o) =>
                 retainedGroup(o, o.__mine_group ?? `${o.manufacturer_name} ${o.telescope_name}`)
               }
@@ -563,7 +579,7 @@ export default function RigFormDialog({
               }
               isOptionEqualToValue={(opt, val) => opt.id === val.id}
               renderOption={(props, option) => (
-                <OptionListItem optionProps={props}>
+                <OptionListItem key={props.key} optionProps={props}>
                   {option.is_mine && (
                     <StarIcon fontSize="small" color="primary" sx={{ mr: 0.75 }} />
                   )}
@@ -586,6 +602,7 @@ export default function RigFormDialog({
             />
             <Autocomplete<GroupedRetained<CameraOption>>
               options={withMineGroup(cameraOptions)}
+              getOptionKey={mineOptionKey}
               groupBy={equipmentGroup}
               getOptionLabel={cameraLabel}
               value={
@@ -598,7 +615,7 @@ export default function RigFormDialog({
               }
               isOptionEqualToValue={(opt, val) => opt.id === val.id}
               renderOption={(props, option) => (
-                <OptionListItem optionProps={props}>
+                <OptionListItem key={props.key} optionProps={props}>
                   {option.is_mine && (
                     <StarIcon fontSize="small" color="primary" sx={{ mr: 0.75 }} />
                   )}
@@ -653,6 +670,7 @@ export default function RigFormDialog({
             </Typography>
             <Autocomplete<GroupedRetained<FilterWheelOption>>
               options={withMineGroup(filterWheelOptions)}
+              getOptionKey={mineOptionKey}
               groupBy={equipmentGroup}
               getOptionLabel={wheelLabel}
               value={
@@ -668,7 +686,7 @@ export default function RigFormDialog({
               }}
               isOptionEqualToValue={(opt, val) => opt.id === val.id}
               renderOption={(props, option) => (
-                <OptionListItem optionProps={props}>
+                <OptionListItem key={props.key} optionProps={props}>
                   {option.is_mine && (
                     <StarIcon fontSize="small" color="primary" sx={{ mr: 0.75 }} />
                   )}
@@ -692,6 +710,7 @@ export default function RigFormDialog({
             {!form.filter_wheel_id && (
               <Autocomplete<GroupedRetained<FilterOption>>
                 options={withMineGroup(filterOptions)}
+                getOptionKey={mineOptionKey}
                 groupBy={equipmentGroup}
                 getOptionLabel={filterLabel}
                 value={
@@ -704,7 +723,7 @@ export default function RigFormDialog({
                 }
                 isOptionEqualToValue={(opt, val) => opt.id === val.id}
                 renderOption={(props, option) => (
-                  <OptionListItem optionProps={props}>
+                  <OptionListItem key={props.key} optionProps={props}>
                     {option.is_mine && (
                       <StarIcon fontSize="small" color="primary" sx={{ mr: 0.75 }} />
                     )}
@@ -723,6 +742,7 @@ export default function RigFormDialog({
             </Typography>
             <Autocomplete<GroupedRetained<SimpleOption>>
               options={withMineGroup(mountOptions)}
+              getOptionKey={mineOptionKey}
               groupBy={equipmentGroup}
               getOptionLabel={formatSimple}
               value={
@@ -735,7 +755,7 @@ export default function RigFormDialog({
               }
               isOptionEqualToValue={(opt, val) => opt.id === val.id}
               renderOption={(props, option) => (
-                <OptionListItem optionProps={props}>
+                <OptionListItem key={props.key} optionProps={props}>
                   {option.is_mine && (
                     <StarIcon fontSize="small" color="primary" sx={{ mr: 0.75 }} />
                   )}
@@ -768,6 +788,7 @@ export default function RigFormDialog({
             {form.guiding_mode === "oag" && (
               <Autocomplete<GroupedRetained<SimpleOption>>
                 options={withMineGroup(oagOptions)}
+                getOptionKey={mineOptionKey}
                 groupBy={equipmentGroup}
                 getOptionLabel={formatSimple}
                 value={
@@ -780,7 +801,7 @@ export default function RigFormDialog({
                 }
                 isOptionEqualToValue={(opt, val) => opt.id === val.id}
                 renderOption={(props, option) => (
-                  <OptionListItem optionProps={props}>
+                  <OptionListItem key={props.key} optionProps={props}>
                     {option.is_mine && (
                       <StarIcon fontSize="small" color="primary" sx={{ mr: 0.75 }} />
                     )}
@@ -796,6 +817,7 @@ export default function RigFormDialog({
             {form.guiding_mode === "guide_scope" && (
               <Autocomplete<GroupedRetained<GuideScopeOption>>
                 options={withMineGroup(guideScopeOptions)}
+                getOptionKey={mineOptionKey}
                 groupBy={equipmentGroup}
                 getOptionLabel={formatSimple}
                 value={
@@ -808,7 +830,7 @@ export default function RigFormDialog({
                 }
                 isOptionEqualToValue={(opt, val) => opt.id === val.id}
                 renderOption={(props, option) => (
-                  <OptionListItem optionProps={props}>
+                  <OptionListItem key={props.key} optionProps={props}>
                     {option.is_mine && (
                       <StarIcon fontSize="small" color="primary" sx={{ mr: 0.75 }} />
                     )}
@@ -824,6 +846,7 @@ export default function RigFormDialog({
             {form.guiding_mode !== "none" && (
               <Autocomplete<GroupedRetained<CameraOption>>
                 options={withMineGroup(cameraOptions)}
+                getOptionKey={mineOptionKey}
                 groupBy={equipmentGroup}
                 getOptionLabel={cameraLabel}
                 value={
@@ -836,7 +859,7 @@ export default function RigFormDialog({
                 }
                 isOptionEqualToValue={(opt, val) => opt.id === val.id}
                 renderOption={(props, option) => (
-                  <OptionListItem optionProps={props}>
+                  <OptionListItem key={props.key} optionProps={props}>
                     {option.is_mine && (
                       <StarIcon fontSize="small" color="primary" sx={{ mr: 0.75 }} />
                     )}
@@ -855,6 +878,7 @@ export default function RigFormDialog({
             </Typography>
             <Autocomplete<GroupedRetained<SimpleOption>>
               options={withMineGroup(focuserOptions)}
+              getOptionKey={mineOptionKey}
               groupBy={equipmentGroup}
               getOptionLabel={formatSimple}
               value={
@@ -867,7 +891,7 @@ export default function RigFormDialog({
               }
               isOptionEqualToValue={(opt, val) => opt.id === val.id}
               renderOption={(props, option) => (
-                <OptionListItem optionProps={props}>
+                <OptionListItem key={props.key} optionProps={props}>
                   {option.is_mine && (
                     <StarIcon fontSize="small" color="primary" sx={{ mr: 0.75 }} />
                   )}
@@ -880,6 +904,7 @@ export default function RigFormDialog({
             />
             <Autocomplete<GroupedRetained<SimpleOption>>
               options={withMineGroup(computerOptions)}
+              getOptionKey={mineOptionKey}
               groupBy={equipmentGroup}
               getOptionLabel={formatSimple}
               value={
@@ -892,7 +917,7 @@ export default function RigFormDialog({
               }
               isOptionEqualToValue={(opt, val) => opt.id === val.id}
               renderOption={(props, option) => (
-                <OptionListItem optionProps={props}>
+                <OptionListItem key={props.key} optionProps={props}>
                   {option.is_mine && (
                     <StarIcon fontSize="small" color="primary" sx={{ mr: 0.75 }} />
                   )}
@@ -903,11 +928,16 @@ export default function RigFormDialog({
                 <TextField {...params} label="Computer" />
               )}
             />
-            <Autocomplete<RetainedOption<SoftwareOption>, true>
+            <Autocomplete<GroupedRetained<SoftwareOption>, true>
               multiple
-              options={orderedSoftware}
+              options={groupedSoftware}
+              getOptionKey={mineOptionKey}
               groupBy={(o) =>
-                o.category.replaceAll("_", " ").replace(/^./, (c) => c.toUpperCase())
+                retainedGroup(
+                  o,
+                  o.__mine_group
+                    ?? o.category.replaceAll("_", " ").replace(/^./, (c) => c.toUpperCase()),
+                )
               }
               getOptionLabel={(o) => retainedLabel(o, o.name, o.name)}
               value={
@@ -923,7 +953,7 @@ export default function RigFormDialog({
               }
               isOptionEqualToValue={(opt, val) => opt.id === val.id}
               renderOption={(props, option) => (
-                <OptionListItem optionProps={props}>
+                <OptionListItem key={props.key} optionProps={props}>
                   {option.is_mine && (
                     <StarIcon fontSize="small" color="primary" sx={{ mr: 0.75 }} />
                   )}

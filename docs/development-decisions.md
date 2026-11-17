@@ -26,6 +26,14 @@ Shared architecture, checks, and privacy rules live in [CLAUDE.md](../CLAUDE.md)
   level 1 favors local rendering speed.
 - Only ordinary FITS files support header editing. Protect `SIMPLE`, `BITPIX`,
   `NAXIS*`, `EXTEND`, `BZERO`, `BSCALE`, `COMMENT`, `HISTORY`, and `END`.
+- **Unsaved header edits belong to one file and HDU** (v0.54.1).
+  `FitsHeaderTable` is keyed by `path:hdu`, so switching to another file or
+  HDU, even one whose header is cached, starts clean and discards pending
+  edits. Before, file A's pending edits showed on file B, and Save wrote
+  them into B.
+- The header map's canonical values can arrive as text. The sensor
+  temperature `"-5.30000019073486"` is parsed and shown to one decimal, as
+  `−5.3 °C`; parse numbers before formatting.
 - Virtual paths use `archive.zip::entry` or `project.pxiproject::index`. An
   integer suffix identifies a project image; merely finding `::` does not.
   Python `path_resolver` and TypeScript `parsePath` must agree.
@@ -143,6 +151,14 @@ Shared architecture, checks, and privacy rules live in [CLAUDE.md](../CLAUDE.md)
   nested state such as chart zoom survives navigation. To add a page, register
   it in `PERSISTENT_ROUTES` (`components/AppShell.tsx`) and give its route
   `element: null` in `App.tsx` to avoid a second render.
+- **A page crash stays inside the app** (v0.54.1). `RouteErrorPage`
+  (`components/common/PageError.tsx`) is the `errorElement` of `/`, of a
+  pathless route around every child, and of `/image-viewer`. Each
+  always-mounted page is wrapped in `PageErrorBoundary`, keyed to reset on
+  navigation, because those pages render beside the outlet, not in it. The
+  panel shows the message, Reload and a closed Details. Errors in event
+  handlers or async code aren't caught by either; handle those where they
+  happen.
 - **The joke wands share one toast slot,** provided by `AppShell`. A new line
   replaces the shown one and restarts its 15 s timer; moving the mouse away
   doesn't dismiss it. Separate per-wand toasts would stack when the nav's
@@ -162,6 +178,18 @@ Shared architecture, checks, and privacy rules live in [CLAUDE.md](../CLAUDE.md)
   - Ready to process is a status set by hand (migration 0073). Per-filter
     goals were removed in v0.41.1, so no stage is derived from goals.
   - "Active projects" anywhere on the page means `status = 'active'`.
+- **Pictures use the project's saved framing** (v0.54.1, Fred: "cropped from
+  the large thumbnail definition - not the entire original image").
+  `GET /api/home` returns each recent project's and the latest picture's
+  `crops`, loaded with `api/project_crops.load_project_crops`, which the
+  gallery shares.
+  - Recent cards use large, else medium, else small, else the main image.
+  - The latest picture uses a framing of that picture, in the same order,
+    else the picture itself (`lib/galleryRendition.homeFramingSize`).
+  - The boxes keep their v0.53.0 sizes and crop to fill: Fred chose this on
+    2026-11-16 over taller 4:3 boxes or dark side bars. A 4:3 framing loses its top
+    and bottom in a wide card, so spread-out targets (the Leo Triplet's
+    galaxies) can still be cut.
 - **Dates:** session dates go through `valid_session_date` before ranking,
   grouping or windowing. Text that isn't a date never wins "recent", and two
   timestamps on one date are one night.
@@ -286,6 +314,39 @@ Shared architecture, checks, and privacy rules live in [CLAUDE.md](../CLAUDE.md)
 - Software pickers group by category in a fixed order: the rig form lists
   capture, guiding, plate solving, planetarium, utility, other, processing;
   the project field lists processing first (`orderSoftwareOptions`).
+- **Equipment grids** (`EquipmentList.tsx`, v0.54.1):
+  - **A dropdown filter column never changes type.** MUI X drops filter
+    items for a removed column but throws on an operator the column's type
+    lacks. So `lib/gridDropdownColumns.withDropdownFilters` makes each
+    configured field `singleSelect` whether or not the loaded rows have
+    values (empty options are fine), keeping each value's own type: a
+    number option against a number cell, or `is` never matches. Before,
+    a list that was briefly empty (Owned, Show Retired, a refetch) turned
+    the column into text and crashed the page.
+  - **Pages, not one long list.** MUI X Community caps a page at 100 rows,
+    so the grid shows its footer (25/50/100, 100 by default). Cameras,
+    telescopes and filters all have more than 100 seeded rows.
+  - **`?select=ID`** finds the row through
+    `gridFilteredSortedRowIdsSelector`, moves to its page, and scrolls again
+    after the grid's `debouncedResize`, because the detail panel opening
+    below shrinks the grid after the first scroll.
+- **Owned items first in every equipment and software picker** (v0.54.1).
+  `components/rigs/mineGroup.withMineGroup` adds a "My Equipment" or
+  "My Software" group of owned items above the regular groups; owned items
+  stay in their own group too.
+  - Each such Autocomplete sets `getOptionKey={mineOptionKey}`, and its
+    `renderOption` returns an element keyed with `props.key`.
+  - A multi-select's `value` comes from the ungrouped list, so a chip is
+    never doubled.
+  - Telescope configurations take their telescope's `is_mine`.
+  - Retained retired entries form one "Retired" group at the end.
+    `withMineGroup` sorts `retired` options last whatever the order
+    function: their manufacturer is empty, which would otherwise sort them
+    first.
+  - The session form's filter picker orders My Rig, My Equipment, Bandpass,
+    then manufacturers.
+- **"Processed with"** opens a list of its own width (`max-content`,
+  280–420 px, `bottom-start`); its field is only 142 px wide.
 
 ## Rig history and project setups
 
@@ -453,7 +514,13 @@ Since v0.47.0. Spec: [v0.47.0 design](superpowers/specs/2026-11-07-v0.47.0-desig
   - **Unreadable folder:** an offline or unreadable folder changes nothing and
     reports a folder-level error.
   - **Transactions:** each folder is one transaction, with a savepoint per file.
-    The post-pass doesn't change which files are cataloged.
+    The post-pass doesn't change which files are cataloged. It begins by
+    clearing every frame's rig, and it commits only with the run's final
+    status. So a failed or cancelled run rolls back before recording its
+    status: `CancelledError` isn't an `Exception`, and quitting the app
+    mid-scan cancels the request after `serve.py`'s 10 s graceful
+    shutdown. Before v0.54.1 an interruption committed a half-saved folder
+    or frames without rigs.
   - **Folder removal** deletes the rows no other bound folder can retry.
 - Adding project images verifies the XISF behind every path before inserting,
   including `.pxiproject::index` references to an XISF. The request is all or
@@ -462,10 +529,10 @@ Since v0.47.0. Spec: [v0.47.0 design](superpowers/specs/2026-11-07-v0.47.0-desig
 - **No automatic equipment identification.** The old resolver, alias queue,
   per-frame equipment overrides, and most equipment FKs were removed. A project's
   rig assignments and each folder's declared `rig_id` supply equipment context.
-- Source folders declare `rig_id` and `project_target_id`. The target must belong
-  to the same project. PATCH changes only supplied fields (`model_fields_set`).
-  `assign_rigs_and_sessions` is the single owner of frame rig/session/target;
-  run after the full walk and when folder tags change, never per file during scan.
+- Source folders declare `rig_id`. PATCH changes only supplied fields
+  (`model_fields_set`). `assign_rigs_and_sessions` is the single owner of frame
+  rig and session; run after the full walk and when folder tags change, never
+  per file during scan.
 - **Longest matching folder prefix wins**, regardless of scan/tag order. Use
   `ingest_sessions.folder_prefix` for platform and archive boundaries: a bound
   archive root ends in `.zip`, while entries start `.zip::`. Archive entries
@@ -474,15 +541,49 @@ Since v0.47.0. Spec: [v0.47.0 design](superpowers/specs/2026-11-07-v0.47.0-desig
   noon-to-noon in the site's geographic timezone. Never conflate simultaneous
   rigs. NULL rig is a valid group (`IS`, not `=`); choose a stable existing row
   and sweep legacy empty duplicate sessions.
-- Targets apply only to lights. Use the folder's target, else a project's sole
-  target. `OBJECT` is a hint, never an automatic target lookup.
-- User corrections to `frame_type` and target survive rescans via their source
-  guards. `filter_name_hint` remains **derived** from header FILTER plus effective
+- **Frames carry no target** (v0.54.1, migration 0074; Fred: "I don't see the
+  utility for it, not even later"). The per-folder target (0056) and the
+  per-frame target were only shown in the frames table and the corrections
+  dialog, and nothing else read them. A project's targets live in
+  `project_target`. `OBJECT` is a hint, never an automatic target lookup.
+- User corrections to `frame_type` survive rescans via `frame_type_source`. `filter_name_hint` remains **derived** from header FILTER plus effective
   frame type in both directions, even for corrected frames. Read stored header
   JSON so corrections work offline; never freeze the hint behind a type guard.
 - `fits_header_map.FILTER_NAME_ALIASES` supplies display labels. The separate
   `line_names` service supplies canonical bandpasses. Keep its 15-value vocabulary,
   the TypeScript copy, and the database CHECK synchronized (including `R+`).
+- **Scan progress** (v0.54.1). A scan is still one request
+  (`POST /projects/{id}/ingest`), which the page doesn't wait on to show
+  progress:
+  - **The record:** `services/ingest_progress.py` keeps the running scan
+    (stage, done of total, the last 10 files with `ok`) and each project's
+    finished result for 300 s, keyed by `(session.workspace_key(),
+    project_id)`, because activation swaps the database without a restart;
+  - **The endpoint:** `GET /projects/{id}/ingest/progress`;
+  - **Finishing:** the record is finished on every path after `start`,
+    with a failed or cancelled result if nothing else was built. A record
+    stuck at "running" would freeze the Files tab;
+  - **Admission:** the lock is taken before the first `await`, so two
+    simultaneous starts give one 409;
+  - **Responsiveness:** listing runs in `asyncio.to_thread`, and inline
+    header reads (one worker core) run in a thread one file at a time, so
+    the endpoint keeps answering;
+  - **The Files tab** polls (500 ms while running, else 5 s). Its panel
+    and the disabled scan controls follow the record, so a scan started in
+    another window, or before the tab was opened, shows too.
+  - **Refreshing after a scan** stays in the scan request's `onSuccess`,
+    which TanStack runs even after the Files tab unmounts. The project page
+    mounts only the selected tab, so refreshing from the Files tab alone
+    left Sessions and Info stale (v0.54.1 review).
+  - **The summary message** comes only from the poll, once per `scan_id`,
+    and only for a scan this page saw running or started
+    (`lib/ingestCompletion.ts`). Seen and handled ids live in
+    `stores/ingestProgressStore.ts`, mirrored to `sessionStorage`. Any
+    other finished scan is marked handled silently, so a new browser tab
+    doesn't replay a recent summary.
+  - **A cancelled folder** restores the run's counters and errors before
+    the cancellation propagates, so the run record counts only committed
+    folders.
 - `session` is the ingest rig/night group; `project_session` is a capture batch.
   Derive capture batches for the first time **only on request**, never during
   ingest. Once auto batches exist, a folder rig change rebuilds them in the same
@@ -835,8 +936,9 @@ Design: [v0.46.0 spec](superpowers/specs/2026-11-04-v0.46.0-design.md) and its
       while a sideways swipe still steps.
     - The Messier page's entries have no details, so the viewer loads them
       with `projectInfoKey` only once the picture turns over.
-  - **The Info tab** sits after Sessions. Tab numbers live in `TAB` in
-    `ProjectDetailPage`, and `?tab=info` opens it.
+  - **The Info tab** is second, after Overview (Fred, 2026-11-15). Tab
+    numbers live in `TAB` in `ProjectDetailPage`; links open tabs by name
+    (`?tab=info`, `?tab=plate-solve`), never by number.
     - Its query has `staleTime: 0`, and every place that invalidates
       `project-solve` also invalidates the project's info. Sessions edits do
       too, because the imaging summary changes.
@@ -1076,6 +1178,15 @@ Design: [v0.48.0 spec](superpowers/specs/2026-11-09-v0.48.0-design.md).
     below. The map column is fixed to the boxes' width; the legend wraps
     inside it.
   - The header's content is at most 1,552 px, the tile grid's width.
+- **`FlipTile` hides the face turned away once the rotation ends**
+  (v0.54.1). WebKit doesn't reliably hide positioned, `z-index`ed children
+  of a `backface-visibility: hidden` face, so the expand button showed
+  mirrored over a flipped card. A `settled` state is cleared on every
+  change of `turned` and set by the rotating box's own `transitionend`
+  (`transform`). Only a settled, turned-away face is `visibility: hidden`,
+  so the face turning in is visible at once and focus moves as before.
+  With reduced motion it settles at once. Descendants must not force
+  `visibility: visible`: `MessierSkyImage` uses `inherit`.
 - **Shared pieces with the Gallery:** `FlipTile` and the viewer. Viewer
   entries have their own key, so two slots showing one project image
   stay distinct.
@@ -1363,7 +1474,10 @@ Design: [v0.48.0 spec](superpowers/specs/2026-11-09-v0.48.0-design.md).
   natural order, and the groups it belongs to (`part_of`); the table shows
   "Part of" pills, then the other names, beside Designation. Keep the table's
   `sortModel` identity stable (memoized): MUI DataGrid treats a new array as a
-  sort change and returns to page 1.
+  sort change and returns to page 1. Column-menu filters are off
+  (`disableColumnFilter`, v0.54.1). They filtered only the current page of
+  server results, while the count showed server totals. The page's own
+  filters work on the server.
 - **Groups ("part of")** are catalog-derived (`dso_group`,
   `dso_group_member`) and rebuilt in each object step. Searching a group's
   name, or its whole's designation or common name, returns its members, and
@@ -1531,7 +1645,10 @@ Design: [v0.48.0 spec](superpowers/specs/2026-11-09-v0.48.0-design.md).
   - **Field (`-fov`):** the pixel scale × the height of the file ASTAP reads,
     not the sensor's. With no scale, `-fov 0`.
   - **Stopping:** `too_few_stars`, `cancelled`, `error` and the overall time
-    limit end the chain.
+    limit end the chain. A step whose own limit was the whole remaining
+    budget counts as the overall time limit when it times out, even if the
+    clock hasn't quite reached the deadline. Windows' timers (about 15.6 ms
+    ticks) can fire just before it, which reported "no solution" (v0.54.1).
   - **Retries:** the old `-speed slow` retry is gone; the chain solved 130 of
     143 corpus images against 123.
   - **Results:** the result's `failure_reason` uses the built-in solver's
@@ -2102,6 +2219,15 @@ these are the constraints and traps found while building it.
   says who holds it. The installed app and a source run share
   `APP_DIR`. So with the lock in place, never run them at once against the
   same workspace; the second one refuses with a clear message.
+  On Windows the lock is `msvcrt.locking` on byte 0, and another process
+  can't even read a locked byte (`PermissionError`). So the lock file is
+  sized with `os.fstat`, never read, and any `OSError` while preparing or
+  locking means "held". Reading it made a second launch crash instead of
+  refusing; the first Windows CI run found it (v0.54.1). Windows releases
+  a dead process's lock asynchronously, so a relaunch right after a crash
+  can briefly refuse; tests retry for up to 10 s. On Windows the venv's
+  `python.exe` is a launcher, so a test stops the holder by the pid it
+  reports, not by `Popen.pid`.
 - **Workspace activation is one guarded path,**
   `db/workspace_upgrade.initialize_workspace`. It runs at startup, from
   setup, and from Admin. In order:
@@ -2248,6 +2374,71 @@ these are the constraints and traps found while building it.
     Locations map (`https://www.openstreetmap.org/export/embed.html`) is
     allowed by URL in `links.rs`; anything else from outside still opens in
     the browser.
+- **Checks and the merge gate** (v0.54.1).
+  - `checks.yml` runs on pull requests, on manual runs
+    (`workflow_dispatch`), and on pushes to throwaway `ci/**` branches;
+    never after a merge. Merging needs `checks (macos-15)`,
+    `checks (ubuntu-22.04)` and `checks (windows-2022)` to pass, with
+    branches up to date and administrators exempt (Fred's override).
+  - Keep those job names: they are the required contexts. Each is a
+    summary job that passes only when every test shard of its system
+    succeeded (a failed, cancelled or skipped shard fails it).
+  - **Shards** keep each job under 10 minutes (Fred, 2026-11-16): macOS 3,
+    Ubuntu 4, Windows 6 parallel jobs. `NIGHTCRATE_TEST_SHARD=i/n` selects
+    one; unset, everything runs. `tests/shard_selection.py` keeps a test when
+    the SHA-256 of its `xdist_group` name (else its node id) modulo `n`
+    picks that shard, so a group stays together. Never use Python's
+    `hash()`, which varies per process. Measured on 2026-11-17: 8 minutes
+    for the whole run; slowest jobs 7.9 min (macOS shard 1, which also
+    lints and builds), 6.6 (Ubuntu) and 7.2 (Windows). Add a shard when
+    a system's slowest job nears 10 minutes.
+  - The PR is opened last (`finalize-session`), so its run is the one that
+    counts. A newer push cancels the older run.
+  - Shard 1 alone installs Node and the frontend, runs ruff, format and
+    bandit, and builds the frontend. A test that needs the frontend (one
+    runs Vite) is marked `requires_frontend`, which pins it, with its whole
+    group, to shard 1.
+  - pytest runs with `-n logical --dist=loadgroup` and
+    `-o faulthandler_timeout=600`, so a hung test prints every thread's
+    stack. Tests that share an expensive module fixture (the planner's
+    full-year computations) carry one `xdist_group`, so one worker computes
+    it once; a session-scoped fixture alone is still recomputed on every
+    worker.
+  - **Tests must pass on Windows.** Build absolute paths from `tmp_path`,
+    never `/data/...` literals (not absolute on Windows, so the API answers
+    400 instead of 404). Start fake programs through `sys.executable`
+    (Windows won't run an extensionless script). Read text with
+    `encoding="utf-8"`. Close every SQLite connection before replacing its
+    file. Skip a test on Windows only when the behaviour itself is POSIX-only
+    (the execute bit), with the reason; for file modes, assert Windows'
+    meaning (readable and writable) rather than skipping. Scripts imported by
+    tests import POSIX-only modules such as `resource` lazily.
+- **The test database is a per-worker template** (v0.54.1).
+  `tests/conftest.py` runs the app's real migration path once per xdist
+  worker, with `APP_DIR` redirected, and copies the result for each test
+  with `shutil.copyfile`:
+  - an unseeded copy for schema tests;
+  - a snapshot before each migration from 0064 on, for migration tests
+    (`pre_migration_db`). Each test still inserts its own rows and runs the
+    real upgrade;
+  - a seeded copy for everything else.
+
+  Never hard-link a copy: `initialize_workspace` refuses hard-linked
+  files. Building per test cost about 1 s, and about 100 s on Windows,
+  where every autocommitted DDL statement writes and deletes a journal
+  file. GitHub's runners never finished the suite. A test-only backend
+  subclass gives every yoyo connection `journal_mode=MEMORY` and
+  `synchronous=OFF` while building templates: yoyo runs each migration on
+  a copied connection, so pragmas on the root connection don't reach it.
+  - yoyo calls `socket.getfqdn()` for every `_yoyo_log` row, and on
+    GitHub's Mac runner one call took 70 s. The app's
+    `db/migrations.MigrationSQLiteBackend` overrides `get_log_data` with
+    `socket.gethostname()`, so creating a workspace (74 rows) never waits on
+    the network; a test checks its fields still match yoyo's. Tests that
+    open yoyo directly get a fixed name from `conftest.py`, which replaces
+    yoyo's own `socket` reference without touching the `socket` module.
+  - `http.server.HTTPServer` looks up its address's network name when it
+    binds, so test servers bind without it (`tests/test_serve.py`).
 - **Test hooks**, read only when set: `NIGHTCRATE_TEST_STARTUP_DELAY`,
   `NIGHTCRATE_TEST_BUSY_POOL` and `NIGHTCRATE_TEST_BASE_PORT` (backend);
   the `NIGHTCRATE_TEST_*` compile-time options (shell), which

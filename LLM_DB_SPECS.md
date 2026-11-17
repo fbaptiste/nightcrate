@@ -1,6 +1,6 @@
 # NightCrate Equipment Database — Schema & CSV Reference
 
-**NightCrate version:** 0.54.0
+**NightCrate version:** 0.54.1
 
 ## Overview
 
@@ -369,7 +369,7 @@ CREATE TABLE processed_image (project_id FK CASCADE NOT NULL, content_hash TEXT,
 
 CREATE TABLE sub_frame (project_id FK CASCADE NOT NULL, content_hash TEXT,
     UNIQUE(project_id, content_hash),  -- migration 0040: SHA-256, per-project identity
-    session_id FK SET NULL, rig_id FK, project_target_id FK SET NULL,
+    session_id FK SET NULL, rig_id FK,
     ingestion_run_id FK SET NULL,
     frame_type CHECK ('light','dark','flat','bias','dark_flat','unknown') DEFAULT 'unknown',
     accepted INT CHECK(0,1) DEFAULT 1, rejection_reason TEXT,
@@ -441,12 +441,11 @@ CREATE TABLE dither_event (guiding_log_file_id FK CASCADE NOT NULL,
     dither_utc TEXT NOT NULL, ra_offset_arcsec REAL, dec_offset_arcsec REAL,
     settle_completed_utc TEXT, settle_failed INT CHECK(0,1) DEFAULT 0);
 
--- Two USER-DECLARED facts per folder: rig_id (0046) and project_target_id (0056).
--- Neither is inferred from a header. Frames beneath inherit both via
--- assign_rigs_and_sessions; target applies to lights only and never overwrites
--- a frame whose project_target_source = 'user'.
+-- One USER-DECLARED fact per folder: rig_id (0046), never inferred from a header.
+-- Frames beneath inherit it via assign_rigs_and_sessions. (The per-folder
+-- target of 0056 was removed in 0074.)
 CREATE TABLE project_source_folder (project_id FK CASCADE NOT NULL, path TEXT NOT NULL,
-    project_target_id FK project_target SET NULL,  -- NULL = project's single target
+    rig_id FK rig,
     is_primary INT CHECK(0,1) DEFAULT 0, added_at TEXT,
     UNIQUE (project_id, path));  -- partial unique idx: one primary per project
 

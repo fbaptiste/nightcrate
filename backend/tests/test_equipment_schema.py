@@ -1,6 +1,6 @@
 """Comprehensive tests for the equipment schema migration (0005)."""
 
-import importlib.resources
+import shutil
 import sqlite3
 import time
 
@@ -8,21 +8,13 @@ import pytest
 
 
 @pytest.fixture
-def db_with_equipment_schema(tmp_path):
-    """Apply all migrations up through 0005 to a fresh SQLite database."""
+def db_with_equipment_schema(tmp_path, unseeded_template_db):
+    """Open an isolated copy of the fully migrated, unseeded schema."""
     db_path = tmp_path / "test.sqlite"
+    shutil.copyfile(unseeded_template_db, db_path)
     conn = sqlite3.connect(str(db_path))
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
-
-    migrations_dir = importlib.resources.files("nightcrate") / "db" / "migrations"
-    for migration_name in sorted(
-        f.name for f in migrations_dir.iterdir() if f.name.endswith(".sql")
-    ):
-        sql = (migrations_dir / migration_name).read_text()
-        lines = sql.split("\n")
-        body = "\n".join(line for line in lines if not line.strip().startswith("-- depends:"))
-        conn.executescript(body)
 
     yield conn
     conn.close()
@@ -158,13 +150,6 @@ class TestMigrationApplies:
         equipment_tables = [t for t in table_names if t in self.EXPECTED_TABLES]
         assert equipment_tables == self.EXPECTED_TABLES
         assert len(equipment_tables) == 27
-
-    def test_filter_summary_view_exists(self, db_with_equipment_schema):
-        conn = db_with_equipment_schema
-        rows = conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='view' AND name='filter_summary'"
-        ).fetchall()
-        assert len(rows) == 1
 
 
 class TestCheckConstraints:

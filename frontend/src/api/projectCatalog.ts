@@ -11,10 +11,6 @@ export interface SourceFolder {
    *  inferred. Frames inherit it, sessions split on it, calibration scopes on it. */
   rig_id: number | null;
   rig_name: string | null;
-  /** Which target this folder holds — declared by the user, never inferred from
-   *  the OBJECT header. null falls back to the project's single target. */
-  project_target_id: number | null;
-  target_name: string | null;
   added_at: string;
 }
 
@@ -31,6 +27,23 @@ export interface IngestStatus {
   started_at: string | null;
   finished_at: string | null;
   message: string | null;
+}
+
+export interface IngestProgressFile {
+  path: string;
+  ok: boolean;
+}
+
+export interface IngestProgress {
+  scan_id: string;
+  run_id: number;
+  running: boolean;
+  folder: string | null;
+  stage: "listing" | "reading" | "saving" | "grouping";
+  done: number;
+  total: number;
+  recent: IngestProgressFile[];
+  result: IngestStatus | null;
 }
 
 export interface CatalogSummary {
@@ -84,10 +97,7 @@ export interface CatalogFrame {
   /** Rig tagged on this frame's source folder. null = "not stated". */
   rig_name: string | null;
   // Classification (v0.41.1) — hand-correctable, guarded by a source flag.
-  project_target_id: number | null;
-  target_name: string | null;
   frame_type_source: "auto" | "user" | null;
-  project_target_source: "auto" | "user" | null;
   // Quality metrics (v0.41.3). All null until the analyze pass has run.
   // hfr/star_count/snr_estimate stay null on calibration frames even after a
   // successful run — only lights carry stars. hfr is in PIXELS.
@@ -158,11 +168,10 @@ export const FRAME_TYPES = [
 ] as const;
 export type FrameTypeName = (typeof FRAME_TYPES)[number];
 
-export type CorrectableField = "frame_type" | "project_target_id";
+export type CorrectableField = "frame_type";
 
 export interface FrameCorrection {
   frame_type?: FrameTypeName | null;
-  project_target_id?: number | null;
   reset_to_auto?: CorrectableField[];
 }
 
@@ -247,27 +256,11 @@ export function setFolderRig(
   });
 }
 
-/** Declare which target a source folder holds (null = fall back to the
- *  project's single target). Re-tags already-cataloged lights, no re-scan. */
-export function setFolderTarget(
-  projectId: number,
-  folderId: number,
-  targetId: number | null,
-): Promise<SourceFolder> {
-  return apiFetch<SourceFolder>(`/projects/${projectId}/folders/${folderId}`, {
-    method: "PATCH",
-    headers: { "Content-Type": "application/json" },
-    // Only this field is sent, so it can't clear the rig set separately.
-    body: JSON.stringify({ project_target_id: targetId }),
-  });
-}
-
 export function addFolder(
   projectId: number,
   path: string,
   isPrimary = false,
   rigId: number | null = null,
-  targetId: number | null = null,
 ): Promise<SourceFolder> {
   return apiFetch<SourceFolder>(`/projects/${projectId}/folders`, {
     method: "POST",
@@ -276,7 +269,6 @@ export function addFolder(
       path,
       is_primary: isPrimary,
       rig_id: rigId,
-      project_target_id: targetId,
     }),
   });
 }
@@ -314,7 +306,15 @@ export function startIngest(
   });
 }
 
-/** Manually correct a frame's type / target. */
+export function fetchIngestProgress(
+  projectId: number,
+): Promise<IngestProgress | null> {
+  return apiFetch<IngestProgress | null>(
+    `/projects/${projectId}/ingest/progress`,
+  );
+}
+
+/** Manually correct a frame's type. */
 export function correctFrameClassification(
   projectId: number,
   frameId: number,

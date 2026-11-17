@@ -1,6 +1,7 @@
 """Tests for the image viewer API endpoints."""
 
 import hashlib
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -223,41 +224,41 @@ async def test_stats_color(client, tmp_fits_color):
 
 
 @pytest.mark.anyio
-async def test_header_404_missing_file(client):
+async def test_header_404_missing_file(client, tmp_path: Path):
     """Header endpoint should return 404 for a nonexistent file."""
     resp = await client.get(
         "/api/images/header",
-        params={"path": "/nonexistent/path/missing.fits"},
+        params={"path": str(tmp_path / "nonexistent" / "missing.fits")},
     )
     assert resp.status_code == 404
 
 
 @pytest.mark.anyio
-async def test_extensions_404_missing_file(client):
+async def test_extensions_404_missing_file(client, tmp_path: Path):
     """Extensions endpoint should return 404 for a nonexistent file."""
     resp = await client.get(
         "/api/images/extensions",
-        params={"path": "/nonexistent/path/missing.fits"},
+        params={"path": str(tmp_path / "nonexistent" / "missing.fits")},
     )
     assert resp.status_code == 404
 
 
 @pytest.mark.anyio
-async def test_render_404_missing_file(client):
+async def test_render_404_missing_file(client, tmp_path: Path):
     """Render endpoint should return 404 for a nonexistent file."""
     resp = await client.get(
         "/api/images/image",
-        params={"path": "/nonexistent/path/missing.fits"},
+        params={"path": str(tmp_path / "nonexistent" / "missing.fits")},
     )
     assert resp.status_code == 404
 
 
 @pytest.mark.anyio
-async def test_stats_404_missing_file(client):
+async def test_stats_404_missing_file(client, tmp_path: Path):
     """Stats endpoint should return 404 for a nonexistent file."""
     resp = await client.get(
         "/api/images/stats",
-        params={"path": "/nonexistent/path/missing.fits"},
+        params={"path": str(tmp_path / "nonexistent" / "missing.fits")},
     )
     assert resp.status_code == 404
 
@@ -343,11 +344,11 @@ async def test_histogram_custom_bins(client, tmp_fits_mono):
 
 
 @pytest.mark.anyio
-async def test_histogram_404(client):
+async def test_histogram_404(client, tmp_path: Path):
     """Histogram endpoint should return 404 for missing file."""
     resp = await client.get(
         "/api/images/histogram",
-        params={"path": "/nonexistent/file.fits"},
+        params={"path": str(tmp_path / "nonexistent.fits")},
     )
     assert resp.status_code == 404
 
@@ -399,11 +400,11 @@ async def test_pixel_out_of_bounds(client, tmp_fits_mono):
 
 
 @pytest.mark.anyio
-async def test_pixel_404(client):
+async def test_pixel_404(client, tmp_path: Path):
     """Pixel endpoint should return 404 for missing file."""
     resp = await client.get(
         "/api/images/pixel",
-        params={"path": "/nonexistent/file.fits", "x": 0, "y": 0},
+        params={"path": str(tmp_path / "nonexistent.fits"), "x": 0, "y": 0},
     )
     assert resp.status_code == 404
 
@@ -525,12 +526,12 @@ async def test_header_edit_non_fits_rejected(client, tmp_path):
 
 
 @pytest.mark.anyio
-async def test_header_edit_missing_file(client):
+async def test_header_edit_missing_file(client, tmp_path: Path):
     """Header editing should return 404 for missing file."""
     resp = await client.patch(
         "/api/images/header",
         json={
-            "path": "/nonexistent/file.fits",
+            "path": str(tmp_path / "nonexistent.fits"),
             "hdu": 0,
             "operations": [{"op": "add", "key": "FOO", "value": "bar"}],
         },
@@ -825,11 +826,11 @@ def test_file_size_for_embedded_project_blob_and_traversal(tmp_path):
 
 
 @pytest.mark.anyio
-async def test_metadata_404(client):
+async def test_metadata_404(client, tmp_path: Path):
     """Metadata endpoint should return 404 for missing file."""
     resp = await client.get(
         "/api/images/metadata",
-        params={"path": "/nonexistent/file.fits"},
+        params={"path": str(tmp_path / "nonexistent.fits")},
     )
     assert resp.status_code == 404
 

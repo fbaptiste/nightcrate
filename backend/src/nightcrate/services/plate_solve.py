@@ -1262,7 +1262,9 @@ async def run_astap_chain(
             operation=operation,
         )
         outcome = run.outcome
-        if outcome == "step_timeout" and time.monotonic() >= deadline:
+        if outcome == "step_timeout" and (
+            step_timeout >= remaining or time.monotonic() >= deadline
+        ):
             outcome = "overall_timeout"
             run.result.error_message = "ASTAP solve timed out."
         reporter.finish(outcome, detail=run.detail)

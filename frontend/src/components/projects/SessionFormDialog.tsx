@@ -114,6 +114,11 @@ export default function SessionFormDialog({
       .map((f) => mkFilter(f, "My Rig"))
       .sort((a, b) => a.label.localeCompare(b.label));
 
+    const myEquipment: FilterOpt[] = filters
+      .filter((f) => !inRig(f.id) && f.is_mine)
+      .map((f) => mkFilter(f, "My Equipment"))
+      .sort((a, b) => a.label.localeCompare(b.label));
+
     const bands: FilterOpt[] = LINE_NAMES.map((ln) => ({
       key: `line:${ln}`,
       label: ln,
@@ -122,14 +127,14 @@ export default function SessionFormDialog({
       line_name: ln,
     }));
 
-    // Other equipment filters — sorted by manufacturer so MUI groupBy doesn't
-    // emit duplicate headers.
+    // Unowned equipment filters — sorted by manufacturer so MUI groupBy
+    // doesn't emit duplicate headers.
     const others: FilterOpt[] = filters
-      .filter((f) => !inRig(f.id))
+      .filter((f) => !inRig(f.id) && !f.is_mine)
       .map((f) => mkFilter(f, f.manufacturer.name))
       .sort((a, b) => a.group.localeCompare(b.group) || a.label.localeCompare(b.label));
 
-    return [...myRig, ...bands, ...others];
+    return [...myRig, ...myEquipment, ...bands, ...others];
   }, [filters, effectiveFilterIds]);
 
   const initialFilter = useMemo<FilterOpt | null>(() => {

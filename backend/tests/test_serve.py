@@ -5,6 +5,7 @@ import os
 import queue
 import signal
 import socket
+import socketserver
 import subprocess
 import sys
 import threading
@@ -213,6 +214,13 @@ def test_choose_port_all_taken():
 
 
 def test_choose_port_reuses_port_after_http_server_closes():
+    class LocalHTTPServer(HTTPServer):
+        def server_bind(self):
+            socketserver.TCPServer.server_bind(self)
+            host, port = self.server_address[:2]
+            self.server_name = host
+            self.server_port = port
+
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self):
             self.send_response(204)
@@ -221,7 +229,7 @@ def test_choose_port_reuses_port_after_http_server_closes():
         def log_message(self, _format, *_args):
             pass
 
-    server = HTTPServer(("127.0.0.1", 0), Handler)
+    server = LocalHTTPServer(("127.0.0.1", 0), Handler)
     port = server.server_address[1]
     thread = threading.Thread(target=server.serve_forever)
     thread.start()
@@ -367,8 +375,13 @@ def test_shell_eof_kills_busy_workers(tmp_path):
         assert all(not _pid_exists(pid) for pid in pids)
     finally:
         _cleanup(process)
-        if os.name != "nt":
-            for pid in pids:
+        for pid in pids:
+            if os.name == "nt":
+                try:
+                    os.kill(pid, signal.SIGTERM)
+                except OSError:
+                    pass
+            else:
                 try:
                     os.kill(pid, signal.SIGKILL)
                 except ProcessLookupError:

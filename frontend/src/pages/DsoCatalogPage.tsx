@@ -531,6 +531,7 @@ export default function DsoCatalogPage() {
           <DataGrid
             rows={listQuery.data?.items ?? []}
             columns={columns}
+            disableColumnFilter
             loading={listQuery.isLoading || listQuery.isFetching}
             paginationMode="server"
             sortingMode="server"

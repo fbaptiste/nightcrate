@@ -8,6 +8,11 @@ import ToggleButtonGroup from "@mui/material/ToggleButtonGroup";
 import Typography from "@mui/material/Typography";
 import { orderSoftwareOptions } from "@/components/shared/softwareOrder";
 import { formatSnakeCase } from "@/lib/formUtils";
+import {
+  MY_SOFTWARE_LABEL,
+  mineOptionKey,
+  withMineGroup,
+} from "@/components/rigs/mineGroup";
 import type {
   CameraOption,
   EquipmentOptions,
@@ -46,7 +51,10 @@ type GuidingMode = "none" | "oag" | "guide_scope";
 interface FlatConfigOption extends TelescopeConfigOption {
   telescope_name: string;
   manufacturer_name: string;
+  is_mine: boolean;
 }
+
+type GroupedRetained<T> = RetainedOption<T> & { __mine_group?: string };
 
 type PartGroup =
   | "telescope"
@@ -109,8 +117,12 @@ function simpleLabel(option: RetainedOption<SimpleOption>): string {
   );
 }
 
-function optionGroup(option: { retired?: true; manufacturer_name: string }): string {
-  return retainedGroup(option, option.manufacturer_name);
+function optionGroup(option: {
+  retired?: true;
+  __mine_group?: string;
+  manufacturer_name: string;
+}): string {
+  return retainedGroup(option, option.__mine_group ?? option.manufacturer_name);
 }
 
 function retainedSimpleOption(
@@ -174,9 +186,10 @@ function FilterSlots({
             <Typography sx={{ width: 48, textAlign: "right", fontSize: "13px" }}>
               {slotNumber}
             </Typography>
-            <Autocomplete<RetainedOption<FilterOption>>
+            <Autocomplete<GroupedRetained<FilterOption>>
               size="small"
-              options={filters}
+              options={withMineGroup(filters)}
+              getOptionKey={mineOptionKey}
               groupBy={optionGroup}
               getOptionLabel={(option) => retainedLabel(
                 option,
@@ -218,6 +231,7 @@ export default function RigPartsForm({
             ...config,
             telescope_name: telescope.telescope_name,
             manufacturer_name: telescope.manufacturer_name,
+            is_mine: telescope.is_mine,
           })),
         )
         .sort((a, b) => {
@@ -242,6 +256,7 @@ export default function RigPartsForm({
           effective_image_circle_mm: null,
           telescope_name: source.telescope_name,
           manufacturer_name: "",
+          is_mine: false,
         };
       });
     },
@@ -376,6 +391,17 @@ export default function RigPartsForm({
     ),
     [options.software, partSources, value.software_ids],
   );
+  const groupedSoftware = useMemo(
+    () => withMineGroup(
+      [
+        ...software.filter((option) => !option.retired),
+        ...software.filter((option) => option.retired),
+      ],
+      MY_SOFTWARE_LABEL,
+      () => 0,
+    ),
+    [software],
+  );
 
   const set = (patch: Partial<RigPartsInput>) => onChange({ ...value, ...patch });
   const guidingMode: GuidingMode = value.oag_id
@@ -448,7 +474,8 @@ export default function RigPartsForm({
         <Typography sx={labelSx}>Telescope</Typography>
         <Autocomplete
           size="small"
-          options={configs}
+          options={withMineGroup(configs)}
+          getOptionKey={mineOptionKey}
           groupBy={optionGroup}
           getOptionLabel={(option) => retainedLabel(
             option,
@@ -467,7 +494,8 @@ export default function RigPartsForm({
         <Typography sx={labelSx}>Camera</Typography>
         <Autocomplete<RetainedOption<CameraOption>>
           size="small"
-          options={cameras}
+          options={withMineGroup(cameras)}
+          getOptionKey={mineOptionKey}
           groupBy={optionGroup}
           getOptionLabel={(option) => retainedLabel(
             option,
@@ -486,7 +514,8 @@ export default function RigPartsForm({
         <Typography sx={labelSx}>Filter wheel</Typography>
         <Autocomplete<RetainedOption<FilterWheelOption>>
           size="small"
-          options={filterWheels}
+          options={withMineGroup(filterWheels)}
+          getOptionKey={mineOptionKey}
           groupBy={optionGroup}
           getOptionLabel={(option) => retainedLabel(
             option,
@@ -525,7 +554,8 @@ export default function RigPartsForm({
           <Typography sx={labelSx}>Single filter</Typography>
           <Autocomplete<RetainedOption<FilterOption>>
             size="small"
-            options={filters}
+            options={withMineGroup(filters)}
+            getOptionKey={mineOptionKey}
             groupBy={optionGroup}
             getOptionLabel={(option) => retainedLabel(
               option,
@@ -545,7 +575,8 @@ export default function RigPartsForm({
         <Typography sx={labelSx}>Mount</Typography>
         <Autocomplete<RetainedOption<SimpleOption>>
           size="small"
-          options={mounts}
+          options={withMineGroup(mounts)}
+          getOptionKey={mineOptionKey}
           groupBy={optionGroup}
           getOptionLabel={simpleLabel}
           value={mounts.find((option) => option.id === value.mount_id) ?? null}
@@ -560,7 +591,8 @@ export default function RigPartsForm({
         <Typography sx={labelSx}>Focuser</Typography>
         <Autocomplete<RetainedOption<SimpleOption>>
           size="small"
-          options={focusers}
+          options={withMineGroup(focusers)}
+          getOptionKey={mineOptionKey}
           groupBy={optionGroup}
           getOptionLabel={simpleLabel}
           value={focusers.find((option) => option.id === value.focuser_id) ?? null}
@@ -613,7 +645,8 @@ export default function RigPartsForm({
           <Typography sx={labelSx}>Off-axis guider</Typography>
           <Autocomplete<RetainedOption<SimpleOption>>
             size="small"
-            options={oags}
+            options={withMineGroup(oags)}
+            getOptionKey={mineOptionKey}
             groupBy={optionGroup}
             getOptionLabel={simpleLabel}
             value={oags.find((option) => option.id === value.oag_id) ?? null}
@@ -630,7 +663,8 @@ export default function RigPartsForm({
           <Typography sx={labelSx}>Guide scope</Typography>
           <Autocomplete<RetainedOption<GuideScopeOption>>
             size="small"
-            options={guideScopes}
+            options={withMineGroup(guideScopes)}
+            getOptionKey={mineOptionKey}
             groupBy={optionGroup}
             getOptionLabel={simpleLabel}
             value={guideScopes.find((option) => option.id === value.guide_scope_id) ?? null}
@@ -647,7 +681,8 @@ export default function RigPartsForm({
           <Typography sx={labelSx}>Guide camera</Typography>
           <Autocomplete<RetainedOption<CameraOption>>
             size="small"
-            options={cameras}
+            options={withMineGroup(cameras)}
+            getOptionKey={mineOptionKey}
             groupBy={optionGroup}
             getOptionLabel={(option) => retainedLabel(
               option,
@@ -667,7 +702,8 @@ export default function RigPartsForm({
         <Typography sx={labelSx}>Computer</Typography>
         <Autocomplete<RetainedOption<SimpleOption>>
           size="small"
-          options={computers}
+          options={withMineGroup(computers)}
+          getOptionKey={mineOptionKey}
           groupBy={optionGroup}
           getOptionLabel={simpleLabel}
           value={computers.find((option) => option.id === value.computer_id) ?? null}
@@ -680,11 +716,15 @@ export default function RigPartsForm({
 
       <Box sx={rowSx}>
         <Typography sx={labelSx}>Software</Typography>
-        <Autocomplete<RetainedOption<SoftwareOption>, true>
+        <Autocomplete<GroupedRetained<SoftwareOption>, true>
           multiple
           size="small"
-          options={software}
-          groupBy={(option) => formatSnakeCase(option.category)}
+          options={groupedSoftware}
+          getOptionKey={mineOptionKey}
+          groupBy={(option) => retainedGroup(
+            option,
+            option.__mine_group ?? formatSnakeCase(option.category),
+          )}
           getOptionLabel={(option) => retainedLabel(option, option.name, option.name)}
           value={software.filter((option) => (value.software_ids ?? []).includes(option.id))}
           onChange={(_event, selected) => set({ software_ids: selected.map((option) => option.id) })}

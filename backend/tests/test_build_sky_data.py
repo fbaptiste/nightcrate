@@ -375,7 +375,7 @@ def test_write_copies_licence_and_sources(tmp_path: Path):
     write_sky_data(data, licence, tmp_path)
 
     assert (tmp_path / "LICENSE-d3-celestial.txt").read_bytes() == licence
-    assert (tmp_path / "SOURCES.md").read_text() == SOURCES_MD
+    assert (tmp_path / "SOURCES.md").read_text(encoding="utf-8") == SOURCES_MD
     assert "https://creativecommons.org/licenses/by-sa/4.0/" in SOURCES_MD
     assert "Credit: ESA" in SOURCES_MD
     assert "VizieR" not in SOURCES_MD

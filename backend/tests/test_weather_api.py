@@ -4,6 +4,7 @@ import json
 import re
 from datetime import UTC, date, datetime, timedelta
 from decimal import ROUND_HALF_UP, Decimal
+from functools import lru_cache
 from unittest.mock import AsyncMock, patch
 from zoneinfo import ZoneInfo
 
@@ -29,6 +30,17 @@ from nightcrate.services.weather import (
 )
 
 NOW = datetime(2026, 10, 17, 19, tzinfo=UTC)  # local noon in Los Angeles
+
+
+@lru_cache(maxsize=512)
+def _cached_night_summary(latitude, longitude, elevation_m, night_date, site_timezone):
+    """Reuse deterministic real astronomy across response-contract tests."""
+    return compute_night_summary(latitude, longitude, elevation_m, night_date, site_timezone)
+
+
+@pytest.fixture(autouse=True)
+def _reuse_deterministic_astronomy(monkeypatch):
+    monkeypatch.setattr("nightcrate.api.weather.compute_night_summary", _cached_night_summary)
 
 
 @pytest.fixture
@@ -317,6 +329,7 @@ async def test_forecast_response_equivalent_to_exact_astronomy(
         "rules": PRESETS["attended_session"][1].model_dump(),
     }
 
+    _cached_night_summary.cache_clear()
     with monkeypatch.context() as exact_patch:
         exact_patch.setattr(
             astronomy,
@@ -327,6 +340,7 @@ async def test_forecast_response_equivalent_to_exact_astronomy(
         exact_response = await _forecast(client, body)
 
     _night_summary_cached.cache_clear()
+    _cached_night_summary.cache_clear()
     fast_response = await _forecast(client, body)
 
     assert exact_response.status_code == 200, exact_response.text

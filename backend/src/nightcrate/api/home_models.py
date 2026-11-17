@@ -8,6 +8,7 @@ from typing import Literal
 from pydantic import BaseModel
 
 from nightcrate.api.project_models import ProjectStatus
+from nightcrate.services.gallery import GalleryCrop
 
 ProjectStage = Literal[
     "not_started",
@@ -43,6 +44,7 @@ class RecentProject(BaseModel):
     constellation: str | None
     thumbnail_version: str
     has_image: bool
+    crops: dict[Literal["small", "medium", "large"], GalleryCrop]
     total_minutes: float
     lines: list[HomeIntegrationLine]
     last_date: date
@@ -57,6 +59,7 @@ class LatestPicture(BaseModel):
     status: ProjectStatus
     target_label: str | None
     constellation: str | None
+    crops: dict[Literal["small", "medium", "large"], GalleryCrop]
 
 
 class MonthSummary(BaseModel):

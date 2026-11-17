@@ -1,21 +1,12 @@
 """Preservation tests for migration 0065's solver provenance columns."""
 
 import sqlite3
-from pathlib import Path
 
 import pytest
-from yoyo import get_backend, read_migrations
 
-from nightcrate.db.migrations import MIGRATIONS_DIR, apply_migrations
+from nightcrate.db.migrations import apply_migrations
 
-
-def _apply_through_0064(db_path: Path) -> None:
-    with get_backend(f"sqlite:///{db_path}") as backend:
-        migrations = read_migrations(str(MIGRATIONS_DIR))
-        through_0064 = backend.to_apply(migrations).filter(
-            lambda migration: migration.id != "0065.project_solve_solver"
-        )
-        backend.apply_migrations(through_0064)
+MIGRATION_0065 = "0065.project_solve_solver"
 
 
 def _insert_solve(conn: sqlite3.Connection, number: int) -> tuple[int, int, int]:
@@ -84,9 +75,8 @@ def _insert_solve(conn: sqlite3.Connection, number: int) -> tuple[int, int, int]
     return solve_id, link_id, dso_id
 
 
-def test_migration_0065(tmp_path):
-    db_path = tmp_path / "before_0065.db"
-    _apply_through_0064(db_path)
+def test_migration_0065(tmp_path, pre_migration_db):
+    db_path = pre_migration_db(MIGRATION_0065, "before_0065.db")
     with sqlite3.connect(db_path) as conn:
         first = _insert_solve(conn, 1)
         second = _insert_solve(conn, 2)

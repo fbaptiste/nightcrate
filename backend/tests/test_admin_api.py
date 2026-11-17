@@ -629,12 +629,13 @@ async def test_remove_unknown_database_rejected(client, tmp_path):
 
 
 @pytest.mark.anyio
-async def test_mkdir_invalid_path(client):
+async def test_mkdir_invalid_path(client, tmp_path):
     """Creating a directory at an invalid path should return 400."""
-    # Use a path that can't be created (e.g., a file as parent)
+    parent_file = tmp_path / "not-a-directory"
+    parent_file.write_text("file", encoding="utf-8")
     resp = await client.post(
         "/api/admin/mkdir",
-        json={"path": "/dev/null/impossible/path"},
+        json={"path": str(parent_file / "impossible")},
     )
     assert resp.status_code == 400 or resp.status_code == 409
 

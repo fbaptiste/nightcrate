@@ -32,7 +32,7 @@ after license review.
 | 7 | Rendered checks for UI changes, including tablet and accessibility behavior | Claude | Affected flows exercised |
 | 8 | Candidate preparation (`finalize-session` *Prepare*): `sync-docs`, version files, full checks, batched Codex review of material Claude-authored changes | Claude | Candidate identified; checks recorded |
 | 9 | Acceptance test on the prepared candidate | Fred | Fred accepts; a later behavior change needs affected checks and renewed acceptance |
-| 10 | Publish (`finalize-session` *Publish*): commit, tag, push, PR | Claude | Fred's authorization; remote branch SHA equals local HEAD |
+| 10 | Publish (`finalize-session` *Publish*): commit, local review of the committed diff, push, then the PR, opened last so CI runs once (Fred, 2026-11-15) | Claude | Fred's authorization; remote branch SHA equals local HEAD; the PR's required checks pass |
 | 11 | Merge | Fred | Outcome states updated (§8) |
 
 Fred may test phases earlier. One authorization may name several delivery

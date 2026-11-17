@@ -67,8 +67,8 @@ import { invalidateProjectInfo } from "@/api/projectInfo";
 
 const TAB = {
   overview: 0,
-  sessions: 1,
-  info: 2,
+  info: 1,
+  sessions: 2,
   files: 3,
   plateSolve: 4,
   notes: 5,
@@ -524,8 +524,8 @@ export default function ProjectDetailPage() {
         setSearchParams(next, { replace: true });
       }} sx={{ mb: 2 }}>
         <Tab label="Overview" />
-        <Tab label="Sessions" />
         <Tab label="Info" />
+        <Tab label="Sessions" />
         <Tab label="Files" />
         <Tab label="Plate Solve" />
         <Tab label="Notes" />

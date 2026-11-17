@@ -22,10 +22,11 @@ forecasts and survey imagery are fetched from external services when needed.
   - The last 12 months (hours, nights, new pictures, your best night).
   - Your rigs and locations, with their use.
 - **Projects and catalog:** bind folders or archives, classify captures from
-  headers, tag rigs/targets, inspect frames in a table grouped by night (or as
+  headers, tag each folder's rig, inspect frames in a table grouped by night (or as
   thumbnails), keep notes and finished images.
-  Files stay where they are. Rescanning updates the catalog without duplicating
-  records within a project. Files a scan couldn't catalog, such as a damaged
+  Files stay where they are. While a folder is scanned, the Files tab shows
+  the files being read, even if you leave and come back. Rescanning updates
+  the catalog without duplicating records within a project. Files a scan couldn't catalog, such as a damaged
   XISF, are listed with the reason under "Not cataloged". A project can start with a finished image and manual
   sessions; importing raw captures is optional. Plate solving a project image
   identifies the catalog objects in it, and you choose one or more as main

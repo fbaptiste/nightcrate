@@ -49,9 +49,8 @@ def _digest(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def test_migration_0071_preserves_rows(tmp_path: Path):
-    db_path = tmp_path / "upgrade.db"
-    _apply_through(db_path, MIGRATION_0070)
+def test_migration_0071_preserves_rows(tmp_path: Path, pre_migration_db):
+    db_path = pre_migration_db(MIGRATION_0071)
     files = [tmp_path / f"cache-{index}.jpg" for index in range(3)]
     for index, path in enumerate(files):
         path.write_bytes(bytes([index + 1]) * 256)

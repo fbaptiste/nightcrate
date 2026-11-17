@@ -3,8 +3,8 @@ import Tooltip from "@mui/material/Tooltip";
 import Typography from "@mui/material/Typography";
 import { Link } from "react-router-dom";
 import type { LatestPicture, YearSummary } from "@/api/home";
-import { renderedImageUrl } from "@/api/projects";
-import { pickRendition } from "@/lib/galleryRendition";
+import { projectThumbnailUrl, renderedImageUrl } from "@/api/projects";
+import { homeFramingSize, pickRendition } from "@/lib/galleryRendition";
 import { displayConstellation } from "@/lib/constellations";
 import { projectStatusLabel } from "@/lib/projectStatus";
 import {
@@ -34,6 +34,10 @@ function LatestPicturePanel({
 }) {
   const target = picture ? targetText(picture) : null;
   const dpr = typeof window === "undefined" ? 1 : window.devicePixelRatio || 1;
+  const framingSize = picture
+    ? homeFramingSize(picture.crops, picture.image_id)
+    : null;
+  const framing = picture && framingSize ? picture.crops[framingSize] : null;
   return (
     <Box component="section">
       <Typography component="h2" sx={{ fontSize: 16, fontWeight: 600 }}>
@@ -52,7 +56,9 @@ function LatestPicturePanel({
           <Box
             component="img"
             alt=""
-            src={renderedImageUrl(picture.project_id, picture.image_id, pickRendition(700, dpr), workspaceKey)}
+            src={framingSize && framing
+              ? projectThumbnailUrl(picture.project_id, framingSize, String(framing.id), workspaceKey)
+              : renderedImageUrl(picture.project_id, picture.image_id, pickRendition(700, dpr), workspaceKey)}
             sx={{ display: "block", width: "100%", height: 340, objectFit: "cover" }}
           />
           <Box sx={{ position: "absolute", left: 0, right: 0, bottom: 0, p: "26px 14px 12px", background: "linear-gradient(transparent, rgba(0,0,0,0.78))", fontSize: 13 }}>

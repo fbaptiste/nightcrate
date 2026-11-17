@@ -72,8 +72,10 @@ class TestImageEndpoints:
         assert resp.status_code == 200
         assert resp.headers["content-type"] == "image/png"
 
-    async def test_nonexistent_file(self, client: AsyncClient):
-        resp = await client.get("/api/images/extensions", params={"path": "/nonexistent/file.fits"})
+    async def test_nonexistent_file(self, client: AsyncClient, tmp_path: Path):
+        resp = await client.get(
+            "/api/images/extensions", params={"path": str(tmp_path / "nonexistent.fits")}
+        )
         assert resp.status_code == 404
 
     async def test_relative_path_rejected(self, client: AsyncClient):
@@ -136,15 +138,16 @@ class TestRecentFiles:
         assert data[0]["path"] == str(tmp_fits_mono)
         assert data[0]["name"] == tmp_fits_mono.name
 
-    async def test_stale_entries_pruned(self, client: AsyncClient):
+    async def test_stale_entries_pruned(self, client: AsyncClient, tmp_path: Path):
         # Record a file that doesn't exist
-        resp = await client.post("/api/images/recent", params={"path": "/nonexistent/ghost.fits"})
+        missing = str(tmp_path / "nonexistent" / "ghost.fits")
+        resp = await client.post("/api/images/recent", params={"path": missing})
         assert resp.status_code == 200
 
         # Fetch — should not include the non-existent file
         resp = await client.get("/api/images/recent")
         paths = [r["path"] for r in resp.json()]
-        assert "/nonexistent/ghost.fits" not in paths
+        assert missing not in paths
 
 
 class TestFilesEndpoints:

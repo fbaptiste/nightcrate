@@ -1,13 +1,15 @@
 # NightCrate — active plan
 
-**Version:** v0.54.0 — Installers and updates
+**Version:** v0.54.1 — Faster test runs, grid filters and pickers
 
-**Branch:** `v0.54.0/installers-and-updates`
+**Branch:** `v0.54.1/faster-tests-and-grid-filters`
 
 **Status:** Complete — awaiting merge
 
-**Next version** (Fred, 2026-11-14): LAN mode as v0.55.0, the second half
-of Distribution.
+**Next version** (Fred, 2026-11-15): colour-camera subs in the image
+analyzer, right after v0.54.1 (its number is set when it starts; see the
+roadmap). LAN mode, the second half of Distribution, follows (Fred,
+2026-11-14).
 
 **Tablet and phone review** (Fred, 2026-11-14): "I will do a specific
 targeted review on ipad functionality at a later stage (there's a whole lot
@@ -27,7 +29,233 @@ far:
 - v0.46.0's framing dialog: dragging the frame, and the long-press tooltip;
 - Safari, Firefox and touch devices on v0.48.0's Messier page.
 
+## v0.54.1 — Faster test runs, grid filters and pickers
+
+Started on 2026-11-15 from `main` at `36738e7`, after v0.54.0 merged.
+Fred chose the version number the same day; LAN mode stays v0.55.0. He
+approved the plan for it in the session; the spec and implementation plan
+in `docs/superpowers/` follow from it.
+
+- [x] Start from updated `main` on `v0.54.1/faster-tests-and-grid-filters`.
+- [x] Spec and implementation plan, with Codex's review (Fred asked for
+  its second opinion on the test speed-up):
+  [the spec](docs/superpowers/specs/2026-11-15-v0.54.1-faster-tests-and-grid-filters-design.md)
+  and [the plan](docs/superpowers/plans/2026-11-15-v0.54.1-faster-tests-and-grid-filters.md).
+  It converged in five rounds; every finding was accepted, and Fred's
+  additions during planning were reviewed as new material. The plan's
+  "Codex review" section lists what changed.
+- [x] **PR last** (Fred, 2026-11-15: "do not open the PR until the very
+  last moment when everything is ready"): `finalize-session`,
+  `docs/agent-collaboration.md` §2, and Claude's memory.
+- [x] **CI and the merge gate** (Fred, 2026-11-15). The checks run on PRs
+  only, not again after a merge; "no merging unless the CI checks pass
+  (with admin override of course)". Three throwaway `ci/v0.54.1` runs
+  measured the fix before the PR (Fred approved each); the branch is
+  deleted. Since 2026-11-17, `main` requires `checks (macos-15)`,
+  `checks (ubuntu-22.04)` and `checks (windows-2022)` on an up-to-date
+  branch, with admins exempt; force-pushes and deletion stay blocked.
+- [x] **Faster tests.** PR #33's checks never finished: each job was
+  stopped at 60 minutes. Ubuntu reached 63%; Windows managed 72 tests per
+  about 21 minutes; macOS spent 43 minutes before its first test. Causes
+  found:
+  - the automatic `_test_db` fixture in `backend/tests/conftest.py`
+    builds a full database (every migration plus the seed data) before
+    every one of the 4,284 tests: about 1 s per test on Fred's Mac (62
+    minutes serially, 13 on 16 cores), far more on Windows;
+  - yoyo looks up the computer's network name for each of the 74
+    migrations it records; one lookup took 70 s on GitHub's Mac runner.
+  Fix: build the database once per worker and copy it for each test;
+  drop yoyo's lookup in the app as well as the tests (Fred: "Fix it in
+  v0.54.1"); make the suite pass on Windows.
+  - **Under 10 minutes** (Fred, 2026-11-16: "we really need to get these
+    runs down to under 10 minutes or even less", with Codex's view on
+    pruning). The second run took 17 min on macOS, 25 on Ubuntu and 57 on
+    Windows. Codex found that pruning saves only seconds: the time went
+    into databases rebuilt per test (about 100 s each on Windows) and the
+    planner's full-year computations, repeated on every worker. Now:
+    - templates for every database the tests build;
+    - shared full-year results, with date-specific checks computing only
+      their window;
+    - 16 duplicate cases removed;
+    - each system's tests split across parallel jobs (macOS 3, Ubuntu 4,
+      Windows 6).
+
+    Third run (2026-11-17): everything passed, including Windows. All
+    4,299 tests ran on each system, and the whole run took 8 minutes. The
+    slowest jobs took 7.9 min on macOS, 6.6 on Ubuntu and 7.2 on Windows.
+    Locally the suite takes 1:16 (was 5:41).
+- [x] **Equipment: "Owned" crashes the page while a Manufacturer filter is
+  set** (Fred, 2026-11-15, in the installed v0.54.0; he deferred it from
+  v0.54.0). In Equipment's cameras, he filtered the grid's Manufacturer
+  column to ZWO, marked his cameras, then clicked Owned with the filter
+  still on: "Unexpected Application Error! MUI X: No filter operator found
+  for column 'manufacturer' and operator value 'is'." Present since the
+  Owned toggle (v0.29.1). Cause: a dropdown column turns into a text
+  column whenever the loaded list has no values for it (an empty or
+  still-loading list), and the grid keeps the dropdown's filter. Fred asked
+  for every grid like it to be checked. Found in that sweep:
+  - Show Retired, an empty Owned list, and a filter set before the rows
+    arrive crash the same way;
+  - the filter-wheel Positions filter never matches;
+  - unsaved FITS header edits carry over to another file whose header is
+    cached;
+  - the DSO catalog's column filters only filter the current page;
+  - a page crash replaces the whole app.
+- [x] **Equipment lists stop at 100 rows** (Fred, 2026-11-15: "I can scroll
+  all the way down and it stops on QHY cameras - I cannot get to the ZWO
+  cameras"). MUI X Community shows at most 100 rows per page, and the
+  equipment grid hides its footer, so later rows in manufacturer order
+  can't be reached. That affects cameras (247 seeded), telescopes (117) and
+  filters (108). Fix: show the page controls (25/50/100, 100 by default),
+  and open `?select=ID` links on the item's page.
+- [x] **Project "Processed with"** (Fred, 2026-11-15): its list is too
+  narrow to read, and owned software isn't listed first the way the rig
+  builder lists owned equipment. Found in the sweep: the rig builder's
+  software picker, and every picker in the project's rig change and
+  Correct setup dialogs, don't list owned items first either.
+- [x] **Project editor: Info becomes the second tab, right after Overview**
+  (Fred, 2026-11-15). The order becomes Overview, Info, Sessions, Files,
+  Plate Solve, Notes. Tabs are opened by name in links (`?tab=info`,
+  `?tab=plate-solve`), so only the `TAB` map and the labels' order in
+  `pages/ProjectDetailPage.tsx` change.
+- [x] **Remove the per-folder Target** (Fred, 2026-11-15: "I don't see the
+  utility for it, not even later"; full removal chosen). Since v0.41.3 a
+  source folder could declare its target, and ingest stamped it on the
+  folder's lights. It was only shown in the frames table's Target column
+  (multi-target projects) and the frame corrections dialog;
+  `session_summary.distinct_targets` counted it and nothing read that.
+  Remove:
+  - the field, the column and the correction;
+  - ingest's target stamping;
+  - `project_source_folder.project_target_id` and
+    `sub_frame.project_target_id`/`project_target_source`, through a
+    forward migration that rebuilds both tables (the `legacy_alter_table`
+    pattern of 0038/0040);
+  - the view column.
+  Verified on a copy of Fred's database at the preceding migration and on a
+  fresh one.
+- [x] **Gallery: the expand button shows through a flipped card** (Fred,
+  2026-11-15, installed app). The button sits on the front face with its
+  own `z-index`, and WebKit doesn't reliably hide such children of a
+  `backface-visibility: hidden` face. So it appears mirrored on the back,
+  over the text. Fix in the shared `components/common/FlipTile.tsx`: the
+  face turned away is hidden outright at the halfway point of the turn.
+  That covers the Messier tiles too, which have the same button and
+  arrows.
+- [x] **Show the files being added** (Fred, 2026-11-15: "adding files to a
+  project can take quite a bit of time - just the Scanning spinner is not
+  sufficient … a scrolling display that shows the current and previous 9
+  files that were processed"). Today a scan is one request that returns
+  when the whole folder is done (`api/ingest.py:start_ingest`), and the page
+  shows only a spinner. Planned:
+  - an in-memory progress record for the running scan, like
+    `services/catalog_progress.py`, with the folder, the stage (listing,
+    reading headers, saving, grouping sessions), files done of total, and
+    the last 10 files with each one's outcome;
+  - per-file updates as each header read finishes (`_parse_in_pool` gathers
+    them all today);
+  - a progress endpoint the Files tab polls while a scan runs;
+  - during the scan, the tab's main area shows the folder, the stage, "N of
+    M files", and the 10 most recent files, newest at the bottom. A file
+    that couldn't be read says so in words, not only by colour;
+  - **coming back to a running scan** (Fred, 2026-11-15: "it allows me to
+    move away from the scan in progress. But it is actually continuing in
+    the background - when I come back to it and it is still running, it
+    should show that - instead it shows the re-scan button"). The panel,
+    the folder's "Scanning…" state and the disabled scan buttons follow the
+    backend's record of the running scan, not the page that started it
+    (plan B10 Step 3).
+- [x] **Home pictures use the project's framing** (Fred, 2026-11-15: "the
+  project images need to be cropped from the large thumbnail definition -
+  not the entire original image … for example the Leo Triplet"). Today
+  "Latest picture" loads the whole picture into a 660×340 box and keeps the
+  centre band. The recent cards ask for the medium framing, and without one
+  get the whole image. Planned:
+  - recent cards: large, else medium, else small framing, else the whole
+    image;
+  - latest picture: a framing of that picture, in the same order, else the
+    whole picture.
+
+  The gallery's framing lookup moves into a shared helper.
+- [x] **Image analyzer: sensor temperature shows float noise** ("Sensor
+  -5.30000019073486°C", seen in Fred's screenshot on 2026-11-15). The value
+  is printed as stored (`ImageAnalyzerView.tsx:1125`); show one decimal,
+  e.g. "−5.3 °C".
+- [x] **Home pictures: crop to fill kept** (Fred, 2026-11-16). He was
+  shown taller 4:3 boxes and dark side bars and kept the approved boxes,
+  so a spread-out target such as the Leo Triplet can still be cut on Home.
+- [x] **Windows: a second launch crashed instead of refusing** (found by
+  the first full Windows run of the checks, 2026-11-16; since v0.54.0).
+  The instance lock read a byte that the running copy had locked, which
+  Windows refuses. It now sizes the file instead, and a test covers the
+  Windows path on every platform. The same run's other 36 failures were
+  tests that assumed a Mac or Linux.
+- [x] **An interrupted scan committed half-done work** (found by the fresh
+  review of the later changes, 2026-11-16; older than v0.54.0). Quitting
+  the app mid-scan, or an error while grouping sessions, could leave a
+  folder partly saved or every frame without its rig. The scan now rolls
+  back before recording that it was cancelled or failed.
+- [x] **Implementation** (Codex: phases A-1, A-2, B-1, B-2; Claude's review
+  of each, with fix cycles) and **checks** (Claude, 2026-11-16; the
+  candidate's on 2026-11-17):
+  - **backend:** 4,295 passed and 4 skipped, in 1 min 18 s at `-n auto`
+    (base 13 min). Ruff, format and bandit are clean (no security
+    findings). A full run on 2026-11-16 left the real app-data folder
+    unchanged;
+  - **migration 0074 on a copy of Fred's database** (3,183 frames,
+    9 folders): row counts, counters, integrity and foreign keys
+    unchanged, and every remaining value identical;
+  - **frontend:** every `check:` script and the build pass, and lint is
+    unchanged from its 78-finding baseline;
+  - **in headless Chrome** on a private copy of Fred's workspace, each bug
+    was reproduced on the pre-fix frontend first, then passed:
+    - the Owned crash and its sibling paths;
+    - the 100-row limit and `?select=` paging;
+    - the Positions filter;
+    - FITS header edits carrying over;
+    - the error panel;
+    - owned-first pickers and the "Processed with" width;
+    - the tab order;
+    - the flip (Chrome only);
+    - the scan panel, including a scan started elsewhere and the summary
+      shown once;
+    - Home framings;
+    - `−5.3 °C`.
+- [x] CI on the throwaway `ci/v0.54.1` branch; then the merge gate.
+- [x] Fresh Codex reviews: migration 0074 and the Target removal
+  (high-stakes); the other material changes; then the changes made after
+  them (the plan's "Codex review" section).
+- [ ] Prepare, Fred's acceptance (including the flip in Safari or the
+  installed app), then Publish with the PR opened last.
+
+**From the start sweep (2026-11-15):** nothing is due.
+- v0.46.0-R1 waits for v0.55.0's LAN design.
+- v0.47.0-R1 and R2 stay parked, as Fred asked on 2026-11-12.
+- The v0.50.0 entries were closed and the v0.52.0 ones resolved
+  (2026-11-14).
+
+**Before the first release** (carried from v0.54.0; Fred, 2026-11-15: "no
+actual release yet. we still need to work through some additional things"). Merging doesn't
+release; `release.yml` builds a draft only when Fred says "release".
+- [ ] The additional work Fred brings next.
+- [ ] Fred's check on Windows: install, first run, a workspace, Use My
+  Location, and the SmartScreen step. A Windows 11 virtual machine on his
+  Mac runs the x64 installer through Windows' x64 emulation; CI covers
+  native x64. Known before then: a few displayed file names (the image
+  analyzer's title, activity lines, frame names) take the text after the
+  last `/`, so Windows would show whole paths there; switch them to
+  `lib/paths.ts`'s `baseName`, minding archive (`::`) paths.
+- [ ] Fred's check on Linux (x64; the Mac can't run the AppImage natively).
+- [ ] An update test through the app's own update flow, from one build to
+  a newer one, with the page open just before updating: the restarted
+  window shows the new version's page, and the workspace is intact. CI's
+  update rehearsal checks the backend's version after the update, not the
+  window's page; adding that check is part of this item.
+
 ## v0.54.0 — Installers and updates
+
+Merged in [PR #33](https://github.com/fbaptiste/nightcrate/pull/33) on
+2026-11-15.
 
 Fred shaped Distribution on 2026-11-14 and split it in two: this version
 makes NightCrate installable and lets it update itself; LAN mode follows as
@@ -153,24 +381,6 @@ after v0.53.0 merged.
     New Database's browser lists his drives and volumes, opens beside the
     current workspace and offers New Folder; Add Existing Database's lists
     the workspace's `nightcrate.db` and fills in the dialog.
-
-**Before the first release** (Fred, 2026-11-15: "no actual release yet. we
-still need to work through some additional things"). Merging doesn't
-release; `release.yml` builds a draft only when Fred says "release".
-- [ ] The additional work Fred brings next.
-- [ ] Fred's check on Windows: install, first run, a workspace, Use My
-  Location, and the SmartScreen step. A Windows 11 virtual machine on his
-  Mac runs the x64 installer through Windows' x64 emulation; CI covers
-  native x64. Known before then: a few displayed file names (the image
-  analyzer's title, activity lines, frame names) take the text after the
-  last `/`, so Windows would show whole paths there; switch them to
-  `lib/paths.ts`'s `baseName`, minding archive (`::`) paths.
-- [ ] Fred's check on Linux (x64; the Mac can't run the AppImage natively).
-- [ ] An update test through the app's own update flow, from one build to
-  a newer one, with the page open just before updating: the restarted
-  window shows the new version's page, and the workspace is intact. CI's
-  update rehearsal checks the backend's version after the update, not the
-  window's page; adding that check is part of this item.
 
 ### Packaging test results (Claude, 2026-11-14)
 
@@ -4086,6 +4296,26 @@ v0.52.0 and the Home page as v0.53.0, both before Distribution. On
 2026-11-14 he split Distribution in two: installers and updates as v0.54.0
 (the active version above), and LAN mode as v0.55.0.
 Version numbers are otherwise assigned when each version starts.
+
+### Colour-camera subs in the image analyzer (next, after v0.54.1)
+
+Fred, 2026-11-15, its own version. One-shot-colour raws (Bayer mosaics,
+`BAYERPAT`) show in the analyzer as a grey
+mosaic. After the auto-stretch, each 2×2 RGGB block is a checker, and when
+zoomed out (28%) the browser's downscaling (`FitsImage.tsx:608`,
+`imageRendering: "auto"`) aliases it into a coarse grid. Only the plate
+solver knows the Bayer pattern (`native_solver/extract.py`, 2×2 bin).
+Scope for its spec:
+- colour display (debayer) and its stretch;
+- per-channel statistics (today a single "L");
+- the pixel inspector;
+- what aberration and star measurements do with colour data;
+- smooth downscaling when zoomed out, for every image.
+
+Found while checking an M101 sub whose Identify overlay looked wrong. The
+overlay was right: ASTAP's independent solve placed every label within
+about 3 px. The NGC objects are HII regions in M101's arms, which a single
+2-minute sub barely shows.
 
 ### LAN mode (v0.55.0)
 

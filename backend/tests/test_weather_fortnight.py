@@ -17,7 +17,19 @@ from nightcrate.main import app
 from nightcrate.services.astronomy import compute_night_summary
 from nightcrate.services.imaging_rules import PRESETS
 from nightcrate.services.weather import CloudModelData
-from tests.test_weather_api import NOW, _data, _location, _model_series, _weather
+from tests.test_weather_api import (
+    NOW,
+    _cached_night_summary,
+    _data,
+    _location,
+    _model_series,
+    _weather,
+)
+
+
+@pytest.fixture(autouse=True)
+def _reuse_deterministic_astronomy(monkeypatch):
+    monkeypatch.setattr("nightcrate.api.weather.compute_night_summary", _cached_night_summary)
 
 
 @pytest.fixture

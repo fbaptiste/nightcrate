@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import shutil
 import sqlite3
 import stat
@@ -776,11 +777,17 @@ def test_atomic_json_write_preserves_existing_mode_and_uses_readable_default(tmp
     path = tmp_path / "version.json"
 
     vizier._atomic_write_json(path, {"category": "vizier", "files": {}})
-    assert stat.S_IMODE(path.stat().st_mode) == 0o644
+    if os.name == "nt":
+        assert os.access(path, os.R_OK | os.W_OK)
+    else:
+        assert stat.S_IMODE(path.stat().st_mode) == 0o644
 
     path.chmod(0o640)
     vizier._atomic_write_json(path, {"category": "vizier", "files": {"test": {}}})
-    assert stat.S_IMODE(path.stat().st_mode) == 0o640
+    if os.name == "nt":
+        assert os.access(path, os.R_OK | os.W_OK)
+    else:
+        assert stat.S_IMODE(path.stat().st_mode) == 0o640
 
 
 @pytest.mark.anyio

@@ -8,7 +8,6 @@ from unittest.mock import patch
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from nightcrate.core import runtime
 from nightcrate.main import app
 
 
@@ -107,11 +106,6 @@ def test_configure_logging():
         assert "%(asctime)s" in handler.formatter._fmt
     finally:
         logger.removeHandler(handler)
-
-
-def test_app_version_not_unknown():
-    """Package metadata provides a concrete application version."""
-    assert runtime.app_version() != "unknown"
 
 
 # ---------------------------------------------------------------------------

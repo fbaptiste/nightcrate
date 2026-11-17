@@ -4,8 +4,11 @@ from __future__ import annotations
 
 import hashlib
 import os
+import time
 from pathlib import Path
 from types import SimpleNamespace
+
+import pytest
 
 from nightcrate.catalog_loader import hash as hash_module
 from nightcrate.catalog_loader.hash import file_sha256
@@ -27,15 +30,30 @@ def test_file_sha256_reuses_digest_without_reopening(tmp_path: Path, monkeypatch
     assert file_sha256(path) == digest
 
 
+@pytest.mark.skipif(
+    os.name == "nt",
+    reason="Windows st_ctime is creation time, so this POSIX change-time behavior is unavailable",
+)
 def test_file_sha256_rehashes_same_size_with_restored_mtime(tmp_path: Path):
     path = tmp_path / "catalog.tsv"
     path.write_bytes(b"first")
     before = path.stat()
     first = file_sha256(path)
 
-    path.write_bytes(b"other")
-    os.utime(path, ns=(before.st_atime_ns, before.st_mtime_ns))
+    # The cache key includes ctime, which Linux advances in clock ticks of a
+    # few milliseconds: a rewrite inside the same tick is indistinguishable
+    # (CI, 2026-11-16). Rewrite until ctime has moved, as any real
+    # replacement of a catalog file would be.
+    hashed_ctime = path.stat().st_ctime_ns
+    deadline = time.monotonic() + 2
+    while True:
+        path.write_bytes(b"other")
+        os.utime(path, ns=(before.st_atime_ns, before.st_mtime_ns))
+        if path.stat().st_ctime_ns != hashed_ctime or time.monotonic() > deadline:
+            break
+        time.sleep(0.005)
 
+    assert path.stat().st_ctime_ns != hashed_ctime
     assert file_sha256(path) != first
 
 

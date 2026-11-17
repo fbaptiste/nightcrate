@@ -36,6 +36,18 @@ export function cropSizeForView(view: GalleryView): CropSize {
   return view === "list" ? "small" : view;
 }
 
+/** Prefer the most intentional Home framing available for this picture. */
+export function homeFramingSize(
+  crops: Partial<Record<CropSize, { id: number; image_id: number }>>,
+  imageId?: number,
+): CropSize | null {
+  for (const size of ["large", "medium", "small"] as const) {
+    const crop = crops[size];
+    if (crop && (imageId === undefined || crop.image_id === imageId)) return size;
+  }
+  return null;
+}
+
 /**
  * | item state        | result URL source                         |
  * | small crop id 12  | project thumbnail, small, version 12      |

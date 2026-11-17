@@ -1,5 +1,5 @@
 import { apiFetch } from "./client";
-import type { ProjectStatus, Stage } from "./projects";
+import type { CropSize, ProjectStatus, Stage } from "./projects";
 import type { Verdict } from "./weather";
 
 export interface StageCounts {
@@ -26,6 +26,7 @@ export interface RecentProject {
   constellation: string | null;
   thumbnail_version: string;
   has_image: boolean;
+  crops: Partial<Record<CropSize, { id: number; image_id: number }>>;
   total_minutes: number;
   lines: HomeIntegrationLine[];
   last_date: string;
@@ -40,6 +41,7 @@ export interface LatestPicture {
   status: ProjectStatus;
   target_label: string | null;
   constellation: string | null;
+  crops: Partial<Record<CropSize, { id: number; image_id: number }>>;
 }
 
 export interface MonthSummary {

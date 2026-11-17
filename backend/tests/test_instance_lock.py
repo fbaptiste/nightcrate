@@ -2,11 +2,13 @@
 
 import json
 import os
+import signal
 import socket
 import subprocess
 import sys
 import time
 import urllib.request
+from types import SimpleNamespace
 
 import pytest
 from fastapi import FastAPI
@@ -18,13 +20,13 @@ from nightcrate.serve import EXIT_LOCK_HELD
 from nightcrate.serve import main as serve_main
 
 _HOLDER = """
-import sys, time
+import os, sys, time
 from pathlib import Path
 from nightcrate.core.app_config import set_app_dir
 from nightcrate.core.instance_lock import acquire_instance_lock
 set_app_dir(Path(sys.argv[1]))
 lock = acquire_instance_lock('installed', '9.9.9', 9876)
-print('LOCKED', flush=True)
+print(f'LOCKED {os.getpid()}', flush=True)
 time.sleep(300)
 """
 
@@ -37,32 +39,130 @@ def _holder(path):
         text=True,
     )
     assert proc.stdout is not None
-    assert proc.stdout.readline().strip() == "LOCKED"
-    return proc
+    line = proc.stdout.readline().strip()
+    prefix, pid = line.split()
+    assert prefix == "LOCKED"
+    return proc, int(pid)
+
+
+def _wait_for_pid_exit(pid: int, timeout: float) -> None:
+    if os.name == "nt":
+        import ctypes
+        from ctypes import wintypes
+
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+        kernel32.OpenProcess.restype = wintypes.HANDLE
+        kernel32.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+        kernel32.WaitForSingleObject.restype = wintypes.DWORD
+        kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+        kernel32.CloseHandle.restype = wintypes.BOOL
+        handle = kernel32.OpenProcess(0x00100000, False, pid)  # SYNCHRONIZE
+        if not handle:
+            return
+        try:
+            if kernel32.WaitForSingleObject(handle, int(timeout * 1000)) != 0:
+                pytest.fail(f"lock holder process {pid} did not exit within {timeout:g} seconds")
+        finally:
+            kernel32.CloseHandle(handle)
+        return
+
+    deadline = time.monotonic() + timeout
+    while True:
+        try:
+            os.kill(pid, 0)
+        except OSError:
+            return
+        if time.monotonic() >= deadline:
+            pytest.fail(f"lock holder process {pid} did not exit within {timeout:g} seconds")
+        time.sleep(0.05)
+
+
+def _kill_holder(proc: subprocess.Popen, holder_pid: int) -> None:
+    if holder_pid != proc.pid:
+        try:
+            os.kill(holder_pid, signal.SIGTERM)
+        except OSError:
+            pass
+    proc.kill()
+    proc.wait(timeout=10)
+
+    if holder_pid != proc.pid:
+        _wait_for_pid_exit(holder_pid, 10)
 
 
 def test_second_acquire_reports_holder(tmp_path):
     app_dir = tmp_path / "app"
-    proc = _holder(app_dir)
+    proc, holder_pid = _holder(app_dir)
     app_config.set_app_dir(app_dir)
     try:
         with pytest.raises(InstanceLockHeld) as caught:
             acquire_instance_lock("source", "1.0", None)
         assert caught.value.info is not None
         assert caught.value.info.kind == "installed"
-        assert caught.value.info.pid == proc.pid
+        assert caught.value.info.pid == holder_pid
     finally:
-        proc.kill()
-        proc.wait()
+        _kill_holder(proc, holder_pid)
+
+
+def test_windows_lock_contention_does_not_read_locked_byte(tmp_path, monkeypatch):
+    app_dir = tmp_path / "windows-lock"
+    app_dir.mkdir()
+    lock_path = app_dir / "instance.lock"
+    lock_path.write_bytes(b"\0")
+    (app_dir / "instance.json").write_text(
+        json.dumps({"pid": 123, "kind": "installed", "version": "9.9.9", "port": 9876}),
+        encoding="utf-8",
+    )
+    app_config.set_app_dir(app_dir)
+    real_open = type(lock_path).open
+
+    class LockedByteStream:
+        def __init__(self, stream):
+            self._stream = stream
+
+        def read(self, *_args, **_kwargs):
+            raise AssertionError("the locked byte must not be read")
+
+        def __getattr__(self, name):
+            return getattr(self._stream, name)
+
+    def open_stream(path, *args, **kwargs):
+        stream = real_open(path, *args, **kwargs)
+        return LockedByteStream(stream) if path == lock_path else stream
+
+    def deny_lock(*_args):
+        raise PermissionError("locked")
+
+    monkeypatch.setattr(type(lock_path), "open", open_stream)
+    monkeypatch.setattr(os, "name", "nt")
+    monkeypatch.setitem(
+        sys.modules,
+        "msvcrt",
+        SimpleNamespace(LK_NBLCK=1, locking=deny_lock),
+    )
+
+    with pytest.raises(InstanceLockHeld) as caught:
+        acquire_instance_lock("source", "1.0", None)
+
+    assert caught.value.info is not None
+    assert caught.value.info.pid == 123
 
 
 def test_lock_released_when_holder_killed(tmp_path):
     app_dir = tmp_path / "app"
-    proc = _holder(app_dir)
-    proc.kill()
-    proc.wait()
+    proc, holder_pid = _holder(app_dir)
+    _kill_holder(proc, holder_pid)
     app_config.set_app_dir(app_dir)
-    lock = acquire_instance_lock("source", "1.0", None)
+    deadline = time.monotonic() + 10
+    while True:
+        try:
+            lock = acquire_instance_lock("source", "1.0", None)
+            break
+        except InstanceLockHeld:
+            if time.monotonic() >= deadline:
+                pytest.fail("instance lock was not released within 10 seconds after holder exited")
+            time.sleep(0.05)
     lock.release()
 
 
