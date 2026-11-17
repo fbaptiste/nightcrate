@@ -2,6 +2,7 @@
 
 import json
 import os
+import signal
 import socket
 import subprocess
 import sys
@@ -44,6 +45,52 @@ def _holder(path):
     return proc, int(pid)
 
 
+def _wait_for_pid_exit(pid: int, timeout: float) -> None:
+    if os.name == "nt":
+        import ctypes
+        from ctypes import wintypes
+
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+        kernel32.OpenProcess.restype = wintypes.HANDLE
+        kernel32.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+        kernel32.WaitForSingleObject.restype = wintypes.DWORD
+        kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+        kernel32.CloseHandle.restype = wintypes.BOOL
+        handle = kernel32.OpenProcess(0x00100000, False, pid)  # SYNCHRONIZE
+        if not handle:
+            return
+        try:
+            if kernel32.WaitForSingleObject(handle, int(timeout * 1000)) != 0:
+                pytest.fail(f"lock holder process {pid} did not exit within {timeout:g} seconds")
+        finally:
+            kernel32.CloseHandle(handle)
+        return
+
+    deadline = time.monotonic() + timeout
+    while True:
+        try:
+            os.kill(pid, 0)
+        except OSError:
+            return
+        if time.monotonic() >= deadline:
+            pytest.fail(f"lock holder process {pid} did not exit within {timeout:g} seconds")
+        time.sleep(0.05)
+
+
+def _kill_holder(proc: subprocess.Popen, holder_pid: int) -> None:
+    if holder_pid != proc.pid:
+        try:
+            os.kill(holder_pid, signal.SIGTERM)
+        except OSError:
+            pass
+    proc.kill()
+    proc.wait(timeout=10)
+
+    if holder_pid != proc.pid:
+        _wait_for_pid_exit(holder_pid, 10)
+
+
 def test_second_acquire_reports_holder(tmp_path):
     app_dir = tmp_path / "app"
     proc, holder_pid = _holder(app_dir)
@@ -55,8 +102,7 @@ def test_second_acquire_reports_holder(tmp_path):
         assert caught.value.info.kind == "installed"
         assert caught.value.info.pid == holder_pid
     finally:
-        proc.kill()
-        proc.wait()
+        _kill_holder(proc, holder_pid)
 
 
 def test_windows_lock_contention_does_not_read_locked_byte(tmp_path, monkeypatch):
@@ -105,11 +151,18 @@ def test_windows_lock_contention_does_not_read_locked_byte(tmp_path, monkeypatch
 
 def test_lock_released_when_holder_killed(tmp_path):
     app_dir = tmp_path / "app"
-    proc, _holder_pid = _holder(app_dir)
-    proc.kill()
-    proc.wait()
+    proc, holder_pid = _holder(app_dir)
+    _kill_holder(proc, holder_pid)
     app_config.set_app_dir(app_dir)
-    lock = acquire_instance_lock("source", "1.0", None)
+    deadline = time.monotonic() + 10
+    while True:
+        try:
+            lock = acquire_instance_lock("source", "1.0", None)
+            break
+        except InstanceLockHeld:
+            if time.monotonic() >= deadline:
+                pytest.fail("instance lock was not released within 10 seconds after holder exited")
+            time.sleep(0.05)
     lock.release()
 
 

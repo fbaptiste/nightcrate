@@ -1682,7 +1682,7 @@ async def _run_chain(
     *,
     position=(120.0, 30.0),
     scale=1.5,
-    timeout=2.0,
+    timeout=30.0,
 ):
     operation = solve_operations.claim(uuid4(), "astap")
     try:
@@ -1872,6 +1872,41 @@ async def test_astap_expired_preparation_deadline_starts_no_process(tmp_path, mo
     assert result.failure_reason == "time_limit"
     assert attempts[0].outcome == "overall_timeout"
     start.assert_not_awaited()
+
+
+async def test_astap_blind_step_timeout_uses_overall_timeout(tmp_path, monkeypatch):
+    _reset_solve_state()
+    image = tmp_path / "image.fits"
+    image.write_bytes(b"input")
+    operation = solve_operations.claim(uuid4(), "astap")
+    step = AsyncMock(
+        return_value=plate_solve._AstapRun(
+            PlateSolveResult(solved=False),
+            "step_timeout",
+        )
+    )
+    monkeypatch.setattr(plate_solve, "_run_astap_step", step)
+    try:
+        result = await plate_solve.run_astap_chain(
+            tmp_path / "astap",
+            image,
+            position=None,
+            scale_arcsec=None,
+            image_width=100,
+            image_height=80,
+            deadline=time.monotonic() + 30,
+            stop=operation.stop,
+            reporter=operation,
+            operation=operation,
+        )
+        attempts = operation.attempts()
+    finally:
+        solve_operations.release(operation)
+
+    assert not result.solved
+    assert result.failure_reason == "time_limit"
+    assert result.error_message == "ASTAP solve timed out."
+    assert attempts[0].outcome == "overall_timeout"
 
 
 async def test_astap_private_home_preserves_user_config(tmp_path, monkeypatch):

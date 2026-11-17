@@ -1645,7 +1645,10 @@ Design: [v0.48.0 spec](superpowers/specs/2026-11-09-v0.48.0-design.md).
   - **Field (`-fov`):** the pixel scale × the height of the file ASTAP reads,
     not the sensor's. With no scale, `-fov 0`.
   - **Stopping:** `too_few_stars`, `cancelled`, `error` and the overall time
-    limit end the chain.
+    limit end the chain. A step whose own limit was the whole remaining
+    budget counts as the overall time limit when it times out, even if the
+    clock hasn't quite reached the deadline. Windows' timers (about 15.6 ms
+    ticks) can fire just before it, which reported "no solution" (v0.54.1).
   - **Retries:** the old `-speed slow` retry is gone; the chain solved 130 of
     143 corpus images against 123.
   - **Results:** the result's `failure_reason` uses the built-in solver's
@@ -2220,7 +2223,11 @@ these are the constraints and traps found while building it.
   can't even read a locked byte (`PermissionError`). So the lock file is
   sized with `os.fstat`, never read, and any `OSError` while preparing or
   locking means "held". Reading it made a second launch crash instead of
-  refusing; the first Windows CI run found it (v0.54.1).
+  refusing; the first Windows CI run found it (v0.54.1). Windows releases
+  a dead process's lock asynchronously, so a relaunch right after a crash
+  can briefly refuse; tests retry for up to 10 s. On Windows the venv's
+  `python.exe` is a launcher, so a test stops the holder by the pid it
+  reports, not by `Popen.pid`.
 - **Workspace activation is one guarded path,**
   `db/workspace_upgrade.initialize_workspace`. It runs at startup, from
   setup, and from Admin. In order:
