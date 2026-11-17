@@ -7,7 +7,9 @@ export const MY_SOFTWARE_LABEL = "My Software";
  * Returns a new array with duplicates. Caller's `groupBy` must check
  * `__mine_group` first.
  */
-export function withMineGroup<T extends { is_mine?: boolean; manufacturer_name?: string }>(
+export function withMineGroup<
+  T extends { is_mine?: boolean; manufacturer_name?: string; retired?: true },
+>(
   options: readonly T[],
   label = MINE_GROUP_LABEL,
   order: (a: T, b: T) => number = (a, b) => {
@@ -16,7 +18,10 @@ export function withMineGroup<T extends { is_mine?: boolean; manufacturer_name?:
     return ma.localeCompare(mb);
   },
 ): (T & { __mine_group?: string })[] {
-  const sorted = [...options].sort(order);
+  const sorted = [...options].sort((a, b) => {
+    const retiredOrder = Number(Boolean(a.retired)) - Number(Boolean(b.retired));
+    return retiredOrder || order(a, b);
+  });
   const result: (T & { __mine_group?: string })[] = [];
   for (const opt of sorted) {
     if (opt.is_mine) {

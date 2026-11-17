@@ -32,6 +32,13 @@ const unowned = [
 ];
 assert.deepEqual(withMineGroup(unowned), [unowned[1], unowned[0]]);
 
+const withRetired = [
+  { id: 1, is_mine: false, manufacturer_name: "ZWO" },
+  { id: 2, is_mine: false, manufacturer_name: "", retired: true },
+  { id: 3, is_mine: false, manufacturer_name: "Askar" },
+];
+assert.deepEqual(withMineGroup(withRetired).map((option) => option.id), [3, 1, 2]);
+
 const software = [
   { id: 1, name: "Siril", is_mine: true },
   { id: 2, name: "ASTAP", is_mine: true },
@@ -44,6 +51,15 @@ const softwareGrouped = withMineGroup(
 );
 assert.deepEqual(softwareGrouped.map((option) => option.id), [2, 1, 2, 3, 1]);
 assert.equal(softwareGrouped[0].__mine_group, "My Software");
+
+const softwareWithRetired = [
+  ...software,
+  { id: 4, name: "Retired", is_mine: false, retired: true },
+];
+assert.deepEqual(
+  withMineGroup(softwareWithRetired, "My Software", () => 0).map((option) => option.id),
+  [1, 2, 1, 2, 3, 4],
+);
 
 assert.notEqual(
   mineOptionKey({ id: 1, __mine_group: "My Equipment" }),

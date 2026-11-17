@@ -675,6 +675,11 @@ async def _ingest_folder(conn, project_id, run_id, folder, pool, errors, counter
                 report.skipped_dirs,
             )
         await conn.commit()
+    except asyncio.CancelledError:
+        counters.clear()
+        counters.update(counters_before)
+        del errors[errors_before:]
+        raise
     except Exception as exc:  # noqa: BLE001 - the folder is the atomic unit
         await conn.rollback()
         counters.clear()

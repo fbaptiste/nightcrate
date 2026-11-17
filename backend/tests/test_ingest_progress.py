@@ -471,7 +471,11 @@ async def test_cancel_in_second_folder_preserves_first_folder_commit(
         await client.post(f"/api/projects/{project_id}/ingest")
 
     assert [Path(row["path"]).name for row in await _frames(project_id)] == ["committed.fits"]
-    assert (await _latest_run(project_id))["status"] == "cancelled"
+    run = await _latest_run(project_id)
+    assert run["status"] == "cancelled"
+    assert run["files_scanned"] == 1
+    assert run["subs_inserted"] == 1
+    assert run["errors_count"] == 0
 
 
 @pytest.mark.anyio

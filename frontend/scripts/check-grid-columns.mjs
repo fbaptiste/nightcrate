@@ -26,7 +26,7 @@ const [emptyDropdown] = withDropdownFilters([manufacturer], [], ["m"]);
 assert.equal(emptyDropdown.type, "singleSelect");
 assert.deepEqual(emptyDropdown.valueOptions, []);
 
-const numbers = dropdownOptions([{ n: 7 }, { n: 5 }, { n: 7 }], "n", (row) => row.n);
+const numbers = dropdownOptions([{ n: 7 }, { n: 5 }, { n: 7 }], (row) => row.n);
 assert.deepEqual(numbers, [5, 7]);
 assert.equal(typeof numbers[0], "number");
 
@@ -45,7 +45,7 @@ const untouched = { field: "other" };
 assert.equal(withDropdownFilters([untouched], rows, ["m"])[0], untouched);
 
 assert.deepEqual(
-  dropdownOptions([{ f: "Filter 10" }, { f: "Filter 2" }], "f", (row) => row.f),
+  dropdownOptions([{ f: "Filter 10" }, { f: "Filter 2" }], (row) => row.f),
   ["Filter 2", "Filter 10"],
 );
 

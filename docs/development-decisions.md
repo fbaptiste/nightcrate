@@ -340,6 +340,9 @@ Shared architecture, checks, and privacy rules live in [CLAUDE.md](../CLAUDE.md)
     never doubled.
   - Telescope configurations take their telescope's `is_mine`.
   - Retained retired entries form one "Retired" group at the end.
+    `withMineGroup` sorts `retired` options last whatever the order
+    function: their manufacturer is empty, which would otherwise sort them
+    first.
   - The session form's filter picker orders My Rig, My Equipment, Bandpass,
     then manufacturers.
 - **"Processed with"** opens a list of its own width (`max-content`,
@@ -565,11 +568,22 @@ Since v0.47.0. Spec: [v0.47.0 design](superpowers/specs/2026-11-07-v0.47.0-desig
   - **Responsiveness:** listing runs in `asyncio.to_thread`, and inline
     header reads (one worker core) run in a thread one file at a time, so
     the endpoint keeps answering;
-  - **The Files tab** polls (500 ms while running, else 5 s) and handles
-    completion **only from the poll**, once per `scan_id`. Handled ids live
-    in `stores/ingestProgressStore.ts`, mirrored to `sessionStorage`. Its
-    panel and the disabled scan controls follow the record, so a scan
-    started in another window, or before the tab was opened, shows too.
+  - **The Files tab** polls (500 ms while running, else 5 s). Its panel
+    and the disabled scan controls follow the record, so a scan started in
+    another window, or before the tab was opened, shows too.
+  - **Refreshing after a scan** stays in the scan request's `onSuccess`,
+    which TanStack runs even after the Files tab unmounts. The project page
+    mounts only the selected tab, so refreshing from the Files tab alone
+    left Sessions and Info stale (v0.54.1 review).
+  - **The summary message** comes only from the poll, once per `scan_id`,
+    and only for a scan this page saw running or started
+    (`lib/ingestCompletion.ts`). Seen and handled ids live in
+    `stores/ingestProgressStore.ts`, mirrored to `sessionStorage`. Any
+    other finished scan is marked handled silently, so a new browser tab
+    doesn't replay a recent summary.
+  - **A cancelled folder** restores the run's counters and errors before
+    the cancellation propagates, so the run record counts only committed
+    folders.
 - `session` is the ingest rig/night group; `project_session` is a capture batch.
   Derive capture batches for the first time **only on request**, never during
   ingest. Once auto batches exist, a folder rig change rebuilds them in the same

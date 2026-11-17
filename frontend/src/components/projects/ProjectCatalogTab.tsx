@@ -78,8 +78,10 @@ import {
   type CatalogMaster,
   type CatalogOther,
   type CatalogSort,
+  type IngestProgress,
 } from "@/api/projectCatalog";
 import { useAnalyzeRun } from "@/lib/useAnalyzeRun";
+import { ingestCompletionAction } from "@/lib/ingestCompletion";
 import { RIG_BLUE } from "@/lib/rigColors";
 import { useIngestProgressStore } from "@/stores/ingestProgressStore";
 import {
@@ -371,10 +373,25 @@ export default function ProjectCatalogTab({ projectId }: Props) {
   const ingestMut = useMutation({
     mutationFn: (folderId: number) => startIngest(projectId, folderId),
     onMutate: (folderId: number) => setScanningFolderId(folderId),
-    onSuccess: () => {
-      void queryClient.refetchQueries({
-        queryKey: ["ingest-progress", projectId],
-      });
+    onSuccess: (result) => {
+      invalidateRigDependent();
+      void invalidateFolders();
+
+      const progressKey = ["ingest-progress", projectId];
+      const recordStartedScan = (progress: IngestProgress | null | undefined) => {
+        if (progress?.run_id === result.run_id) {
+          useIngestProgressStore.getState().markObserved(progress.scan_id);
+        }
+      };
+      recordStartedScan(queryClient.getQueryData<IngestProgress | null>(progressKey));
+      void fetchIngestProgress(projectId)
+        .then((progress) => {
+          recordStartedScan(progress);
+          queryClient.setQueryData(progressKey, progress);
+        })
+        .catch(() => {
+          void queryClient.invalidateQueries({ queryKey: progressKey });
+        });
     },
     onError: (e: Error) => setSnack(e.message),
     onSettled: () => setScanningFolderId(null),
@@ -480,11 +497,22 @@ export default function ProjectCatalogTab({ projectId }: Props) {
   );
 
   useEffect(() => {
-    if (!ingestProgress || ingestProgress.running) return;
-    const handled = useIngestProgressStore.getState();
-    if (handled.handledScanIds.has(ingestProgress.scan_id)) return;
+    if (!ingestProgress) return;
+    const scans = useIngestProgressStore.getState();
+    const action = ingestCompletionAction({
+      running: ingestProgress.running,
+      handled: scans.handledScanIds.has(ingestProgress.scan_id),
+      observed: scans.observedScanIds.has(ingestProgress.scan_id),
+      startPending: ingestMut.isPending,
+      startedHere: ingestMut.data?.run_id === ingestProgress.run_id,
+    });
+    if (action === "none") return;
+    if (action === "observe") {
+      scans.markObserved(ingestProgress.scan_id);
+      return;
+    }
 
-    if (ingestProgress.result) {
+    if (action === "show" && ingestProgress.result) {
       invalidateRigDependent();
       void invalidateFolders();
       const result = ingestProgress.result;
@@ -494,8 +522,15 @@ export default function ProjectCatalogTab({ projectId }: Props) {
           (result.first_error ? ` — ${result.first_error}` : "");
       queueMicrotask(() => setSnack(summaryMessage));
     }
-    handled.markHandled(ingestProgress.scan_id);
-  }, [ingestProgress, invalidateFolders, invalidateRigDependent]);
+    if (action === "show") scans.markObserved(ingestProgress.scan_id);
+    scans.markHandled(ingestProgress.scan_id);
+  }, [
+    ingestMut.data?.run_id,
+    ingestMut.isPending,
+    ingestProgress,
+    invalidateFolders,
+    invalidateRigDependent,
+  ]);
   const removeMut = useMutation({
     mutationFn: (id: number) => removeFolder(projectId, id),
     onSuccess: () => {

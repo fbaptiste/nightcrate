@@ -4,10 +4,8 @@ export type DropdownValue = string | number | boolean;
 
 export function dropdownOptions<R>(
   rows: readonly R[],
-  field: string,
   getValue: (row: R) => unknown,
 ): DropdownValue[] {
-  void field;
   const values = new Set<DropdownValue>();
   for (const row of rows) {
     const value = getValue(row);
@@ -34,7 +32,7 @@ export function withDropdownFilters<R extends GridValidRowModel>(
   const dropdownFields = new Set(fields);
   return columns.map((column) => {
     if (!dropdownFields.has(column.field)) return column;
-    const valueOptions = dropdownOptions(rows, column.field, (row) =>
+    const valueOptions = dropdownOptions(rows, (row) =>
       column.valueGetter
         ? (column.valueGetter as (value: unknown, row: R) => unknown)(undefined, row)
         : (row as Record<string, unknown>)[column.field],
