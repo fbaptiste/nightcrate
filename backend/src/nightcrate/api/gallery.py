@@ -15,16 +15,15 @@ from nightcrate.api._common import load_designations
 from nightcrate.api.dso import dso_search_clause
 from nightcrate.api.object_facts_db import load_other_distances, load_target_facts
 from nightcrate.api.object_search_db import load_solves
+from nightcrate.api.project_crops import load_project_crops
 from nightcrate.catalog_loader.designations import (
     designation_search_prefixes,
     normalize_designation,
 )
-from nightcrate.core.app_config import get_projects_root
 from nightcrate.db.session import get_db, workspace_key
 from nightcrate.services.dso_sorting import designation_sort_key
 from nightcrate.services.dso_type_groups import group_for_raw_type
 from nightcrate.services.gallery import (
-    GalleryCrop,
     GalleryMark,
     GalleryQuery,
     GalleryResult,
@@ -36,7 +35,6 @@ from nightcrate.services.gallery import (
     valid_session_date,
 )
 from nightcrate.services.object_search import SolveGeometry, marks_in_solve
-from nightcrate.services.project_images import crop_path
 
 router = APIRouter(prefix="/api/gallery", tags=["Projects"])
 
@@ -132,35 +130,7 @@ async def load_project_records(
         project_rows.extend(await cursor.fetchall())
     project_rows.sort(key=lambda row: int(row["id"]))
 
-    crops_by_project: dict[int, dict[Literal["small", "medium", "large"], GalleryCrop]] = (
-        defaultdict(dict)
-    )
-    projects_root = get_projects_root()
-    for batch in batches:
-        where, params = _project_where("pt.project_id", batch)
-        cursor = await conn.execute(
-            f"""
-            SELECT pt.id, pt.project_id, pt.size,
-                   COALESCE(pt.source_image_id, main.id) AS image_id
-            FROM project_thumbnail pt
-            LEFT JOIN project_image main
-              ON main.project_id = pt.project_id AND main.is_main = 1
-            {where}
-            ORDER BY pt.project_id, pt.id
-            """,  # noqa: S608  # nosec B608 - placeholders built only from ?
-            params,
-        )
-        for row in await cursor.fetchall():
-            image_id = row["image_id"]
-            if image_id is None or projects_root is None:
-                continue
-            project_id = int(row["project_id"])
-            size = row["size"]
-            if not crop_path(projects_root / str(project_id), size, int(row["id"])).is_file():
-                continue
-            crops_by_project[project_id][size] = GalleryCrop(
-                id=int(row["id"]), image_id=int(image_id)
-            )
+    crops_by_project = await load_project_crops(conn, [int(row["id"]) for row in project_rows])
 
     loaded_targets = await load_target_facts(
         conn,

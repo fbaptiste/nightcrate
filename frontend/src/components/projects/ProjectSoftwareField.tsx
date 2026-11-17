@@ -20,6 +20,11 @@ import {
   type ProjectSoftwareRef,
 } from "@/api/projects";
 import { orderSoftwareOptions } from "@/components/shared/softwareOrder";
+import {
+  MY_SOFTWARE_LABEL,
+  mineOptionKey,
+  withMineGroup,
+} from "@/components/rigs/mineGroup";
 import { formatSnakeCase } from "@/lib/formUtils";
 import { CHIP_ROW_GAP } from "./chipRow";
 
@@ -51,9 +56,13 @@ export default function ProjectSoftwareField({ project, onUpdated, onChanged }: 
     [project.software],
   );
   const options = useMemo(
-    () => orderSoftwareOptions(
-      allSoftware.filter((software) => software.active || selectedIds.has(software.id)),
-      "project",
+    () => withMineGroup(
+      orderSoftwareOptions(
+        allSoftware.filter((software) => software.active || selectedIds.has(software.id)),
+        "project",
+      ),
+      MY_SOFTWARE_LABEL,
+      () => 0,
     ),
     [allSoftware, selectedIds],
   );
@@ -221,7 +230,7 @@ export default function ProjectSoftwareField({ project, onUpdated, onChanged }: 
           />
         ))}
 
-        <Autocomplete<Software, false, false, false>
+        <Autocomplete<Software & { __mine_group?: string }, false, false, false>
           size="small"
           openOnFocus
           options={options}
@@ -230,7 +239,8 @@ export default function ProjectSoftwareField({ project, onUpdated, onChanged }: 
           onChange={(_event, value) => {
             if (value) addSoftware(value);
           }}
-          groupBy={(option) => formatSnakeCase(option.category)}
+          groupBy={(option) => option.__mine_group ?? formatSnakeCase(option.category)}
+          getOptionKey={mineOptionKey}
           getOptionLabel={(option) => option.name}
           isOptionEqualToValue={(option, selected) => option.id === selected.id}
           renderOption={(props, option) => {
@@ -245,15 +255,16 @@ export default function ProjectSoftwareField({ project, onUpdated, onChanged }: 
                     width: "100%",
                   }}
                 >
-                  <span>
+                  <Box component="span" sx={{ whiteSpace: "nowrap" }}>
                     {option.name}
                     {!option.active ? " (retired)" : ""}
-                  </span>
+                  </Box>
                   <Typography
                     component="span"
                     sx={(theme) => ({
                       color: theme.palette.mode === "dark" ? "#6a6863" : "#a3a3a3",
                       fontSize: "12px",
+                      whiteSpace: "nowrap",
                     })}
                   >
                     {option.manufacturer?.name ?? "—"}
@@ -261,6 +272,12 @@ export default function ProjectSoftwareField({ project, onUpdated, onChanged }: 
                 </Box>
               </li>
             );
+          }}
+          slotProps={{
+            popper: {
+              placement: "bottom-start",
+              style: { width: "max-content", minWidth: 280, maxWidth: 420 },
+            },
           }}
           sx={{ width: 142, flex: "0 0 142px" }}
           renderInput={(params) => (

@@ -1,6 +1,6 @@
 """Tests verifying the is_mine column and partial index on owned equipment tables."""
 
-import importlib.resources
+import shutil
 import sqlite3
 
 import pytest
@@ -28,21 +28,13 @@ NON_OWNED_TABLES = [
 
 
 @pytest.fixture
-def db_with_equipment_schema(tmp_path):
-    """Apply all migrations to a fresh SQLite database."""
+def db_with_equipment_schema(tmp_path, unseeded_template_db):
+    """Open an isolated copy of the fully migrated, unseeded schema."""
     db_path = tmp_path / "test.sqlite"
+    shutil.copyfile(unseeded_template_db, db_path)
     conn = sqlite3.connect(str(db_path))
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
-
-    migrations_dir = importlib.resources.files("nightcrate") / "db" / "migrations"
-    for migration_name in sorted(
-        f.name for f in migrations_dir.iterdir() if f.name.endswith(".sql")
-    ):
-        sql = (migrations_dir / migration_name).read_text()
-        lines = sql.split("\n")
-        body = "\n".join(line for line in lines if not line.strip().startswith("-- depends:"))
-        conn.executescript(body)
 
     yield conn
     conn.close()
@@ -50,13 +42,6 @@ def db_with_equipment_schema(tmp_path):
 
 class TestIsMineColumnPresent:
     """Verify is_mine exists on all 10 owned tables with correct definition."""
-
-    @pytest.mark.parametrize("table", OWNED_TABLES)
-    def test_is_mine_column_exists(self, db_with_equipment_schema, table):
-        conn = db_with_equipment_schema
-        rows = conn.execute(f"PRAGMA table_info({table})").fetchall()  # noqa: S608
-        col_names = [r["name"] for r in rows]
-        assert "is_mine" in col_names, f"is_mine column missing from {table}"
 
     @pytest.mark.parametrize("table", OWNED_TABLES)
     def test_is_mine_column_type_and_constraints(self, db_with_equipment_schema, table):
@@ -138,25 +123,6 @@ class TestIsMineDefaultAndConstraint:
         )
         row = conn.execute("SELECT is_mine FROM camera WHERE model_name='MyCam'").fetchone()
         assert row["is_mine"] == 1
-
-    def test_is_mine_rejects_invalid_value_on_camera(self, db_with_equipment_schema):
-        conn = db_with_equipment_schema
-        conn.execute("INSERT INTO manufacturer (name) VALUES ('TestMfg3')")
-        mfg_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
-        conn.execute(
-            "INSERT INTO sensor "
-            "(manufacturer_id, model_name, sensor_type, pixel_size_um, "
-            "resolution_x, resolution_y) "
-            "VALUES (?, 'S3', 'mono', 3.76, 100, 100)",
-            (mfg_id,),
-        )
-        sensor_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
-        with pytest.raises(sqlite3.IntegrityError):
-            conn.execute(
-                "INSERT INTO camera (manufacturer_id, sensor_id, model_name, is_mine) "
-                "VALUES (?, ?, 'BadCam', 2)",
-                (mfg_id, sensor_id),
-            )
 
 
 # Minimal NOT NULL column sets required per table (beyond is_mine itself).

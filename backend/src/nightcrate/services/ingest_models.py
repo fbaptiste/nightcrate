@@ -25,11 +25,6 @@ class SourceFolder(BaseModel):
     on it so a simultaneous dual-rig night splits, and calibration matching scopes on
     it. NULL means "not stated", which is a valid answer."""
     rig_name: str | None = None
-    project_target_id: int | None = None
-    """Which target this folder holds. **User-declared, never inferred** (v0.41.3).
-    NULL falls back to the project's single target, which is what every frame got
-    before folders could say. The OBJECT header stays a hint and is not used."""
-    target_name: str | None = None
     added_at: str
 
 
@@ -37,19 +32,16 @@ class SourceFolderCreate(BaseModel):
     path: str
     is_primary: bool = False
     rig_id: int | None = None
-    project_target_id: int | None = None
 
 
 class SourceFolderUpdate(BaseModel):
     """Partial update of the folder's declared facts.
 
-    ``rig_id`` and ``project_target_id`` are the editable ones; a field absent
-    from the body is left alone, an explicit null clears it. That distinction is
-    read off ``model_fields_set``, not off the value.
+    A body without ``rig_id`` leaves it alone; an explicit null clears it. That
+    distinction is read off ``model_fields_set``, not off the value.
     """
 
     rig_id: int | None = None
-    project_target_id: int | None = None
 
 
 class IngestStatus(BaseModel):
@@ -67,6 +59,23 @@ class IngestStatus(BaseModel):
     started_at: str | None = None
     finished_at: str | None = None
     message: str | None = None
+
+
+class IngestProgressFile(BaseModel):
+    path: str
+    ok: bool
+
+
+class IngestProgress(BaseModel):
+    scan_id: str
+    run_id: int
+    running: bool
+    folder: str | None = None
+    stage: Literal["listing", "reading", "saving", "grouping"]
+    done: int
+    total: int
+    recent: list[IngestProgressFile]
+    result: IngestStatus | None = None
 
 
 class CatalogSummary(BaseModel):
@@ -125,10 +134,7 @@ class CatalogFrame(BaseModel):
     # valid answer — "not stated" — and renders as no chip rather than a blank one.
     rig_name: str | None = None
     # Classification (v0.41.1) — hand-correctable, guarded by a source flag.
-    project_target_id: int | None = None
-    target_name: str | None = None  # resolved DSO designation for display
     frame_type_source: str | None = None
-    project_target_source: str | None = None
     # Quality metrics (v0.41.3). All NULL until the analyze pass has run over this
     # frame. hfr / star_count / snr_estimate stay NULL on calibration frames even
     # after a successful run — only lights carry stars. See services/frame_quality.py
@@ -154,7 +160,7 @@ class CatalogFrame(BaseModel):
     full_scale_adu: int | None = None
 
 
-CorrectableField = Literal["frame_type", "project_target_id"]
+CorrectableField = Literal["frame_type"]
 
 
 class FrameCorrection(BaseModel):
@@ -167,7 +173,6 @@ class FrameCorrection(BaseModel):
     """
 
     frame_type: FrameTypeName | None = None
-    project_target_id: int | None = None
     reset_to_auto: list[CorrectableField] = []
 
 

@@ -15,7 +15,6 @@ import math
 import multiprocessing as mp
 import platform
 import queue
-import resource
 import statistics
 import subprocess
 import threading
@@ -95,6 +94,8 @@ def _image_format(path: str) -> str:
 
 
 def _peak_rss_mb() -> float:
+    import resource
+
     rss = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
     return rss / (1024**2 if platform.system() == "Darwin" else 1024)
 

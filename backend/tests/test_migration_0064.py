@@ -2,23 +2,14 @@
 
 import math
 import sqlite3
-from pathlib import Path
 
 import pytest
-from yoyo import get_backend, read_migrations
 
-from nightcrate.db.migrations import MIGRATIONS_DIR, apply_migrations
+from nightcrate.db.migrations import apply_migrations
 from nightcrate.db.session import get_db
 from nightcrate.services.plate_solve import _compute_results
 
-
-def _apply_through_0063(db_path: Path) -> None:
-    with get_backend(f"sqlite:///{db_path}") as backend:
-        migrations = read_migrations(str(MIGRATIONS_DIR))
-        through_0063 = backend.to_apply(migrations).filter(
-            lambda migration: migration.id != "0064.project_solve_row_order"
-        )
-        backend.apply_migrations(through_0063)
+MIGRATION_0064 = "0064.project_solve_row_order"
 
 
 def _insert_solve(
@@ -68,9 +59,8 @@ async def test_conftest_applies_python_migrations():
         assert await cursor.fetchone() is not None
 
 
-def test_migration_0064_flips_only_standard_files(tmp_path):
-    db_path = tmp_path / "before_0064.db"
-    _apply_through_0063(db_path)
+def test_migration_0064_flips_only_standard_files(pre_migration_db):
+    db_path = pre_migration_db(MIGRATION_0064, "before_0064.db")
     with sqlite3.connect(db_path) as conn:
         png_id = _insert_solve(conn, "a.PNG")
         archive_id = _insert_solve(conn, "b.zip::c.png")
@@ -91,9 +81,8 @@ def test_migration_0064_flips_only_standard_files(tmp_path):
     assert rows[fits_id] == pytest.approx((200.0, 2.0, -4.0, 30.0))
 
 
-def test_migration_0064_rotation_cases(tmp_path):
-    db_path = tmp_path / "rotation_before_0064.db"
-    _apply_through_0063(db_path)
+def test_migration_0064_rotation_cases(pre_migration_db):
+    db_path = pre_migration_db(MIGRATION_0064, "rotation_before_0064.db")
     m74 = {
         "image_height": 3008,
         "crpix2": 1504.5,

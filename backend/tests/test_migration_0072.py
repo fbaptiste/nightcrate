@@ -23,9 +23,8 @@ def _apply_0072(db_path: Path) -> None:
         )
 
 
-def test_migration_0072_preserves_existing_rows_and_enforces_contract(tmp_path: Path):
-    db_path = tmp_path / "upgrade.db"
-    _apply_through(db_path, MIGRATION_0071)
+def test_migration_0072_preserves_existing_rows_and_enforces_contract(pre_migration_db):
+    db_path = pre_migration_db(MIGRATION_0072)
     with sqlite3.connect(db_path) as conn:
         conn.row_factory = sqlite3.Row
         project_id = conn.execute("INSERT INTO project (name) VALUES ('Retained')").lastrowid

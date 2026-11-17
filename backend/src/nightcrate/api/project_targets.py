@@ -31,8 +31,7 @@ class TargetCreate(BaseModel):
 
 
 class TargetResponse(BaseModel):
-    # The project_target PK. sub_frame.project_target_id references it, so the
-    # catalog's per-frame target correction (v0.41.1) needs it on the wire.
+    # The stable project_target PK used by project-level target editing.
     id: int
     dso_id: int
     active: bool

@@ -151,7 +151,6 @@ async def _insert_sub(conn: aiosqlite.Connection, **kw) -> int:
         "binning_x": 1,
         "binning_y": 1,
         "session_id": None,
-        "project_target_id": None,
         "date_obs_utc": "2026-03-15T23:00:00",
     }
     row.update(kw)
@@ -428,7 +427,6 @@ class TestSessionSummary:
                 filter_name_hint="Ha",
                 exposure_seconds=300.0,
                 session_id=ids["session"],
-                project_target_id=ids["target"],
             )
         await _insert_sub(
             conn,

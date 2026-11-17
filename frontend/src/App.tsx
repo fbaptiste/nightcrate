@@ -21,33 +21,40 @@ import { fetchThumbnailCacheStats } from "@/api/planner";
 import { SetupWizard } from "@/components/SetupWizard";
 import { ImageViewerPage } from "@/pages/ImageViewerPage";
 import { WorkspaceProblemScreen } from "@/components/workspace/WorkspaceProblemScreen";
+import { RouteErrorPage } from "@/components/common/PageError";
 
 const router = createBrowserRouter([
-  { path: "/image-viewer", element: <ImageViewerPage /> },
+  { path: "/image-viewer", element: <ImageViewerPage />, errorElement: <RouteErrorPage /> },
   {
     path: "/",
     element: <AppShell />,
+    errorElement: <RouteErrorPage />,
     children: [
-      { index: true, element: <HomePage /> },
-      { path: "image-analyzer", element: null },
-      { path: "equipment", element: <EquipmentPage /> },
-      { path: "equipment/:category", element: <EquipmentPage /> },
-      { path: "locations", element: <LocationsPage /> },
-      { path: "projects", element: <ProjectsPage /> },
-      { path: "gallery", element: null },
-      { path: "messier", element: null },
-      { path: "projects/:id", element: <ProjectDetailPage /> },
-      { path: "rigs", element: <RigsPage /> },
-      { path: "weather", element: null },
-      { path: "calculators", element: <CalculatorsPage /> },
-      { path: "calculators/:calcId", element: <CalculatorsPage /> },
-      { path: "tonight", element: <TonightPage /> },
-      { path: "catalog/dso", element: null },
-      { path: "planner", element: null },
-      { path: "phd2-analyzer", element: null },
-      { path: "settings", element: <SettingsPage /> },
-      { path: "admin", element: <AdminPage /> },
-      { path: "api-docs", element: <ApiDocsPage /> },
+      {
+        errorElement: <RouteErrorPage />,
+        children: [
+          { index: true, element: <HomePage /> },
+          { path: "image-analyzer", element: null },
+          { path: "equipment", element: <EquipmentPage /> },
+          { path: "equipment/:category", element: <EquipmentPage /> },
+          { path: "locations", element: <LocationsPage /> },
+          { path: "projects", element: <ProjectsPage /> },
+          { path: "gallery", element: null },
+          { path: "messier", element: null },
+          { path: "projects/:id", element: <ProjectDetailPage /> },
+          { path: "rigs", element: <RigsPage /> },
+          { path: "weather", element: null },
+          { path: "calculators", element: <CalculatorsPage /> },
+          { path: "calculators/:calcId", element: <CalculatorsPage /> },
+          { path: "tonight", element: <TonightPage /> },
+          { path: "catalog/dso", element: null },
+          { path: "planner", element: null },
+          { path: "phd2-analyzer", element: null },
+          { path: "settings", element: <SettingsPage /> },
+          { path: "admin", element: <AdminPage /> },
+          { path: "api-docs", element: <ApiDocsPage /> },
+        ],
+      },
     ],
   },
 ]);

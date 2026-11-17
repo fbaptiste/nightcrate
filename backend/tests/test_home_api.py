@@ -5,8 +5,10 @@ from datetime import date
 import pytest
 from httpx import ASGITransport, AsyncClient
 
+from nightcrate.core.app_config import get_projects_root
 from nightcrate.db.session import get_db
 from nightcrate.main import app
+from nightcrate.services.project_images import crop_path
 
 
 @pytest.fixture
@@ -164,6 +166,79 @@ async def test_home_figures_reuse_integration_and_exclude_retired(client: AsyncC
     assert body["year"]["minutes"] == 70
     assert body["year"]["nights"] == 2
     assert body["year"]["new_pictures"] == 1
+
+
+async def test_home_returns_existing_project_framings_for_recent_and_latest(
+    client: AsyncClient, monkeypatch
+):
+    monkeypatch.setattr("nightcrate.api.home._today", lambda: date(2026, 11, 14))
+    async with get_db() as conn:
+        project_id = (
+            await conn.execute("INSERT INTO project (name) VALUES ('Framed home')")
+        ).lastrowid
+        await conn.execute(
+            "INSERT INTO project_session "
+            "(project_id, line_name, exposure_seconds, num_subs, session_date) "
+            "VALUES (?, 'Lum', 60, 1, '2026-11-10')",
+            (project_id,),
+        )
+        other_id = (
+            await conn.execute(
+                "INSERT INTO project_image (project_id, file_path, is_main, created_at) "
+                "VALUES (?, '/synthetic/other.jpg', 0, '2026-11-09')",
+                (project_id,),
+            )
+        ).lastrowid
+        main_id = (
+            await conn.execute(
+                "INSERT INTO project_image (project_id, file_path, is_main, created_at) "
+                "VALUES (?, '/synthetic/main.jpg', 1, '2026-11-10')",
+                (project_id,),
+            )
+        ).lastrowid
+        large_id = (
+            await conn.execute(
+                "INSERT INTO project_thumbnail (project_id, size, source_image_id) "
+                "VALUES (?, 'large', ?)",
+                (project_id, main_id),
+            )
+        ).lastrowid
+        missing_id = (
+            await conn.execute(
+                "INSERT INTO project_thumbnail (project_id, size, source_image_id) "
+                "VALUES (?, 'medium', ?)",
+                (project_id, main_id),
+            )
+        ).lastrowid
+        small_id = (
+            await conn.execute(
+                "INSERT INTO project_thumbnail (project_id, size, source_image_id) "
+                "VALUES (?, 'small', ?)",
+                (project_id, other_id),
+            )
+        ).lastrowid
+        await conn.commit()
+
+    root = get_projects_root()
+    assert root is not None
+    project_folder = root / str(project_id)
+    project_folder.mkdir(parents=True, exist_ok=True)
+    crop_path(project_folder, "large", large_id).write_bytes(b"large")
+    crop_path(project_folder, "small", small_id).write_bytes(b"small")
+    assert not crop_path(project_folder, "medium", missing_id).exists()
+
+    body = (await client.get("/api/home")).json()
+    recent = next(item for item in body["recent"] if item["project_id"] == project_id)
+    assert recent["crops"] == {
+        "large": {"id": large_id, "image_id": main_id},
+        "small": {"id": small_id, "image_id": other_id},
+    }
+    assert body["latest_picture"]["image_id"] == main_id
+    assert body["latest_picture"]["crops"]["small"] == {
+        "id": small_id,
+        "image_id": other_id,
+    }
+    assert "medium" not in body["latest_picture"]["crops"]
 
 
 async def test_home_rig_location_ordering_retirement_and_caps(client: AsyncClient, monkeypatch):

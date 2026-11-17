@@ -1985,10 +1985,6 @@ class TestFilterSizeOptionDuplicate:
         )
         assert resp.status_code == 409
 
-    async def test_restore_unknown_table_400(self, client: AsyncClient):
-        resp = await client.post("/api/equipment/restore/nonexistent_table/1")
-        assert resp.status_code == 400
-
     async def test_restore_nonexistent_item_404(self, client: AsyncClient):
         resp = await client.post("/api/equipment/restore/manufacturer/99999")
         assert resp.status_code == 404

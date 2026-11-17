@@ -19,6 +19,7 @@ from nightcrate.api.home_models import (
     RigSummary,
     StageCounts,
 )
+from nightcrate.api.project_crops import load_project_crops
 from nightcrate.api.project_sessions import compute_integration
 from nightcrate.db.session import get_db, workspace_key
 from nightcrate.services.astronomy import constellation_for_coords
@@ -154,6 +155,7 @@ async def get_home() -> HomeSummary:
                 detail_ids.add(int(latest_row["project_id"]))
             constellations = await _constellations(conn, detail_ids)
             thumbnails = await _thumbnail_facts(conn)
+            crops = await load_project_crops(conn, sorted(detail_ids))
 
             recent = []
             for record in recent_records:
@@ -170,6 +172,7 @@ async def get_home() -> HomeSummary:
                         constellation=constellations.get(record.id),
                         thumbnail_version=thumbnail_version,
                         has_image=has_image,
+                        crops=crops.get(record.id, {}),
                         total_minutes=integration.total_actual_minutes,
                         lines=[
                             HomeIntegrationLine(
@@ -196,6 +199,7 @@ async def get_home() -> HomeSummary:
                     status=item.status,
                     target_label=_target_label(item.targets),
                     constellation=constellations.get(project_id),
+                    crops=crops.get(project_id, {}),
                 )
 
             session_cursor = await conn.execute(

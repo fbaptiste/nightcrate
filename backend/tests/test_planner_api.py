@@ -13,6 +13,7 @@ from fastapi.testclient import TestClient
 
 from nightcrate.api.planner import _sort_items
 from nightcrate.api.planner_models import PlannerTargetItem
+from nightcrate.core.config import update_settings_partial
 from nightcrate.db.session import get_db
 from nightcrate.main import app
 from nightcrate.services import hips_tiles
@@ -891,6 +892,7 @@ async def test_id_tiebreak_does_not_override_secondary_sort_precedence(client: T
     ] == [("Group A", "NGC 10"), ("Group A", "NGC 2"), ("Group B", "NGC 1")]
 
 
+@pytest.mark.requires_frontend
 def test_plate_solve_typescript_comparator_keeps_id_ties_ascending():
     frontend = Path(__file__).parents[2] / "frontend"
     node = shutil.which("node")
@@ -1206,6 +1208,7 @@ async def test_inactive_object_is_hidden_from_warm_target_cache_but_scores_by_id
 
 
 async def test_annual_hours_endpoint_returns_one_point_per_night(client: TestClient, seed_db):
+    await update_settings_partial({"max_worker_cores": 2})
     location_id = seed_db
     async with get_db() as conn:
         cursor = await conn.execute("SELECT id FROM dso WHERE primary_designation = 'M 42'")
@@ -1241,6 +1244,7 @@ async def test_annual_hours_endpoint_returns_one_point_per_night(client: TestCli
 
 
 async def test_inactive_object_sky_track_and_annual_hours_match_active(client: TestClient, seed_db):
+    await update_settings_partial({"max_worker_cores": 2})
     location_id = seed_db
     async with get_db() as conn:
         cursor = await conn.execute("SELECT id FROM dso WHERE primary_designation = 'M 42'")
@@ -1309,6 +1313,7 @@ async def test_annual_hours_unknown_dso_returns_404(client: TestClient, seed_db)
 
 
 async def test_moon_year_endpoint_returns_points_and_phases(client: TestClient, seed_db):
+    await update_settings_partial({"max_worker_cores": 2})
     location_id = seed_db
     response = client.get(
         "/api/planner/moon-year",

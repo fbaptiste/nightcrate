@@ -1,6 +1,5 @@
 import { useEffect, useState } from "react";
-import { useMutation, useQuery } from "@tanstack/react-query";
-import Autocomplete from "@mui/material/Autocomplete";
+import { useMutation } from "@tanstack/react-query";
 import Button from "@mui/material/Button";
 import Chip from "@mui/material/Chip";
 import Dialog from "@mui/material/Dialog";
@@ -22,7 +21,6 @@ import {
   type FrameCorrection,
   type FrameTypeName,
 } from "@/api/projectCatalog";
-import { listProjectTargets } from "@/api/projectTargets";
 
 /** Human labels for the frame_type vocabulary. "unknown" is offered so a user
  *  can un-classify a frame the header mislabeled into a real type. */
@@ -34,11 +32,6 @@ const TYPE_LABELS: Record<FrameTypeName, string> = {
   dark_flat: "Dark Flat",
   unknown: "Unknown",
 };
-
-interface TargetOption {
-  id: number;
-  label: string;
-}
 
 interface Props {
   open: boolean;
@@ -64,40 +57,13 @@ export default function FrameCorrectionsDialog({
 
   const [frameType, setFrameType] = useState<FrameTypeName | "">("");
   const [typeDirty, setTypeDirty] = useState(false);
-  const [target, setTarget] = useState<TargetOption | null>(null);
-  const [targetDirty, setTargetDirty] = useState(false);
   const [resets, setResets] = useState<Set<CorrectableField>>(new Set());
   const [error, setError] = useState<string | null>(null);
 
-  const targetsQuery = useQuery({
-    queryKey: ["project-targets", projectId],
-    queryFn: () => listProjectTargets(projectId),
-    enabled: open,
-  });
-
-  const targetOptions: TargetOption[] = (targetsQuery.data ?? []).map((t) => ({
-    id: t.id,
-    label: t.common_name
-      ? `${t.primary_designation} — ${t.common_name}`
-      : t.primary_designation,
-  }));
-
-  // Seed from the frame itself rather than the async target list: depending on
-  // the query would wipe an in-progress edit when it resolves. The Autocomplete
-  // reconciles by id, so a placeholder label is fine until the list arrives.
   useEffect(() => {
     if (!open) return;
     setFrameType((frame?.frame_type as FrameTypeName) ?? "");
-    setTarget(
-      frame?.project_target_id != null
-        ? {
-            id: frame.project_target_id,
-            label: frame.target_name ?? `#${frame.project_target_id}`,
-          }
-        : null,
-    );
     setTypeDirty(false);
-    setTargetDirty(false);
     setResets(new Set());
     setError(null);
   }, [open, frame]);
@@ -114,15 +80,12 @@ export default function FrameCorrectionsDialog({
     onError: (e: Error) => setError(e.message),
   });
 
-  const anyChange = typeDirty || targetDirty || resets.size > 0;
+  const anyChange = typeDirty || resets.size > 0;
 
   const save = () => {
     const body: FrameCorrection = {};
     if (typeDirty && frameType !== "" && !resets.has("frame_type")) {
       body.frame_type = frameType;
-    }
-    if (targetDirty && !resets.has("project_target_id")) {
-      body.project_target_id = target?.id ?? null;
     }
     if (resets.size > 0) body.reset_to_auto = [...resets];
     mutation.mutate(body);
@@ -142,7 +105,6 @@ export default function FrameCorrectionsDialog({
     : (frame?.path?.split("/").pop() ?? `frame ${frame?.id}`);
 
   const typeIsUser = frame?.frame_type_source === "user";
-  const targetIsUser = frame?.project_target_source === "user";
 
   return (
     <Dialog open={open} onClose={onClose} maxWidth="sm" fullWidth>
@@ -182,38 +144,6 @@ export default function FrameCorrectionsDialog({
               <ResetChip
                 active={resets.has("frame_type")}
                 onToggle={() => toggleReset("frame_type")}
-              />
-            )}
-          </Stack>
-
-          <Stack direction="row" spacing={1} alignItems="center">
-            <Autocomplete
-              size="small"
-              sx={{ flex: 1 }}
-              options={targetOptions}
-              value={target}
-              disabled={resets.has("project_target_id")}
-              onChange={(_, v) => {
-                setTarget(v);
-                setTargetDirty(true);
-              }}
-              isOptionEqualToValue={(a, b) => a.id === b.id}
-              renderInput={(params) => (
-                <TextField
-                  {...params}
-                  label="Target"
-                  helperText={
-                    targetOptions.length === 0
-                      ? "This project has no targets yet — add one on the Overview tab"
-                      : "Clear the field to remove the target"
-                  }
-                />
-              )}
-            />
-            {!bulk && targetIsUser && (
-              <ResetChip
-                active={resets.has("project_target_id")}
-                onToggle={() => toggleReset("project_target_id")}
               />
             )}
           </Stack>

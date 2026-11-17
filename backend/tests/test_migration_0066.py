@@ -7,19 +7,8 @@ import time
 from pathlib import Path
 
 import pytest
-from yoyo import get_backend, read_migrations
 
-from nightcrate.db.migrations import MIGRATIONS_DIR, apply_migrations
-
-
-def _apply_through_0065(db_path: Path) -> None:
-    with get_backend(f"sqlite:///{db_path}") as backend:
-        migrations = read_migrations(str(MIGRATIONS_DIR))
-        backend.apply_migrations(
-            backend.to_apply(migrations).filter(
-                lambda migration: migration.id <= "0065.project_solve_solver"
-            )
-        )
+from nightcrate.db.migrations import apply_migrations
 
 
 def _rows(conn: sqlite3.Connection, table: str) -> list[dict[str, object]]:
@@ -27,9 +16,8 @@ def _rows(conn: sqlite3.Connection, table: str) -> list[dict[str, object]]:
     return [dict(row) for row in conn.execute(f'SELECT * FROM "{table}" ORDER BY id')]  # nosec B608
 
 
-def test_migration_0066_preserves_dso_children(tmp_path: Path):
-    db_path = tmp_path / "before-0066.db"
-    _apply_through_0065(db_path)
+def test_migration_0066_preserves_dso_children(pre_migration_db):
+    db_path = pre_migration_db("0066.more_catalogs", "before-0066.db")
     with sqlite3.connect(db_path) as conn:
         conn.execute("PRAGMA foreign_keys = ON")
         source_id = int(

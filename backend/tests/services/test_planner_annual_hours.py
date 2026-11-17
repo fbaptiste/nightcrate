@@ -9,6 +9,7 @@ import pytest
 
 from nightcrate.services.planner_annual_hours import (
     MoonDataPoint,
+    _compute_subrange,
     compute_annual_hours,
     compute_moon_year,
     derive_phase_dates,
@@ -59,6 +60,11 @@ M42 = (1, 83.8221, -5.3911)
 # M31 (Andromeda) — mid-northern-hemisphere target, rises higher from Phoenix.
 M31 = (2, 10.6847, 41.2687)
 
+ANNUAL_M42 = pytest.mark.xdist_group("annual-m42")
+ANNUAL_M31 = pytest.mark.xdist_group("annual-m31")
+ANNUAL_MOON = pytest.mark.xdist_group("annual-moon")
+ANNUAL_INCLUDE_MOON = pytest.mark.xdist_group("annual-include-moon")
+
 
 @pytest.fixture(scope="module")
 def m42_narrowband_30():
@@ -75,6 +81,26 @@ def m31_narrowband_30():
     return compute_annual_hours(PHOENIX, FLAT_30, 2026, M31, moon_sep_deg=0.0)
 
 
+@pytest.fixture(scope="module")
+def m42_include_moon():
+    return compute_annual_hours(PHOENIX, FLAT_30, 2026, M42, moon_sep_deg=0.0, include_moon=True)
+
+
+def _subrange(location, horizon, dso, start, end, **kwargs):
+    _dso_id, ra_deg, dec_deg = dso
+    return _compute_subrange(
+        location,
+        horizon,
+        ra_deg,
+        dec_deg,
+        kwargs.pop("moon_sep_deg", 0.0),
+        start,
+        end,
+        **kwargs,
+    )
+
+
+@ANNUAL_M42
 def test_one_point_per_night_in_year(m42_narrowband_30):
     # 2026 is not a leap year → 365 nights.
     assert len(m42_narrowband_30.points) == 365
@@ -82,6 +108,7 @@ def test_one_point_per_night_in_year(m42_narrowband_30):
     assert m42_narrowband_30.points[-1].date.isoformat() == "2026-12-31"
 
 
+@ANNUAL_M42
 def test_response_echoes_horizon_and_moon(m42_narrowband_30, m42_lrgb_30):
     assert m42_narrowband_30.horizon_type == "artificial"
     assert m42_narrowband_30.flat_altitude_deg == 30.0
@@ -89,15 +116,17 @@ def test_response_echoes_horizon_and_moon(m42_narrowband_30, m42_lrgb_30):
     assert m42_lrgb_30.moon_sep_deg == 60.0
 
 
+@ANNUAL_M42
 def test_no_moon_data_without_filter_or_include(m42_narrowband_30):
     # moon_sep_deg=0 + no filter + include_moon False → moon math skipped (perf
     # path): altitude/illumination stay None so the chart legend has no data.
     assert all(m.max_altitude_deg is None for m in m42_narrowband_30.moon_data)
 
 
-def test_include_moon_populates_altitude_and_illumination():
+@ANNUAL_INCLUDE_MOON
+def test_include_moon_populates_altitude_and_illumination(m42_include_moon):
     # The annual chart forces moon computation for display via include_moon.
-    track = compute_annual_hours(PHOENIX, FLAT_30, 2026, M42, moon_sep_deg=0.0, include_moon=True)
+    track = m42_include_moon
     assert len(track.moon_data) == len(track.points)
     alts = [m.max_altitude_deg for m in track.moon_data if m.max_altitude_deg is not None]
     illums = [m.illumination_pct for m in track.moon_data]
@@ -115,9 +144,15 @@ def test_annual_min_separation_pinned_corrected():
     # darkness on 2026-01-15 from Phoenix is ~146°. The pre-fix code,
     # which transformed the distance-bearing Moon into the target's ICRS
     # frame, reported a materially origin-shifted value.
-    track = compute_annual_hours(PHOENIX, FLAT_30, 2026, M42, moon_sep_deg=0.0, include_moon=True)
-    by_date = {p.date.isoformat(): track.moon_data[i] for i, p in enumerate(track.points)}
-    sep = by_date["2026-01-15"].min_separation_deg
+    rows = _subrange(
+        PHOENIX,
+        FLAT_30,
+        M42,
+        date(2026, 1, 15),
+        date(2026, 1, 16),
+        include_moon=True,
+    )
+    sep = rows[0][4]
     assert sep is not None
     assert sep == pytest.approx(145.9, abs=0.7)
 
@@ -127,6 +162,7 @@ def moon_year_phoenix():
     return compute_moon_year(PHOENIX, FLAT_30, 2026)
 
 
+@ANNUAL_MOON
 def test_moon_year_shape_and_ranges(moon_year_phoenix):
     md = moon_year_phoenix
     assert len(md) == 365  # 2026 is not a leap year
@@ -176,6 +212,7 @@ def test_derive_phase_dates_ignores_mid_cycle_endpoints():
     assert full_moons == []  # 75% peak is below the 95% full-moon threshold
 
 
+@ANNUAL_MOON
 def test_derive_phase_dates(moon_year_phoenix):
     new_moons, full_moons = derive_phase_dates(moon_year_phoenix)
     # A year holds ~12-13 lunations of each phase.
@@ -190,6 +227,7 @@ def test_derive_phase_dates(moon_year_phoenix):
     assert full_moons == sorted(full_moons)
 
 
+@ANNUAL_M42
 def test_hours_are_non_negative_and_within_night_length(m42_narrowband_30):
     # A single night's astro darkness in Phoenix peaks around ~10 h in
     # winter; allow generous 14 h ceiling for the margin.
@@ -197,6 +235,7 @@ def test_hours_are_non_negative_and_within_night_length(m42_narrowband_30):
         assert 0.0 <= p.hours <= 14.0
 
 
+@ANNUAL_M42
 def test_m42_peaks_in_northern_winter_from_phoenix(m42_narrowband_30):
     """M42 should score high in December/January from Phoenix (Orion
     transits at midnight) and drop to zero in June/July when Orion is
@@ -212,6 +251,7 @@ def test_m42_peaks_in_northern_winter_from_phoenix(m42_narrowband_30):
     assert trough < peak * 0.1
 
 
+@ANNUAL_M31
 def test_m31_peaks_in_northern_autumn(m31_narrowband_30):
     """M31 transits at midnight around mid-October, peaking September–
     December — verifies the labelled-by-evening-date contract."""
@@ -222,6 +262,7 @@ def test_m31_peaks_in_northern_autumn(m31_narrowband_30):
     assert peak_month in {9, 10, 11, 12}
 
 
+@ANNUAL_M42
 def test_lrgb_never_exceeds_narrowband(m42_narrowband_30, m42_lrgb_30):
     """Moon avoidance can only *remove* hours that narrowband counts —
     LRGB must be ≤ narrowband on every night."""
@@ -230,6 +271,7 @@ def test_lrgb_never_exceeds_narrowband(m42_narrowband_30, m42_lrgb_30):
         assert lr.hours <= n.hours + 1e-6
 
 
+@ANNUAL_M42
 def test_lrgb_strictly_less_on_some_nights(m42_narrowband_30, m42_lrgb_30):
     """Across a year the moon crosses every stretch of sky, so LRGB
     mode must deduct hours on SOME nights — otherwise the moon check
@@ -245,10 +287,11 @@ def test_lrgb_strictly_less_on_some_nights(m42_narrowband_30, m42_lrgb_30):
 def test_higher_threshold_yields_fewer_hours():
     """Raising the altitude threshold from 30° to 50° can only remove
     hours — never add them."""
-    low = compute_annual_hours(PHOENIX, _artificial(30.0), 2026, M42, moon_sep_deg=0.0)
-    high = compute_annual_hours(PHOENIX, _artificial(50.0), 2026, M42, moon_sep_deg=0.0)
-    for a, b in zip(low.points, high.points, strict=True):
-        assert b.hours <= a.hours + 1e-6
+    start, end = date(2026, 1, 1), date(2026, 2, 1)
+    low = _subrange(PHOENIX, _artificial(30.0), M42, start, end)
+    high = _subrange(PHOENIX, _artificial(50.0), M42, start, end)
+    for a, b in zip(low, high, strict=True):
+        assert b[1] <= a[1] + 1e-6
 
 
 def test_custom_horizon_empty_points_raises():
@@ -270,12 +313,11 @@ def test_flat_custom_horizon_matches_artificial_of_same_altitude():
     match an artificial 20° horizon within sampling / interpolation
     noise."""
     horizon_points = tuple((float(az), 20.0) for az in range(0, 360, 30))
-    using_custom = compute_annual_hours(
-        PHOENIX, _custom(horizon_points), 2026, M42, moon_sep_deg=0.0
-    )
-    using_flat = compute_annual_hours(PHOENIX, _artificial(20.0), 2026, M42, moon_sep_deg=0.0)
-    for a, b in zip(using_custom.points, using_flat.points, strict=True):
-        assert abs(a.hours - b.hours) <= 0.2
+    start, end = date(2026, 1, 1), date(2026, 2, 1)
+    using_custom = _subrange(PHOENIX, _custom(horizon_points), M42, start, end)
+    using_flat = _subrange(PHOENIX, _artificial(20.0), M42, start, end)
+    for a, b in zip(using_custom, using_flat, strict=True):
+        assert abs(a[1] - b[1]) <= 0.2
 
 
 def test_out_of_range_moon_sep_raises():
@@ -321,11 +363,14 @@ def test_reykjavik_midsummer_returns_zero_hours():
     """At φ = 64.15° N, between late May and mid July the sun never
     dips below −18° — ``is_dark`` is always false, so every night's
     hours = 0 regardless of target."""
-    track = compute_annual_hours(
-        REYKJAVIK, _artificial(20.0, location_id=REYKJAVIK.id), 2026, M31, moon_sep_deg=0.0
+    midsummer = _subrange(
+        REYKJAVIK,
+        _artificial(20.0, location_id=REYKJAVIK.id),
+        M31,
+        date(2026, 6, 1),
+        date(2026, 8, 1),
     )
-    midsummer = [p for p in track.points if 6 <= p.date.month <= 7]
-    assert all(p.hours == 0.0 for p in midsummer), (
+    assert all(row[1] == 0.0 for row in midsummer), (
         "Reykjavík midsummer nights should report 0 h — there is no "
         "astronomical darkness at 64° N between late May and mid July."
     )
@@ -335,34 +380,27 @@ def test_longyearbyen_polar_winter_exceeds_12h_cap():
     """At φ = 78.2° N in December the sun still climbs to ~−11° at
     local noon, so the daily astro-dark window is ≈15 h. A circumpolar
     target should comfortably exceed the chart's natural 12 h yMax cap."""
-    track = compute_annual_hours(
+    mid_dec = _subrange(
         LONGYEARBYEN,
         _artificial(20.0, location_id=LONGYEARBYEN.id),
-        2026,
         POLARIS,
-        moon_sep_deg=0.0,
+        date(2026, 12, 10),
+        date(2026, 12, 26),
     )
-    mid_dec = [p for p in track.points if p.date.month == 12 and 10 <= p.date.day <= 25]
     assert mid_dec, "expected December samples inside the chart window"
-    max_hours = max(p.hours for p in mid_dec)
+    max_hours = max(row[1] for row in mid_dec)
     assert max_hours >= 14.0, (
         f"Longyearbyen polar winter should yield ≥14 h for a circumpolar "
         f"target; got max {max_hours:.2f} h"
     )
 
 
-def test_illumination_high_at_full_moon_low_at_new_moon():
+@ANNUAL_M42
+def test_illumination_high_at_full_moon_low_at_new_moon(m42_lrgb_30):
     """Verify the illumination formula is correct: full moon (elongation
     ~180°) → ~100%, new moon (elongation ~0°) → ~0%.  The formula uses
     (1 - cos(elongation)) / 2, not (1 + cos(elongation)) / 2."""
-    track = compute_annual_hours(
-        PHOENIX,
-        FLAT_30,
-        2026,
-        M42,
-        moon_sep_deg=60.0,
-    )
-    illuminations = [(m.date, m.illumination_pct) for m in track.moon_data]
+    illuminations = [(m.date, m.illumination_pct) for m in m42_lrgb_30.moon_data]
     min_illum = min(illuminations, key=lambda x: x[1])
     max_illum = max(illuminations, key=lambda x: x[1])
     assert min_illum[1] < 2.0, (
@@ -398,19 +436,13 @@ def test_illumination_filter_reduces_full_moon_nights():
     )
 
 
-def test_min_separation_only_considers_moon_above_horizon():
+@ANNUAL_M42
+def test_min_separation_only_considers_moon_above_horizon(m42_lrgb_30):
     """min_separation_deg in moon_data should be None for nights where the
     moon never rises above the horizon during dark hours while the target
     is visible, and should reflect actual moon-above-horizon geometry
     otherwise."""
-    track = compute_annual_hours(
-        PHOENIX,
-        FLAT_30,
-        2026,
-        M42,
-        moon_sep_deg=60.0,
-    )
-    for md in track.moon_data:
+    for md in m42_lrgb_30.moon_data:
         if md.min_separation_deg is not None:
             assert 0.0 <= md.min_separation_deg <= 180.0
 
@@ -423,11 +455,15 @@ def test_new_york_has_no_dst_discontinuities():
     from datetime import date as _date
     from datetime import timedelta as _td
 
-    track = compute_annual_hours(
-        NEW_YORK, _artificial(30.0, location_id=NEW_YORK.id), 2026, M31, moon_sep_deg=0.0
-    )
-    by_date = {p.date: p.hours for p in track.points}
     for transition in (_date(2026, 3, 8), _date(2026, 11, 1)):
+        rows = _subrange(
+            NEW_YORK,
+            _artificial(30.0, location_id=NEW_YORK.id),
+            M31,
+            transition - _td(days=1),
+            transition + _td(days=2),
+        )
+        by_date = {row[0]: row[1] for row in rows}
         h_before = by_date[transition - _td(days=1)]
         h_day = by_date[transition]
         h_after = by_date[transition + _td(days=1)]

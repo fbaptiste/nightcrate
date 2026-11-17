@@ -1,10 +1,4 @@
-"""Tests for catalog classification corrections (v0.41.1).
-
-The point of these tests is the *durability* of a manual correction: both
-`frame_type` and `project_target_id` are re-derived by the ingest pipeline on
-every scan, so each correction has to survive a re-scan via its `*_source`
-column (migration 0043).
-"""
+"""Tests for durable catalog frame-type corrections."""
 
 from __future__ import annotations
 
@@ -16,11 +10,9 @@ from nightcrate.main import app
 from nightcrate.services.ingest_classify import FRAME_TYPES
 from nightcrate.services.ingest_models import FrameTypeName
 from tests.catalog_helpers import (
-    _add_target,
     _frames,
     _ingest_folder,
     _make_project,
-    _seed_dsos,
     _write_fits,
 )
 
@@ -142,37 +134,6 @@ class TestFrameTypeCorrection:
         rows = [r for r in await _frames(client, pid, frame_type="light") if r["id"] == light["id"]]
         assert rows and rows[0]["filter_name"] == "Ha"
 
-    async def test_target_on_a_calibration_frame_422(self, client, tmp_path):
-        """Only lights carry a target. The automatic path enforces this, so the
-        manual path must too — the removed equipment override had the same guard
-        for filter_id and losing it would let the two disagree."""
-        pid, _ = await _setup(client, tmp_path, name="TargetOnDark")
-        dark = (await _frames(client, pid, frame_type="dark"))[0]
-        dso_id = (await _seed_dsos(1))[0]
-        target_id = await _add_target(client, pid, dso_id)
-
-        resp = await client.patch(
-            f"/api/projects/{pid}/catalog/frames/{dark['id']}/classification",
-            json={"project_target_id": target_id},
-        )
-        assert resp.status_code == 422
-        assert "Only lights carry a target" in resp.json()["detail"]
-
-        # Clearing it on a calibration frame is still fine (explicit null = none).
-        resp = await client.patch(
-            f"/api/projects/{pid}/catalog/frames/{dark['id']}/classification",
-            json={"project_target_id": None},
-        )
-        assert resp.status_code == 200, resp.text
-
-        # And correcting the type to light in the SAME request is allowed.
-        resp = await client.patch(
-            f"/api/projects/{pid}/catalog/frames/{dark['id']}/classification",
-            json={"frame_type": "light", "project_target_id": target_id},
-        )
-        assert resp.status_code == 200, resp.text
-        assert resp.json()["project_target_id"] == target_id
-
     async def test_null_frame_type_422(self, client, tmp_path):
         pid, _ = await _setup(client, tmp_path, name="TypeNull")
         light = (await _frames(client, pid, frame_type="light"))[0]
@@ -204,63 +165,16 @@ class TestFrameTypeCorrection:
         )
         assert resp.status_code == 404
 
-
-class TestTargetCorrection:
-    async def test_manual_target_survives_rescan_in_multi_target_project(self, client, tmp_path):
-        """The case that motivated the source column: ingest assigns a target only
-        when the project has exactly one, and writes NULL otherwise — so without
-        the guard a re-scan wipes every hand-set target on a multi-target project.
-        """
-        pid, folder = await _setup(client, tmp_path, name="TargetDurable")
-        dso_a, dso_b = await _seed_dsos(2)
-        target_a = await _add_target(client, pid, dso_a)
-        await _add_target(client, pid, dso_b)  # second target → ingest assigns NULL
-
-        light = (await _frames(client, pid, frame_type="light"))[0]
-        resp = await client.patch(
-            f"/api/projects/{pid}/catalog/frames/{light['id']}/classification",
-            json={"project_target_id": target_a},
+    async def test_removed_target_field_is_ignored_while_frame_type_applies(self, client, tmp_path):
+        pid, _ = await _setup(client, tmp_path, name="IgnoredTarget")
+        dark = (await _frames(client, pid, frame_type="dark"))[0]
+        response = await client.patch(
+            f"/api/projects/{pid}/catalog/frames/{dark['id']}/classification",
+            json={"frame_type": "bias", "project_target_id": 123456},
         )
-        assert resp.status_code == 200, resp.text
-        assert resp.json()["project_target_id"] == target_a
-        assert resp.json()["target_name"] == "TestDSO 1"
-
-        await _ingest_folder(client, pid, folder, add_folder=False)
-
-        row = (await _frames(client, pid, frame_type="light"))[0]
-        assert row["project_target_id"] == target_a
-        assert row["project_target_source"] == "user"
-
-    async def test_target_from_another_project_404(self, client, tmp_path):
-        pid, _ = await _setup(client, tmp_path, name="TargetScope")
-        other = await _make_project(client, "OtherProject")
-        (dso,) = await _seed_dsos(1)
-        foreign = await _add_target(client, other, dso)
-
-        light = (await _frames(client, pid, frame_type="light"))[0]
-        resp = await client.patch(
-            f"/api/projects/{pid}/catalog/frames/{light['id']}/classification",
-            json={"project_target_id": foreign},
-        )
-        assert resp.status_code == 404
-
-    async def test_explicit_null_clears_the_target(self, client, tmp_path):
-        pid, _ = await _setup(client, tmp_path, name="TargetClear")
-        (dso,) = await _seed_dsos(1)
-        target = await _add_target(client, pid, dso)
-        light = (await _frames(client, pid, frame_type="light"))[0]
-
-        await client.patch(
-            f"/api/projects/{pid}/catalog/frames/{light['id']}/classification",
-            json={"project_target_id": target},
-        )
-        resp = await client.patch(
-            f"/api/projects/{pid}/catalog/frames/{light['id']}/classification",
-            json={"project_target_id": None},
-        )
-        assert resp.status_code == 200, resp.text
-        assert resp.json()["project_target_id"] is None
-        assert resp.json()["project_target_source"] == "user", "explicit none is still a choice"
+        assert response.status_code == 200, response.text
+        assert response.json()["frame_type"] == "bias"
+        assert "project_target_id" not in response.json()
 
 
 class TestBulkCorrection:
@@ -286,6 +200,21 @@ class TestBulkCorrection:
         biases = await _frames(client, pid, frame_type="bias")
         assert len(biases) == 4
         assert all(b["frame_type_source"] == "user" for b in biases)
+
+    async def test_removed_target_field_is_ignored_while_bulk_type_applies(self, client, tmp_path):
+        pid, _ = await _setup(client, tmp_path, name="BulkIgnoredTarget")
+        dark = (await _frames(client, pid, frame_type="dark"))[0]
+        response = await client.post(
+            f"/api/projects/{pid}/catalog/frames/bulk-classification",
+            json={
+                "frame_ids": [dark["id"]],
+                "frame_type": "bias",
+                "project_target_id": 123456,
+            },
+        )
+        assert response.status_code == 200, response.text
+        assert response.json() == {"updated": 1}
+        assert (await _frames(client, pid, frame_type="bias"))[0]["id"] == dark["id"]
 
     async def test_bulk_is_all_or_nothing(self, client, tmp_path):
         """An unknown id 404s and must leave the earlier frames untouched."""

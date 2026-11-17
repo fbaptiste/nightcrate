@@ -57,10 +57,10 @@ class TestAnalyzeEndpoint:
         assert data["image_height"] == 200
         assert data["star_count"] == len(data["stars"])
 
-    async def test_analyze_nonexistent_file(self, client: AsyncClient):
+    async def test_analyze_nonexistent_file(self, client: AsyncClient, tmp_path: Path):
         resp = await client.post(
             "/api/aberration/analyze",
-            params={"path": "/nonexistent/file.fits", "hdu": 0},
+            params={"path": str(tmp_path / "nonexistent.fits"), "hdu": 0},
         )
         assert resp.status_code == 404
 
@@ -116,10 +116,10 @@ class TestSamplesEndpoint:
             assert "star_count" in sq
             assert "star_indices" in sq
 
-    async def test_samples_nonexistent_file(self, client: AsyncClient):
+    async def test_samples_nonexistent_file(self, client: AsyncClient, tmp_path: Path):
         resp = await client.post(
             "/api/aberration/samples",
-            params={"path": "/nonexistent/file.fits", "hdu": 0},
+            params={"path": str(tmp_path / "nonexistent.fits"), "hdu": 0},
         )
         assert resp.status_code == 404
 
@@ -158,9 +158,9 @@ class TestCropEndpoint:
         assert resp.status_code == 200
         assert resp.headers["content-type"] == "image/png"
 
-    async def test_crop_nonexistent_file(self, client: AsyncClient):
+    async def test_crop_nonexistent_file(self, client: AsyncClient, tmp_path: Path):
         params = {
-            "path": "/nonexistent/file.fits",
+            "path": str(tmp_path / "nonexistent.fits"),
             "hdu": 0,
             "x0": 0,
             "y0": 0,

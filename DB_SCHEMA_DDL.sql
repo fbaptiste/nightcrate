@@ -1,4 +1,4 @@
--- NightCrate version: 0.54.0
+-- NightCrate version: 0.54.1
 -- NightCrate Database Schema
 -- SQLite DDL for the full current schema. Originally authored at v0.8.0;
 -- extended through v0.15.0 (rig builder, My Equipment flag, location seeing,
@@ -1995,7 +1995,6 @@ CREATE TABLE sub_frame (
     -- Grouping (all nullable; a sub can ingest with partial/no context).
     session_id               INTEGER REFERENCES session(id) ON DELETE SET NULL,
     rig_id                   INTEGER REFERENCES rig(id),  -- from the source folder's tag
-    project_target_id        INTEGER REFERENCES project_target(id) ON DELETE SET NULL,
     ingestion_run_id         INTEGER REFERENCES ingestion_run(id) ON DELETE SET NULL,
 
     -- Classification.
@@ -2008,14 +2007,13 @@ CREATE TABLE sub_frame (
                                      rejection_source IN ('user', 'automated', 'ingest')),
 
     -- Classification source (migration 0043): 'user' marks a hand correction that
-    -- no automated pass may clobber. Both values are re-derived on EVERY scan —
-    -- _reclassify_dark_flats re-runs the heuristic dark -> dark_flat promotion, and
-    -- _persist_parsed writes a NULL target for any project without exactly one main
-    -- — so without these guards a re-scan would silently wipe a correction.
+    -- no automated pass may clobber. The frame type is re-derived on EVERY scan —
+    -- _reclassify_dark_flats re-runs the heuristic dark -> dark_flat promotion —
+    -- so without this guard a re-scan would silently wipe a correction.
+    -- (The per-frame target and its source column were removed in migration 0074,
+    -- v0.54.1.)
     frame_type_source        TEXT    NOT NULL DEFAULT 'auto'
                                  CHECK (frame_type_source IN ('auto', 'user')),
-    project_target_source    TEXT    NOT NULL DEFAULT 'auto'
-                                 CHECK (project_target_source IN ('auto', 'user')),
 
     -- Equipment: rig ONLY, and it is inherited from the frame's source folder,
     -- which the USER tagged (project_source_folder.rig_id). Nothing is inferred
@@ -2093,7 +2091,6 @@ CREATE TABLE sub_frame (
 CREATE INDEX idx_sub_frame_project ON sub_frame(project_id);
 CREATE INDEX idx_sub_frame_session ON sub_frame(session_id);
 CREATE INDEX idx_sub_frame_rig ON sub_frame(rig_id);
-CREATE INDEX idx_sub_frame_target ON sub_frame(project_target_id);
 CREATE INDEX idx_sub_frame_run ON sub_frame(ingestion_run_id);
 CREATE INDEX idx_sub_frame_frame_type ON sub_frame(frame_type);
 CREATE INDEX idx_sub_frame_date_obs ON sub_frame(date_obs_utc);
@@ -2280,18 +2277,11 @@ CREATE TABLE project_source_folder (
     -- simultaneous dual-rig night splits), and the calibration views scope on it.
     -- NULL means "not stated", which is a valid answer.
     rig_id     INTEGER REFERENCES rig(id),
-    -- migration 0056: which target this folder holds. Also USER-DECLARED — the
-    -- OBJECT header stays a hint and is never used to pick one. Lights beneath
-    -- inherit it into sub_frame.project_target_id (calibration frames don't: a
-    -- dark is not "of" anything), and a frame whose project_target_source is
-    -- 'user' is never overwritten. NULL falls back to the project's single
-    -- target, which is what every light got before folders could declare one.
-    -- SET NULL, not CASCADE: dropping a target must not unbind the folder.
-    project_target_id INTEGER REFERENCES project_target(id) ON DELETE SET NULL,
+    -- (Migration 0056's per-folder target was removed in migration 0074,
+    -- v0.54.1: nothing used it.)
     added_at   TEXT    NOT NULL DEFAULT (datetime('now')),
     UNIQUE (project_id, path)
 );
-CREATE INDEX idx_source_folder_target ON project_source_folder(project_target_id);
 CREATE INDEX idx_project_source_folder_project ON project_source_folder(project_id);
 -- At most one primary folder per project.
 CREATE UNIQUE INDEX idx_project_source_folder_one_primary
@@ -2449,8 +2439,7 @@ SELECT
         AS rejected_lights,
     SUM(CASE WHEN sf.frame_type = 'light' AND sf.accepted = 1
              THEN sf.exposure_seconds ELSE 0 END) / 60.0 AS accepted_light_minutes,
-    COUNT(DISTINCT sf.project_target_id) AS distinct_targets,
-    COUNT(DISTINCT sf.filter_name_hint)  AS distinct_filters
+    COUNT(DISTINCT sf.filter_name_hint)   AS distinct_filters
 FROM session s
 LEFT JOIN sub_frame sf ON sf.session_id = s.id
 GROUP BY s.id;

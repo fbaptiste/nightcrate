@@ -171,13 +171,14 @@ def _legacy_seed(db_path: Path, root: Path) -> tuple[dict[tuple[str, str], int],
             (project_id, linked[1]),
         )
         target_id = int(conn.execute("SELECT last_insert_rowid()").fetchone()[0])
+        # No production child of project_target remains after migration 0074.
+        # Keep proving that catalog removal preserves a generically discovered
+        # child by carrying a forward-compatible table through the upgrade.
         conn.execute(
-            """
-            INSERT INTO sub_frame (project_id, content_hash, project_target_id, date_obs_utc)
-            VALUES (?, '0065-child', ?, '2026-01-01')
-            """,
-            (project_id, target_id),
+            "CREATE TABLE zz_project_target_child "
+            "(project_target_id INTEGER REFERENCES project_target(id))"
         )
+        conn.execute("INSERT INTO zz_project_target_child VALUES (?)", (target_id,))
         conn.commit()
     return ids, (linked[0], linked[1])
 
@@ -244,7 +245,10 @@ def test_upgrade_without_choice_file_removes_nothing(tmp_path: Path, catalogs_ro
             assert conn.execute("SELECT COUNT(*) FROM dso WHERE active = 0").fetchone()[0] == 0
             assert conn.execute("SELECT dso_id FROM favorite_target").fetchone()[0] == linked[0]
             assert conn.execute("SELECT dso_id FROM project_target").fetchone()[0] == linked[1]
-            assert conn.execute("SELECT COUNT(*) FROM sub_frame").fetchone()[0] == 1
+            assert (
+                conn.execute("SELECT project_target_id FROM zz_project_target_child").fetchone()[0]
+                == conn.execute("SELECT id FROM project_target").fetchone()[0]
+            )
             assert not any(result.status == "failed" for result in first.results + second.results)
             if case == "barnard-missing":
                 errors = [

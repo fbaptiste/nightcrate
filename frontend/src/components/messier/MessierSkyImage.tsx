@@ -210,7 +210,7 @@ export default function MessierSkyImage({
             transform: "translate(-50%, -50%)",
           }}
         >
-          <Box component="img" src={src} alt={alt} onLoad={handleLoad} onError={handleError} sx={{ display: "block", visibility: currentImage?.ready ? "visible" : "hidden", width: "100%", height: "100%", objectFit: "cover" }} />
+          <Box component="img" src={src} alt={alt} onLoad={handleLoad} onError={handleError} sx={{ display: "block", visibility: currentImage?.ready ? "inherit" : "hidden", width: "100%", height: "100%", objectFit: "cover" }} />
         </Box>
       )}
     </Box>

@@ -235,20 +235,6 @@ def test_project_target_collision_repoints_all_children(db: sqlite3.Connection):
         "CREATE TABLE zz_future_child (project_target_id INTEGER REFERENCES project_target(id))"
     )
     cur.execute("INSERT INTO zz_future_child VALUES (?)", (old_target,))
-    cur.execute(
-        """
-        INSERT INTO sub_frame
-            (project_id, content_hash, project_target_id, date_obs_utc)
-        VALUES (?, 'a', ?, '2026-01-01')
-        """,
-        (project_id, old_target),
-    )
-    cur.execute(
-        "INSERT INTO project_source_folder (project_id, path, project_target_id) "
-        "VALUES (?, '/data', ?)",
-        (project_id, old_target),
-    )
-
     move_user_links(cur, old_id, new_id, "NGC 3")
 
     assert (
@@ -256,11 +242,6 @@ def test_project_target_collision_repoints_all_children(db: sqlite3.Connection):
         == 0
     )
     assert cur.execute("SELECT project_target_id FROM zz_future_child").fetchone()[0] == new_target
-    assert cur.execute("SELECT project_target_id FROM sub_frame").fetchone()[0] == new_target
-    assert (
-        cur.execute("SELECT project_target_id FROM project_source_folder").fetchone()[0]
-        == new_target
-    )
 
 
 def test_project_dso_collision_keeps_main_flag(db: sqlite3.Connection):

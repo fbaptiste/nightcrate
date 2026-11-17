@@ -1,6 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
-import { DataGrid, type GridColDef, useGridApiRef } from "@mui/x-data-grid";
+import {
+  DataGrid,
+  gridFilteredSortedRowIdsSelector,
+  gridPaginationModelSelector,
+  type GridColDef,
+  useGridApiRef,
+} from "@mui/x-data-grid";
 import Alert from "@mui/material/Alert";
 import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
@@ -23,6 +29,7 @@ import StarOutlineIcon from "@mui/icons-material/StarOutline";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { restoreEquipmentItem, toggleEquipmentMine } from "@/api/equipment";
 import ConfirmDeleteDialog from "@/components/equipment/shared/ConfirmDeleteDialog";
+import { withDropdownFilters } from "@/lib/gridDropdownColumns";
 
 interface EquipmentListProps<T extends { id: number }> {
   title: string;
@@ -108,21 +115,63 @@ export default function EquipmentList<T extends { id: number; active?: boolean; 
   useEffect(() => {
     if (pendingSelectId.current == null || items.length === 0) return;
     const id = pendingSelectId.current;
+    let firstFrame: number | undefined;
+    let secondFrame: number | undefined;
+    let settleTimer: number | undefined;
+    let fallbackTimer: number | undefined;
+    let unsubscribeResize: (() => void) | undefined;
+    const cancelWaiting = () => {
+      unsubscribeResize?.();
+      unsubscribeResize = undefined;
+      if (firstFrame !== undefined) window.cancelAnimationFrame(firstFrame);
+      if (secondFrame !== undefined) window.cancelAnimationFrame(secondFrame);
+      if (settleTimer !== undefined) window.clearTimeout(settleTimer);
+      if (fallbackTimer !== undefined) window.clearTimeout(fallbackTimer);
+    };
     // Small delay to let the DataGrid finish rendering sorted rows
     const timer = setTimeout(() => {
       try {
         const api = apiRef.current;
         if (!api) return;
-        const rowIndex = api.getRowIndexRelativeToVisibleRows(id);
+        const rowIndex = gridFilteredSortedRowIdsSelector(apiRef).indexOf(id);
         if (rowIndex >= 0) {
-          api.scrollToIndexes({ rowIndex });
+          const { page, pageSize } = gridPaginationModelSelector(apiRef);
+          const targetPage = Math.floor(rowIndex / pageSize);
+          const scrollToRow = () => {
+            if (pendingSelectId.current !== id) return false;
+            api.scrollToIndexes({ rowIndex });
+            return true;
+          };
+          const finishScroll = () => {
+            if (scrollToRow()) pendingSelectId.current = null;
+            cancelWaiting();
+          };
+          unsubscribeResize = api.subscribeEvent("debouncedResize", () => {
+            scrollToRow();
+            if (settleTimer !== undefined) window.clearTimeout(settleTimer);
+            settleTimer = window.setTimeout(finishScroll, 100);
+          });
+          fallbackTimer = window.setTimeout(finishScroll, 400);
+          if (targetPage === page) {
+            scrollToRow();
+            return;
+          }
+          api.setPage(targetPage);
+          firstFrame = window.requestAnimationFrame(() => {
+            secondFrame = window.requestAnimationFrame(scrollToRow);
+          });
+          return;
         }
       } catch {
         // apiRef not ready yet — ignore
       }
       pendingSelectId.current = null;
+      cancelWaiting();
     }, 100);
-    return () => clearTimeout(timer);
+    return () => {
+      clearTimeout(timer);
+      cancelWaiting();
+    };
   }, [detailItem, items, apiRef]);
 
   const handleAdd = () => {
@@ -288,37 +337,10 @@ export default function EquipmentList<T extends { id: number; active?: boolean; 
     [dropdownFilterFields],
   );
 
-  const dropdownOptions = useMemo(() => {
-    const map = new Map<string, string[]>();
-    if (items.length === 0) return map;
-    const naturalSort = (a: string, b: string) =>
-      a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" });
-    for (const field of dropdownFields) {
-      const col = columns.find((c) => c.field === field);
-      if (!col) continue;
-      const values = new Set<string>();
-      for (const item of items) {
-        let raw: unknown;
-        if (col.valueGetter) {
-          raw = (col.valueGetter as (v: unknown, r: T) => unknown)(undefined, item);
-        } else {
-          raw = (item as Record<string, unknown>)[field];
-        }
-        if (raw == null || raw === "—" || raw === "") continue;
-        values.add(String(raw));
-      }
-      if (values.size > 0) {
-        map.set(field, Array.from(values).sort(naturalSort));
-      }
-    }
-    return map;
-  }, [items, columns, dropdownFields]);
-
-  const augmentedColumns: GridColDef<T>[] = columns.map((col) => {
-    const opts = dropdownOptions.get(col.field);
-    if (!opts) return col;
-    return { ...col, type: "singleSelect", valueOptions: opts } as GridColDef<T>;
-  });
+  const augmentedColumns = useMemo(
+    () => withDropdownFilters(columns, items, dropdownFields),
+    [columns, items, dropdownFields],
+  );
 
   const allColumns = [...(hideMineColumn ? [] : [mineColumn]), ...augmentedColumns, actionsColumn];
   const buttonLabel = addLabel ?? deriveAddLabel(title);
@@ -352,7 +374,8 @@ export default function EquipmentList<T extends { id: number; active?: boolean; 
           columns={allColumns}
           loading={isLoading}
           disableRowSelectionOnClick
-          hideFooter
+          hideFooterSelectedRowCount
+          pageSizeOptions={[25, 50, 100]}
           // One item only: MUI X Community always sets disableMultipleColumnsSorting,
           // so a multi-item model is rejected outright with a console error and only
           // the first entry ever applied. The model_name / name tiebreakers below it
@@ -360,6 +383,7 @@ export default function EquipmentList<T extends { id: number; active?: boolean; 
           // from the API, which already sorts by name.
           initialState={{
             sorting: { sortModel: [{ field: "manufacturer", sort: "asc" }] },
+            pagination: { paginationModel: { pageSize: 100, page: 0 } },
           }}
           onRowClick={renderDetail ? (params) => handleRowClick(params.row) : undefined}
           getRowClassName={(params) => {

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import sqlite3
 import stat
@@ -461,11 +462,17 @@ def test_choice_write_preserves_existing_mode_and_uses_readable_default(tmp_path
     path = tmp_path / "choice.json"
 
     write_choice(tmp_path, choice)
-    assert stat.S_IMODE(path.stat().st_mode) == 0o644
+    if os.name == "nt":
+        assert os.access(path, os.R_OK | os.W_OK)
+    else:
+        assert stat.S_IMODE(path.stat().st_mode) == 0o644
 
     path.chmod(0o640)
     write_choice(tmp_path, choice)
-    assert stat.S_IMODE(path.stat().st_mode) == 0o640
+    if os.name == "nt":
+        assert os.access(path, os.R_OK | os.W_OK)
+    else:
+        assert stat.S_IMODE(path.stat().st_mode) == 0o640
 
 
 def test_publication_marker_defers_applied_database_and_skips_fresh_database(

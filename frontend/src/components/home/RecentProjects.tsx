@@ -7,6 +7,7 @@ import FilterSwatch from "@/components/projects/FilterSwatch";
 import { formatHoursMinutes } from "@/components/projects/IntegrationBars";
 import { notRecordedFilter, resolveFilterLabel } from "@/components/projects/filterColors";
 import { displayConstellation } from "@/lib/constellations";
+import { homeFramingSize } from "@/lib/galleryRendition";
 import { formatDate, STAGE_LABELS } from "@/lib/home";
 import { stageAppearance } from "./stageAppearance";
 
@@ -41,6 +42,8 @@ export function RecentProjects({
           {projects.map((project) => {
             const maximum = Math.max(1, ...project.lines.map((line) => line.minutes));
             const target = targetLine(project);
+            const framingSize = homeFramingSize(project.crops);
+            const framing = framingSize ? project.crops[framingSize] : null;
             return (
               <Box
                 component={Link}
@@ -52,7 +55,9 @@ export function RecentProjects({
                   {project.has_image ? (
                     <Box
                       component="img"
-                      src={projectThumbnailUrl(project.project_id, "medium", project.thumbnail_version, workspaceKey)}
+                      src={framingSize && framing
+                        ? projectThumbnailUrl(project.project_id, framingSize, String(framing.id), workspaceKey)
+                        : projectThumbnailUrl(project.project_id, "medium", project.thumbnail_version, workspaceKey)}
                       alt=""
                       sx={{ position: "absolute", inset: 0, display: "block", width: "100%", height: "100%", objectFit: "cover" }}
                     />

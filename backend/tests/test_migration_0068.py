@@ -17,14 +17,6 @@ def _applied_migrations(conn: sqlite3.Connection) -> set[str]:
     return {row[0] for row in conn.execute("SELECT migration_id FROM _yoyo_migration")}
 
 
-def _apply_through_0067(db_path: Path) -> None:
-    with get_backend(f"sqlite:///{db_path}") as backend:
-        migrations = read_migrations(str(MIGRATIONS_DIR))
-        backend.apply_migrations(
-            backend.to_apply(migrations).filter(lambda migration: migration.id <= MIGRATION_0067)
-        )
-
-
 def _apply_0068(db_path: Path) -> None:
     with get_backend(f"sqlite:///{db_path}") as backend:
         migrations = read_migrations(str(MIGRATIONS_DIR))
@@ -33,9 +25,8 @@ def _apply_0068(db_path: Path) -> None:
         )
 
 
-def test_0068_clears_crops_and_preserves_sequence(tmp_path: Path):
-    db_path = tmp_path / "crops.db"
-    _apply_through_0067(db_path)
+def test_0068_clears_crops_and_preserves_sequence(pre_migration_db):
+    db_path = pre_migration_db(MIGRATION_0068, "crops.db")
 
     with sqlite3.connect(db_path) as conn:
         conn.execute("PRAGMA foreign_keys = ON")

@@ -83,6 +83,7 @@ import { useInstallFlow } from "@/components/notices/InstallUpdateDialog";
 import { AppToast } from "@/components/notices/AppToast";
 import { markVersionSeen, setCheckAutomatically } from "@/api/updates";
 import { onDownloadSaved } from "@/lib/desktopShell";
+import { PageErrorBoundary } from "@/components/common/PageError";
 
 const DRAWER_WIDTH_OPEN = 220;
 const DRAWER_WIDTH_CLOSED = 52;
@@ -638,7 +639,9 @@ function PersistentPages({ pathname }: { pathname: string }) {
               minHeight: 0,
             }}
           >
-            <Component />
+            <PageErrorBoundary resetKey={pathname}>
+              <Component />
+            </PageErrorBoundary>
           </Box>
         );
       })}

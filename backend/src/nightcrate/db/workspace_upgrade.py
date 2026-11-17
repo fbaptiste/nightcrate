@@ -19,13 +19,13 @@ from pathlib import Path
 from typing import Literal
 from urllib.parse import quote
 
-from yoyo import get_backend, read_migrations
+from yoyo import read_migrations
 
 from nightcrate.catalog_loader import load_catalogs
 from nightcrate.catalog_loader.registry import user_catalogs_root
 from nightcrate.core.app_config import workspace_db_path
 from nightcrate.db.durable_fs import durable_remove, durable_write, fsync_dir
-from nightcrate.db.migrations import MIGRATIONS_DIR
+from nightcrate.db.migrations import MIGRATIONS_DIR, migration_backend
 from nightcrate.seed_loader import load_all
 
 WORKSPACE_FILE = "nightcrate-workspace.json"
@@ -265,7 +265,7 @@ def _remove_marker(workspace: Path) -> None:
 
 
 def apply_migrations(db_path: Path) -> None:
-    with get_backend(f"sqlite:///{db_path}") as backend:
+    with migration_backend(db_path) as backend:
         migrations = read_migrations(str(MIGRATIONS_DIR))
         with backend.lock():
             backend.apply_migrations(backend.to_apply(migrations))

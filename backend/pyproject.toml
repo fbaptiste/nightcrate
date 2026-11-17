@@ -1,6 +1,6 @@
 [project]
 name = "nightcrate"
-version = "0.54.0"
+version = "0.54.1"
 description = "Astrophotography session cataloging and analysis"
 license = "GPL-3.0-or-later"
 requires-python = ">=3.14"
@@ -64,3 +64,4 @@ quote-style = "double"
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+markers = ["requires_frontend: test imports or runs the installed frontend toolchain"]

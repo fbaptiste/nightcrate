@@ -488,9 +488,10 @@ class TestLoadImageData:
         assert data.shape == (height, width)
 
     def test_referenced_file_not_found(self, tmp_path):
+        missing = tmp_path / "nonexistent" / "file.xisf"
         project = _make_project(
             tmp_path,
-            [{"name": "Missing", "file_path": "/nonexistent/file.xisf", "data_src": "b1"}],
+            [{"name": "Missing", "file_path": str(missing), "data_src": "b1"}],
         )
         with pytest.raises(FileNotFoundError, match="Referenced file not found"):
             load_image_data(project, 0)

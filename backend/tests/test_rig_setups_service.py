@@ -2,14 +2,13 @@
 
 from __future__ import annotations
 
+import shutil
 from dataclasses import replace
 from pathlib import Path
 
 import aiosqlite
 import pytest
-from yoyo import get_backend, read_migrations
 
-from nightcrate.db.migrations import MIGRATIONS_DIR
 from nightcrate.services.rig_setups import (
     PART_GROUPS,
     RigParts,
@@ -25,11 +24,9 @@ from tests.rig_setup_fixtures import make_equipment, make_frame, make_project, m
 
 
 @pytest.fixture
-def rig_db(tmp_path: Path) -> Path:
+def rig_db(tmp_path: Path, unseeded_template_db: Path) -> Path:
     path = tmp_path / "rig-setups.db"
-    with get_backend(f"sqlite:///{path}") as backend:
-        migrations = read_migrations(str(MIGRATIONS_DIR))
-        backend.apply_migrations(backend.to_apply(migrations))
+    shutil.copyfile(unseeded_template_db, path)
     return path
 
 

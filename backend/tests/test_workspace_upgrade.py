@@ -7,6 +7,7 @@ import shutil
 import sqlite3
 import subprocess
 import sys
+from contextlib import closing
 from datetime import datetime
 from pathlib import Path
 
@@ -199,7 +200,7 @@ def test_failed_migration_restores_backup(tmp_path, monkeypatch):
     workspace = tmp_path / "failure"
     upgrade.initialize_workspace(workspace, "Failure", "1.0")
     db = workspace / "nightcrate.db"
-    with sqlite3.connect(db) as conn:
+    with closing(sqlite3.connect(db)) as conn, conn:
         conn.execute("INSERT INTO settings (key, value_json) VALUES ('proof', '1')")
     migrations = tmp_path / "migrations"
     shutil.copytree(upgrade.MIGRATIONS_DIR, migrations)
@@ -862,7 +863,7 @@ def test_backup_and_restore_flush_through_writable_handles(tmp_path, windows_sty
     assert result.backup_path.is_file()
 
     db = workspace / "nightcrate.db"
-    with sqlite3.connect(db) as conn:
+    with closing(sqlite3.connect(db)) as conn, conn:
         conn.execute("INSERT INTO settings (key, value_json) VALUES ('after', '1')")
     upgrade.restore_backup(result.backup_path, db)
     assert db.read_bytes() == result.backup_path.read_bytes()

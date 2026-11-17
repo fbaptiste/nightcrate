@@ -4,7 +4,7 @@ The HTTP/DB boundary for cataloging a folder. Orchestrates:
 
     scan (fast walk) -> ProcessPool header parse
     -> content-hash UPSERT into sub_frame / processed_image / file_location
-    -> session formation -> light-to-target assignment
+    -> rig and session formation
     -> ingestion_run counters
 
 Frames are cataloged from their FITS headers alone. There is deliberately no
@@ -22,8 +22,8 @@ This module owns the transaction; the pure services (ingest_scanner,
 ingest_classify, ingest_sessions) never commit. One ingest runs at a time per
 process (global single-flight, 409 if busy).
 
-Catalog endpoints are read-only except for the frame-classification corrections
-(frame type + target, single and bulk).
+Catalog endpoints are read-only except for frame-type corrections (single and
+bulk).
 """
 
 from __future__ import annotations
@@ -44,7 +44,8 @@ from nightcrate.api.app_activity import admit_work
 from nightcrate.core import app_config, child_processes
 from nightcrate.core.compute import effective_worker_count
 from nightcrate.core.config import get_settings
-from nightcrate.db.session import get_db
+from nightcrate.db.session import get_db, workspace_key
+from nightcrate.services import ingest_progress
 from nightcrate.services.catalog_thumbnail import DEFAULT_MAX_PX, render_thumbnail_bytes
 from nightcrate.services.fits_header_map import extract_metadata
 from nightcrate.services.frame_quality import analyze_frame_file, wants_stars
@@ -71,6 +72,7 @@ from nightcrate.services.ingest_models import (
     CorrectableField,
     FrameCorrection,
     FrameTypeName,
+    IngestProgress,
     IngestStatus,
     QualityAnalyzeRequest,
     QualityAnalyzeResult,
@@ -185,29 +187,10 @@ def _thumb_cache_dir() -> Path:
 
 
 _FOLDER_SELECT = (
-    "SELECT psf.*, r.name AS rig_name, "
-    "COALESCE(d.common_name, d.primary_designation) AS target_name "
+    "SELECT psf.*, r.name AS rig_name "
     "FROM project_source_folder psf "
     "LEFT JOIN rig r ON r.id = psf.rig_id "
-    "LEFT JOIN project_target pt ON pt.id = psf.project_target_id "
-    "LEFT JOIN dso d ON d.id = pt.dso_id "
 )
-
-
-async def _validate_folder_target(conn, project_id: int, target_id: int | None) -> None:
-    """422 unless *target_id* is one of this project's own targets.
-
-    Scoped, not just existence-checked: project_target ids are global, so a bare
-    FK check would happily let one project's folder point at another's target.
-    """
-    if target_id is None:
-        return
-    cursor = await conn.execute(
-        "SELECT 1 FROM project_target WHERE id = ? AND project_id = ?",
-        (target_id, project_id),
-    )
-    if await cursor.fetchone() is None:
-        raise HTTPException(status_code=422, detail="Target does not belong to this project")
 
 
 def _folder_response(d: dict) -> SourceFolder:
@@ -256,18 +239,15 @@ async def add_folder(project_id: int, body: SourceFolderCreate) -> SourceFolder:
             )
         if body.rig_id is not None:
             await get_or_404(conn, "rig", body.rig_id, "Rig")
-        await _validate_folder_target(conn, project_id, body.project_target_id)
         try:
             cursor = await conn.execute(
                 "INSERT INTO project_source_folder "
-                "(project_id, path, is_primary, rig_id, project_target_id) "
-                "VALUES (?, ?, ?, ?, ?)",
+                "(project_id, path, is_primary, rig_id) VALUES (?, ?, ?, ?)",
                 (
                     project_id,
                     path,
                     1 if make_primary else 0,
                     body.rig_id,
-                    body.project_target_id,
                 ),
             )
             folder_id = cursor.lastrowid
@@ -300,29 +280,22 @@ async def set_primary_folder(project_id: int, folder_id: int) -> SourceFolder:
 
 @router.patch("/{project_id}/folders/{folder_id}", response_model=SourceFolder)
 async def update_folder(project_id: int, folder_id: int, body: SourceFolderUpdate) -> SourceFolder:
-    """Tag a source folder with the rig that shot it and/or the target it holds
-    (explicit null clears either).
+    """Tag a source folder with the rig that shot it (explicit null clears it).
 
-    The user declares both; nothing infers them from a header. **Only the fields
-    actually sent are written** (read off ``model_fields_set``), so tagging a rig
-    cannot silently clear a target set separately. Frames already cataloged are
-    re-tagged in place and their sessions re-keyed, so the change takes effect
-    without a re-scan. Nested bindings resolve innermost-first, so tagging a parent
-    folder never steals a nested folder's frames. Target differs from rig in two
-    ways: it applies to lights only, and a hand-corrected frame
-    (``project_target_source = 'user'``) is never overwritten.
+    The user declares it; nothing infers it from a header. Frames already
+    cataloged are re-tagged in place and their sessions re-keyed, so the change
+    takes effect without a re-scan. Nested bindings resolve innermost-first, so
+    tagging a parent folder never steals a nested folder's frames.
     """
     async with get_db() as conn:
         await conn.execute("PRAGMA foreign_keys = ON")
         folder = await _get_folder_or_404(conn, project_id, folder_id)
         sent = body.model_fields_set
-        if not ({"rig_id", "project_target_id"} & sent):
+        if "rig_id" not in sent:
             return await _fetch_folder(conn, folder_id)
-        if "rig_id" in sent and body.rig_id is not None:
+        if body.rig_id is not None:
             await get_or_404(conn, "rig", body.rig_id, "Rig")
-        if "project_target_id" in sent:
-            await _validate_folder_target(conn, project_id, body.project_target_id)
-        rig_changed = "rig_id" in sent and body.rig_id != folder["rig_id"]
+        rig_changed = body.rig_id != folder["rig_id"]
         had_auto_batches = False
         if rig_changed:
             cursor = await conn.execute(
@@ -330,14 +303,9 @@ async def update_folder(project_id: int, folder_id: int, body: SourceFolderUpdat
                 (project_id,),
             )
             had_auto_batches = await cursor.fetchone() is not None
-        # Only the fields actually sent are written, so tagging a rig can't clear
-        # a target that was set separately.
-        sets = [f"{f} = ?" for f in ("rig_id", "project_target_id") if f in sent]
-        params = [getattr(body, f) for f in ("rig_id", "project_target_id") if f in sent]
         await conn.execute(
-            # column names come from a fixed tuple; values are bound
-            f"UPDATE project_source_folder SET {', '.join(sets)} WHERE id = ?",  # nosec B608
-            (*params, folder_id),
+            "UPDATE project_source_folder SET rig_id = ? WHERE id = ?",
+            (body.rig_id, folder_id),
         )
         tz_name = await project_geo_timezone(conn, project_id)
         await assign_rigs_and_sessions(conn, project_id, tz_name)
@@ -443,35 +411,44 @@ async def start_ingest(
     folder is scanned. Project-wide post-processing (dark-flat reclassification)
     runs either way, so a single-folder scan still settles cross-folder matches.
     """
+    workspace = workspace_key()
     if _INGEST_LOCK.locked():
         raise HTTPException(status_code=409, detail="An ingest is already running")
-
-    async with get_db() as conn:
-        await get_or_404(conn, "project", project_id, "Project")
-        if folder_id is not None:
-            folder = await _get_folder_or_404(conn, project_id, folder_id)
-            folders = [folder["path"]]
-        else:
-            cursor = await conn.execute(
-                "SELECT path FROM project_source_folder WHERE project_id = ? ORDER BY added_at",
-                (project_id,),
-            )
-            folders = [r["path"] for r in await cursor.fetchall()]
-        if not folders:
-            raise HTTPException(status_code=422, detail="Project has no source folders")
-
-    # Hold the lock for the whole synchronous-within-request run. Ingest is fast
-    # enough (parse fan-out is parallel) to run inline; status is queryable after.
+    # No await separates the busy check from the acquire. asyncio.Lock claims an
+    # unlocked lock synchronously, so two requests cannot both pass admission and
+    # have one queue behind the other.
+    await _INGEST_LOCK.acquire()
     global _active_ingest_project_id
-    async with _INGEST_LOCK:
+    try:
+        async with get_db() as conn:
+            await get_or_404(conn, "project", project_id, "Project")
+            if folder_id is not None:
+                folder = await _get_folder_or_404(conn, project_id, folder_id)
+                folders = [folder["path"]]
+            else:
+                cursor = await conn.execute(
+                    "SELECT path FROM project_source_folder WHERE project_id = ? ORDER BY added_at",
+                    (project_id,),
+                )
+                folders = [r["path"] for r in await cursor.fetchall()]
+            if not folders:
+                raise HTTPException(status_code=422, detail="Project has no source folders")
+
         _active_ingest_project_id = project_id
-        try:
-            return await _run_ingest(project_id, folders)
-        finally:
-            _active_ingest_project_id = None
+        return await _run_ingest(project_id, folders, workspace)
+    finally:
+        _active_ingest_project_id = None
+        _INGEST_LOCK.release()
 
 
-async def _run_ingest(project_id: int, folders: list[str]) -> IngestStatus:
+@router.get("/{project_id}/ingest/progress", response_model=IngestProgress | None)
+async def get_ingest_progress(project_id: int) -> IngestProgress | None:
+    """Return the active or briefly retained scan for this workspace and project."""
+    value = ingest_progress.snapshot(workspace_key(), project_id)
+    return IngestProgress(**value) if value is not None else None
+
+
+async def _run_ingest(project_id: int, folders: list[str], workspace: str) -> IngestStatus:
     settings = await get_settings()
     configured = settings.max_worker_cores
     n_workers = max(1, int(configured)) if configured else max(1, (os.cpu_count() or 2) - 1)
@@ -484,77 +461,143 @@ async def _run_ingest(project_id: int, folders: list[str]) -> IngestStatus:
         )
         run_id = cursor.lastrowid
         await conn.commit()
-
-        tz_name = await project_geo_timezone(conn, project_id)
         errors: list[dict] = []
         counters = {"scanned": 0, "inserted": 0, "updated": 0, "skipped": 0}
+        cancelled: asyncio.CancelledError | None = None
+        status = "running"
+        result: IngestStatus | None = None
+        terminal_error: BaseException | None = None
+        ingest_progress.start(workspace, project_id, run_id)
+        try:
+            tz_name = await project_geo_timezone(conn, project_id)
 
-        # One spawn pool for the whole run, shut down via the context manager so no
-        # worker processes linger (which would wedge `uvicorn --reload` restarts).
-        # n_workers == 1 → parse inline, no pool at all.
-        pool = make_pool(n_workers) if n_workers > 1 else None
-        with ExitStack() as stack:
-            if pool is not None:
-                stack.enter_context(child_processes.registered_pool(pool))
-            try:
-                for folder in folders:
-                    await _ingest_folder(conn, project_id, run_id, folder, pool, errors, counters)
-                await _reclassify_dark_flats(conn, project_id)
-                # Rig + session are assigned in one post-pass rather than per file: a
-                # frame's rig depends on which bound folder *innermost* contains it,
-                # which isn't known until every folder is on the table. The pass also
-                # sweeps sessions a re-scan emptied. The user-facing project_session
-                # rows are never touched by ingest — deriving those is an explicit
-                # action on the Sessions tab.
-                await assign_rigs_and_sessions(conn, project_id, tz_name)
-                status = "completed"
-            except Exception as exc:  # noqa: BLE001 - record failure on the run
-                logger.exception("%s run %d failed", _LOG_PREFIX, run_id)
-                errors.append({"path": None, "error": f"{type(exc).__name__}: {exc}"})
-                status = "failed"
-            finally:
-                if pool is not None:
-                    pool.shutdown(wait=True, cancel_futures=True)
+            # One spawn pool for the whole run, shut down via the context manager so no
+            # worker processes linger (which would wedge `uvicorn --reload` restarts).
+            # n_workers == 1 → parse inline, no pool at all.
+            pool = None
+            with ExitStack() as stack:
+                try:
+                    pool = make_pool(n_workers) if n_workers > 1 else None
+                    if pool is not None:
+                        stack.enter_context(child_processes.registered_pool(pool))
+                    for folder in folders:
+                        await _ingest_folder(
+                            conn, project_id, run_id, folder, pool, errors, counters
+                        )
+                    await _reclassify_dark_flats(conn, project_id)
+                    # Rig + session are assigned in one post-pass rather than per file: a
+                    # frame's rig depends on which bound folder *innermost* contains it,
+                    # which isn't known until every folder is on the table. The pass also
+                    # sweeps sessions a re-scan emptied. The user-facing project_session
+                    # rows are never touched by ingest — deriving those is an explicit
+                    # action on the Sessions tab.
+                    ingest_progress.stage("grouping")
+                    await assign_rigs_and_sessions(conn, project_id, tz_name)
+                    status = "completed"
+                except asyncio.CancelledError as exc:
+                    status = "cancelled"
+                    cancelled = exc
+                    await conn.rollback()
+                except Exception as exc:  # noqa: BLE001 - record failure on the run
+                    logger.exception("%s run %d failed", _LOG_PREFIX, run_id)
+                    errors.append({"path": None, "error": f"{type(exc).__name__}: {exc}"})
+                    status = "failed"
+                    await conn.rollback()
+                finally:
+                    if pool is not None:
+                        pool.shutdown(wait=True, cancel_futures=True)
 
-        await conn.execute(
-            "UPDATE ingestion_run SET status = ?, files_scanned = ?, subs_inserted = ?, "
-            "subs_updated = ?, subs_skipped = ?, errors_count = ?, errors_json = ?, "
-            "finished_at = datetime('now') WHERE id = ?",
-            (
+            await conn.execute(
+                "UPDATE ingestion_run SET status = ?, files_scanned = ?, subs_inserted = ?, "
+                "subs_updated = ?, subs_skipped = ?, errors_count = ?, errors_json = ?, "
+                "finished_at = datetime('now') WHERE id = ?",
+                (
+                    status,
+                    counters["scanned"],
+                    counters["inserted"],
+                    counters["updated"],
+                    counters["skipped"],
+                    len(errors),
+                    json.dumps(errors) if errors else None,
+                    run_id,
+                ),
+            )
+            await conn.commit()
+
+            logger.info(
+                "%s run %d %s: scanned=%d inserted=%d updated=%d skipped=%d errors=%d",
+                _LOG_PREFIX,
+                run_id,
                 status,
                 counters["scanned"],
                 counters["inserted"],
                 counters["updated"],
                 counters["skipped"],
                 len(errors),
-                json.dumps(errors) if errors else None,
-                run_id,
-            ),
-        )
-        await conn.commit()
+            )
+            result = IngestStatus(
+                run_id=run_id,
+                project_id=project_id,
+                status=status,
+                files_scanned=counters["scanned"],
+                subs_inserted=counters["inserted"],
+                subs_updated=counters["updated"],
+                subs_skipped=counters["skipped"],
+                errors_count=len(errors),
+                first_error=_first_error(errors),
+            )
+            if cancelled is not None:
+                raise cancelled
+            return result
+        except BaseException as exc:
+            terminal_error = exc
+            raise
+        finally:
+            if result is None:
+                # Only an escaping exception leaves result unset; the fallback
+                # keeps the record terminal even if that ever changes.
+                if terminal_error is None:
+                    terminal_error = RuntimeError("scan ended without a result")
+                error_text = str(terminal_error)
+                result = IngestStatus(
+                    run_id=run_id,
+                    project_id=project_id,
+                    status=(
+                        "cancelled"
+                        if isinstance(terminal_error, asyncio.CancelledError)
+                        else "failed"
+                    ),
+                    files_scanned=counters["scanned"],
+                    subs_inserted=counters["inserted"],
+                    subs_updated=counters["updated"],
+                    subs_skipped=counters["skipped"],
+                    errors_count=len(errors) + 1,
+                    first_error=(
+                        f"{type(terminal_error).__name__}: {error_text}"
+                        if error_text
+                        else type(terminal_error).__name__
+                    ),
+                )
+            ingest_progress.finish(result)
 
-        logger.info(
-            "%s run %d %s: scanned=%d inserted=%d updated=%d skipped=%d errors=%d",
-            _LOG_PREFIX,
-            run_id,
-            status,
-            counters["scanned"],
-            counters["inserted"],
-            counters["updated"],
-            counters["skipped"],
-            len(errors),
-        )
-        return IngestStatus(
-            run_id=run_id,
-            project_id=project_id,
-            status=status,
-            files_scanned=counters["scanned"],
-            subs_inserted=counters["inserted"],
-            subs_updated=counters["updated"],
-            subs_skipped=counters["skipped"],
-            errors_count=len(errors),
-            first_error=_first_error(errors),
-        )
+
+async def _to_thread_and_drain_on_cancel(function, /, *args):
+    """Run synchronous work without letting cancellation outlive its thread."""
+    thread_task = asyncio.create_task(asyncio.to_thread(function, *args))
+    cancelled: asyncio.CancelledError | None = None
+    while not thread_task.done():
+        try:
+            await asyncio.shield(thread_task)
+        except asyncio.CancelledError as exc:
+            cancelled = exc
+        except BaseException:
+            if cancelled is None:
+                raise
+    if cancelled is not None:
+        if not thread_task.cancelled():
+            thread_task.exception()
+        raise cancelled
+    return thread_task.result()
 
 
 def _first_error(errors: list[dict]) -> str | None:
@@ -572,8 +615,14 @@ def _first_error(errors: list[dict]) -> str | None:
 
 
 async def _ingest_folder(conn, project_id, run_id, folder, pool, errors, counters) -> None:
-    report = scan_directory(folder)
-    parsed = await _parse_in_pool(header_bearing(report.entries), pool)
+    ingest_progress.folder(folder)
+    ingest_progress.stage("listing")
+    report = await _to_thread_and_drain_on_cancel(scan_directory, folder)
+    entries = header_bearing(report.entries)
+    ingest_progress.total(len(entries))
+    ingest_progress.stage("reading")
+    parsed = await _parse_in_pool(entries, pool)
+    ingest_progress.stage("saving")
     counters_before = counters.copy()
     errors_before = len(errors)
     failures: list[dict] = []
@@ -714,9 +763,31 @@ async def _parse_in_pool(entries, pool) -> list[dict]:
     paths = [e.path for e in entries]
     # No pool (single-core) or a single file → parse inline, no IPC overhead.
     if pool is None or len(paths) == 1:
-        return [parse_image_file(p) for p in paths]
+        results = []
+        for path in paths:
+            try:
+                result = await _to_thread_and_drain_on_cancel(parse_image_file, path)
+            except Exception:
+                ingest_progress.file_read(path, False)
+                raise
+            ingest_progress.file_read(path, not bool(result.get("error")))
+            results.append(result)
+        return results
     loop = asyncio.get_running_loop()
     futures = [loop.run_in_executor(pool, parse_image_file, p) for p in paths]
+
+    def report(future, path: str) -> None:
+        if future.cancelled():
+            return
+        try:
+            result = future.result()
+        except Exception:
+            ingest_progress.file_read(path, False)
+        else:
+            ingest_progress.file_read(path, not bool(result.get("error")))
+
+    for path, future in zip(paths, futures, strict=True):
+        future.add_done_callback(lambda completed, path=path: report(completed, path))
     return list(await asyncio.gather(*futures))
 
 
@@ -754,11 +825,9 @@ async def _persist_parsed(conn, project_id, run_id, result, counters) -> None:
     )
     counters["inserted" if was_insert else "updated"] += 1
 
-    # Session, rig AND target are assigned project-wide after every folder is
-    # walked (assign_rigs_and_sessions) — all three depend on which bound folder
-    # innermost contains the file, which isn't knowable here. Target moved there
-    # in v0.41.3 when folders gained a target tag; writing it per-file could not
-    # see folder nesting and got a tag-after-scan wrong.
+    # Session and rig are assigned project-wide after every folder is walked
+    # (assign_rigs_and_sessions), because the rig depends on which bound folder
+    # innermost contains the file and that isn't knowable here.
     await _link_file_location(conn, project_id, result, "sub_frame", sub_id)
 
 
@@ -1511,29 +1580,8 @@ async def _apply_correction(conn, project_id: int, frame_id: int, body: FrameCor
             else None
         )
 
-    if "project_target_id" in sent:
-        if body.project_target_id is not None:
-            # Only lights have a target — the automatic path enforces this
-            # (`_persist_parsed` assigns one only when frame_type == 'light'), so
-            # the manual path has to as well or the two disagree. Checked against
-            # the *effective* type, which may be corrected in this same request.
-            effective_type = updates.get("frame_type", frame["frame_type"])
-            if effective_type != "light":
-                raise HTTPException(
-                    status_code=422,
-                    detail=f"Only lights carry a target (frame is {effective_type})",
-                )
-            cursor = await conn.execute(
-                "SELECT id FROM project_target WHERE id = ? AND project_id = ?",
-                (body.project_target_id, project_id),
-            )
-            if await cursor.fetchone() is None:
-                raise HTTPException(status_code=404, detail="Target not found in this project")
-        updates["project_target_id"] = body.project_target_id
-        updates["project_target_source"] = "user"
-
     for f in body.reset_to_auto:
-        updates[f"{f.removesuffix('_id')}_source"] = "auto"
+        updates[f"{f}_source"] = "auto"
 
     if not updates:
         return
@@ -1548,10 +1596,10 @@ async def _apply_correction(conn, project_id: int, frame_id: int, body: FrameCor
 async def correct_frame_classification(
     project_id: int, frame_id: int, body: FrameCorrection
 ) -> CatalogFrame:
-    """Manually correct a frame's type / target.
+    """Manually correct a frame's type.
 
-    Both are re-derived by the ingest pipeline on every scan, so a correction
-    marks ``*_source = 'user'`` and the passes skip it (migration 0043).
+    The type is re-derived by the ingest pipeline on every scan, so a correction
+    marks ``frame_type_source = 'user'`` and the pass skips it (migration 0043).
     """
     _require_correction(body)
 
@@ -1826,17 +1874,14 @@ _FRAME_SELECT = (
     "SELECT sf.id, sf.frame_type, sf.filter_name_hint, "
     "sf.object_hint, sf.exposure_seconds, sf.gain, sf.set_temp_c, sf.binning_x, "
     "sf.binning_y, sf.image_width, sf.image_height, sf.date_obs_utc, sf.accepted, "
-    "sf.project_target_id, sf.frame_type_source, sf.project_target_source, "
+    "sf.frame_type_source, "
     "sf.hfr, sf.star_count, sf.median_adu, sf.background_adu, sf.snr_estimate, "
     "sf.quality_status, sf.quality_analyzed_at, "
-    "COALESCE(d.common_name, d.primary_designation) AS target_name, "
     "r.name AS rig_name, "
     f"{_PIXEL_SCALE_SQL} AS pixel_scale_arcsec, "  # nosec B608
     f"{_FULL_SCALE_SQL} AS full_scale_adu, "  # nosec B608
     "fl.path AS path, fl.size_bytes AS file_size_bytes "
     "FROM sub_frame sf "
-    "LEFT JOIN project_target pt ON pt.id = sf.project_target_id "
-    "LEFT JOIN dso d ON d.id = pt.dso_id "
     "LEFT JOIN rig r ON r.id = sf.rig_id "
     "LEFT JOIN sub_frame_equipment fe ON fe.sub_frame_id = sf.id "
     # Effective optics + sensor for the pixel scale above. All LEFT:
@@ -1875,10 +1920,7 @@ def _catalog_frame(d: dict, night_tz: str | None) -> CatalogFrame:
         observing_night=night,
         accepted=bool(d["accepted"]) if d.get("accepted") is not None else None,
         rig_name=d.get("rig_name"),
-        project_target_id=d.get("project_target_id"),
-        target_name=d.get("target_name"),
         frame_type_source=d.get("frame_type_source"),
-        project_target_source=d.get("project_target_source"),
         hfr=d.get("hfr"),
         star_count=d.get("star_count"),
         median_adu=d.get("median_adu"),

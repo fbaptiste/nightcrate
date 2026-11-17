@@ -42,9 +42,8 @@ def _table_counts(conn: sqlite3.Connection) -> dict[str, int]:
     }
 
 
-def test_upgrade_preserves_all_counts_and_selected_rows(tmp_path: Path):
-    db_path = tmp_path / "upgrade.db"
-    _apply_through(db_path, MIGRATION_0069)
+def test_upgrade_preserves_all_counts_and_selected_rows(pre_migration_db):
+    db_path = pre_migration_db(MIGRATION_0070)
     with sqlite3.connect(db_path) as conn:
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA foreign_keys = ON")

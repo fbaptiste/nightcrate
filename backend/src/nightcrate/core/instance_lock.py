@@ -76,12 +76,11 @@ def acquire_instance_lock(kind: InstallKind, version: str, port: int | None) -> 
         if os.name == "nt":
             import msvcrt
 
-            stream.seek(0)
-            if stream.read(1) == b"":
-                stream.write(b"\0")
-                stream.flush()
-            stream.seek(0)
             try:
+                if os.fstat(stream.fileno()).st_size == 0:
+                    stream.write(b"\0")
+                    stream.flush()
+                stream.seek(0)
                 msvcrt.locking(stream.fileno(), msvcrt.LK_NBLCK, 1)
             except OSError as exc:
                 raise InstanceLockHeld(read_instance_info()) from exc

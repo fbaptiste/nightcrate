@@ -125,8 +125,13 @@ instructions to restore removed features.
 - Verify upgrades on a copy of a database at the preceding migration, as well as
   a fresh database. Preserve user records; check integrity and foreign keys.
 - To reshape a parent table, wrap the rename in `PRAGMA legacy_alter_table = ON`
-  as migrations 0022, 0023, 0038, and 0040 do. Otherwise SQLite rewrites child
-  foreign keys to point at the renamed legacy table, which is then dropped.
+  as migrations 0022, 0023, 0038, 0040, 0073 and 0074 do. Otherwise SQLite
+  rewrites child foreign keys to point at the renamed legacy table, which is
+  then dropped. This also needs foreign keys off, and a `PRAGMA` inside yoyo's
+  transaction is ignored. So application code opens migrations only through
+  `db/migrations.migration_backend`, which turns them off on every yoyo
+  connection (and logs without yoyo's slow network hostname lookup), and
+  never calls yoyo's `get_backend` itself.
 - Equipment vocabularies use closed CHECK constraints. Vocabulary changes need
   a migration and matching loader/model changes.
 - Seed changes must preserve user edits. Field renames require compatible hash
