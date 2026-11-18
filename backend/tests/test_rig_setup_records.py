@@ -106,7 +106,7 @@ async def test_untagged_single_rig_project_keeps_setups(client):
     assert set(stamps).issubset(frame_ids)
 
 
-async def test_second_project_rig_then_tag_restores_setup(client):
+async def test_second_project_rig_then_tag_restores_setup(client, tmp_path):
     equipment, rig_id, project_id, frame_ids = await _base(tagged=False, frame_count=1)
     setup_id = await _split(rig_id, equipment.camera_b)
     async with get_db() as conn:
@@ -119,15 +119,17 @@ async def test_second_project_rig_then_tag_restores_setup(client):
     sessions = await _derive(client, project_id)
     assert [(row["rig_id"], row["rig_setup_id"]) for row in sessions] == [(None, None)]
 
+    record_folder = tmp_path / "record"
+    record_file = record_folder / "light.fits"
     async with get_db() as conn:
         await conn.execute(
             "INSERT INTO project_source_folder (project_id, path, rig_id) VALUES (?, ?, ?)",
-            (project_id, "/synthetic/record", rig_id),
+            (project_id, str(record_folder), rig_id),
         )
         await conn.execute(
             "INSERT INTO file_location (project_id, path, category, sub_frame_id) "
             "VALUES (?, ?, 'sub_frame', ?)",
-            (project_id, "/synthetic/record/light.fits", frame_ids[0]),
+            (project_id, str(record_file), frame_ids[0]),
         )
         await conn.commit()
     sessions = await _derive(client, project_id)

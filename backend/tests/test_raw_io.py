@@ -215,6 +215,19 @@ def test_header_groups_order(tmp_path):
     assert by_key["Pattern source"]["value"] == "the raw file"
 
 
+def test_header_uses_layout_without_copying_full_samples(tmp_path, monkeypatch):
+    path = _generated(tmp_path / "header-layout.dng")
+    monkeypatch.setattr(
+        raw_io,
+        "read_raw_samples",
+        lambda _source: (_ for _ in ()).throw(AssertionError("full samples decoded")),
+    )
+
+    cards = raw_io.read_header(path)
+
+    assert {card["key"] for card in cards} >= {"Pattern", "Visible area", "White level"}
+
+
 class _StandInDatum:
     def __init__(
         self,

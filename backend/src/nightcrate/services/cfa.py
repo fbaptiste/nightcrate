@@ -129,10 +129,10 @@ def pattern_from_xisf(cfa: Mapping[str, str] | None) -> PatternInfo | None:
     return PatternInfo(CfaPattern(rows), "xisf_cfa", cfa.get("name", "ColorFilterArray"))
 
 
-def pattern_from_raw(raw_colors_visible: np.ndarray, color_desc: bytes) -> PatternInfo:
+def pattern_from_raw(raw_colors_visible: np.ndarray, color_desc: bytes) -> PatternInfo | None:
     colours = bytes(color_desc).decode("ascii", errors="ignore").rstrip("\x00")
     if not colours:
-        raise ValueError("The raw file has no colour descriptions")
+        return None
     indices = np.asarray(raw_colors_visible)
     if indices.ndim != 2 or indices.size == 0:
         raise ValueError("The raw file has no colour pattern")
@@ -157,6 +157,8 @@ def pattern_from_raw(raw_colors_visible: np.ndarray, color_desc: bytes) -> Patte
     for row in indices[:period_h, :period_w]:
         try:
             rows.append("".join(colours[int(index)] for index in row))
-        except (IndexError, ValueError) as exc:
-            raise ValueError("The raw file has an invalid colour pattern") from exc
+        except IndexError, ValueError:
+            return None
+    if len(set("".join(rows))) <= 1:
+        return None
     return PatternInfo(CfaPattern(tuple(rows)), "raw_file", "the raw file")

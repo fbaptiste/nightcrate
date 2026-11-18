@@ -178,8 +178,9 @@ def list_extensions(source: Path | BinaryIO) -> list[dict]:
         for i, hdu_obj in enumerate(hdul):
             has_image = (
                 isinstance(hdu_obj, (fits.PrimaryHDU, fits.ImageHDU))
-                and hdu_obj.data is not None
-                and hdu_obj.data.ndim >= 2
+                and int(hdu_obj.header.get("NAXIS", 0)) >= 2
+                and int(hdu_obj.header.get("NAXIS1", 0)) > 0
+                and int(hdu_obj.header.get("NAXIS2", 0)) > 0
             )
             result.append(
                 {

@@ -484,3 +484,17 @@ def render_image_png(
     # but encoding speed directly impacts image load time.
     img.save(buf, format="PNG", compress_level=1)
     return buf.getvalue()
+
+
+def area_reduce(data: np.ndarray, step: int) -> np.ndarray:
+    """Reduce spatial axes by block means, retaining partial edge blocks."""
+    if step <= 1:
+        return data
+    height, width = data.shape[-2:]
+    y_starts = np.arange(0, height, step)
+    x_starts = np.arange(0, width, step)
+    y_counts = np.minimum(step, height - y_starts)
+    x_counts = np.minimum(step, width - x_starts)
+    reduced = np.add.reduceat(data.astype(np.float32), y_starts, axis=-2)
+    reduced = np.add.reduceat(reduced, x_starts, axis=-1)
+    return reduced / (y_counts[:, None] * x_counts[None, :])

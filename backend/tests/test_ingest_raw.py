@@ -231,6 +231,25 @@ def test_capture_time_sources(meta, geo_tz, expected, source):
     )
 
 
+@pytest.mark.parametrize(
+    ("header", "meta", "expected", "source"),
+    [
+        (
+            "05/01/23",
+            {"captured_local": "2026-03-15T21:30:00", "utc_offset_minutes": -420},
+            "2026-03-16T04:30:00+00:00",
+            "exif_offset",
+        ),
+        ("2023-01-05 21:03", {}, "2023-01-05T21:03:00+00:00", "header"),
+        ("", {}, "2026-03-15T20:00:00+00:00", "file_time"),
+    ],
+)
+def test_invalid_or_partial_header_dates_fall_through(header, meta, expected, source):
+    assert ingest._coerce_date_obs(
+        {"date_obs": header, **meta}, "2026-03-15T20:00:00+00:00", None
+    ) == (expected, source)
+
+
 @pytest.mark.skipif(not hasattr(time, "tzset"), reason="time.tzset is unavailable")
 def test_capture_time_uses_computer_zone_rules_for_capture_date(monkeypatch):
     monkeypatch.setenv("TZ", "America/New_York")

@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import io
+import threading
+import zipfile
 from pathlib import Path
 
 import numpy as np
@@ -11,7 +13,9 @@ from astropy.io import fits
 from httpx import ASGITransport, AsyncClient
 from PIL import Image
 
+from nightcrate.api import images as images_api
 from nightcrate.main import app
+from nightcrate.services import archive_io, fits_io, raw_io
 from nightcrate.services.raw_support import UNAVAILABLE_MESSAGE, RawUnavailable
 from tests.fixtures.raw_fixtures import write_cfa_dng
 
@@ -96,6 +100,7 @@ async def test_histogram_clips_negative_float_samples_into_first_bin(
 
 @pytest.mark.anyio
 async def test_extensions_report_pattern_provenance(client: AsyncClient, mosaic_fits: Path):
+    images_api._cache.clear()
     response = await client.get("/api/images/extensions", params={"path": str(mosaic_fits)})
     colour = response.json()[0]["colour"]
     assert colour == {
@@ -105,6 +110,178 @@ async def test_extensions_report_pattern_provenance(client: AsyncClient, mosaic_
         "detail": "BAYERPAT",
         "assumptions": [],
     }
+    assert images_api._cache == {}
+
+
+@pytest.mark.anyio
+async def test_extensions_do_not_decode_pixels(client: AsyncClient, mosaic_fits: Path, monkeypatch):
+    monkeypatch.setattr(
+        images_api,
+        "_get_cached_image",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("pixels decoded")),
+    )
+
+    response = await client.get("/api/images/extensions", params={"path": str(mosaic_fits)})
+
+    assert response.status_code == 200
+    assert response.json()[0]["colour"]["pattern"] == "RGGB"
+
+
+@pytest.mark.anyio
+async def test_extensions_read_metadata_off_event_loop(
+    client: AsyncClient, mosaic_fits: Path, monkeypatch
+):
+    event_loop_thread = threading.get_ident()
+    reader_threads = []
+    original = fits_io.list_extensions
+
+    def list_extensions(source):
+        reader_threads.append(threading.get_ident())
+        return original(source)
+
+    monkeypatch.setattr(fits_io, "list_extensions", list_extensions)
+    response = await client.get("/api/images/extensions", params={"path": str(mosaic_fits)})
+
+    assert response.status_code == 200
+    assert reader_threads and reader_threads[0] != event_loop_thread
+
+
+@pytest.mark.anyio
+async def test_colour_fits_ignores_stale_pattern_keyword(client: AsyncClient, tmp_path: Path):
+    path = tmp_path / "colour-with-stale-pattern.fits"
+    hdu = fits.PrimaryHDU(np.zeros((3, 4, 5), dtype=np.uint16))
+    hdu.header["BAYERPAT"] = "RGGB"
+    hdu.writeto(path)
+
+    response = await client.get("/api/images/extensions", params={"path": str(path)})
+
+    assert response.status_code == 200
+    assert response.json()[0]["colour"]["kind"] == "colour"
+    assert response.json()[0]["colour"]["pattern"] is None
+
+
+@pytest.mark.anyio
+async def test_float_tiff_extension_uses_sample_count_without_decoding(
+    client: AsyncClient, tmp_path: Path, monkeypatch
+):
+    import tifffile
+
+    path = tmp_path / "mono-float.tiff"
+    tifffile.imwrite(path, np.zeros((4, 5), dtype=np.float32))
+    monkeypatch.setattr(
+        images_api,
+        "_get_cached_image",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("pixels decoded")),
+    )
+
+    response = await client.get("/api/images/extensions", params={"path": str(path)})
+
+    assert response.status_code == 200
+    assert response.json()[0]["colour"]["kind"] == "mono"
+
+
+@pytest.mark.anyio
+async def test_archived_extensions_extract_once(
+    client: AsyncClient, mosaic_fits: Path, tmp_path: Path, monkeypatch
+):
+    archive = tmp_path / "images.zip"
+    with zipfile.ZipFile(archive, "w") as output:
+        output.write(mosaic_fits, "mosaic.fits")
+    original = archive_io.extract_entry
+    calls = []
+
+    def extract(*args, **kwargs):
+        calls.append(args)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(archive_io, "extract_entry", extract)
+    response = await client.get(
+        "/api/images/extensions", params={"path": f"{archive}::mosaic.fits"}
+    )
+
+    assert response.status_code == 200
+    assert response.json()[0]["colour"]["pattern"] == "RGGB"
+    assert len(calls) == 1
+
+
+@pytest.mark.anyio
+async def test_raw_header_route_reads_off_event_loop(
+    client: AsyncClient, tmp_path: Path, monkeypatch
+):
+    path = tmp_path / "capture.dng"
+    path.write_bytes(b"unused")
+    event_loop_thread = threading.get_ident()
+    reader_threads = []
+
+    def read_header(_source):
+        reader_threads.append(threading.get_ident())
+        return []
+
+    monkeypatch.setattr(raw_io, "read_header", read_header)
+    response = await client.get("/api/images/header", params={"path": str(path)})
+
+    assert response.status_code == 200
+    assert reader_threads and reader_threads[0] != event_loop_thread
+
+
+@pytest.mark.anyio
+async def test_raw_extensions_use_layout_without_samples(
+    client: AsyncClient, tmp_path: Path, monkeypatch
+):
+    path = tmp_path / "mono.dng"
+    path.write_bytes(b"unused")
+    monkeypatch.setattr(
+        raw_io,
+        "read_raw_layout",
+        lambda _source: raw_io.RawLayout(None, (64.0,), 4095, (0, 0, 20, 10)),
+    )
+    monkeypatch.setattr(
+        raw_io,
+        "read_raw_samples",
+        lambda _source: (_ for _ in ()).throw(AssertionError("full samples decoded")),
+    )
+
+    response = await client.get("/api/images/extensions", params={"path": str(path)})
+
+    assert response.status_code == 200
+    assert response.json()[0]["colour"]["kind"] == "mono"
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("error", "status"),
+    [
+        (raw_io.RawUnsupported("unsupported raw"), 422),
+        (OSError("unreadable raw"), 422),
+        (RuntimeError("unexpected bug"), 500),
+    ],
+)
+async def test_image_reader_error_mapping(
+    client: AsyncClient, tmp_path: Path, monkeypatch, error, status
+):
+    path = tmp_path / "capture.dng"
+    path.write_bytes(b"unused")
+
+    def fail(_source):
+        raise error
+
+    monkeypatch.setattr(raw_io, "read_header", fail)
+    response = await client.get("/api/images/header", params={"path": str(path)})
+
+    assert response.status_code == status
+    assert response.json()["detail"] == (
+        str(error) if status == 422 else "Internal processing error"
+    )
+
+
+def test_histogram_stride_bounds_a_61_megapixel_frame_without_allocating_it():
+    height, width = 6388, 9576
+    pixel_count = height * width
+    stride = images_api._histogram_stride(pixel_count)
+    sample_count = np.ceil(pixel_count / stride)
+
+    assert sample_count <= images_api._HISTOGRAM_MAX_PIXELS
+    assert sample_count > images_api._HISTOGRAM_MAX_PIXELS * 0.5
 
 
 @pytest.mark.anyio

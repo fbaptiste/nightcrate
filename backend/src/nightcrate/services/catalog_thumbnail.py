@@ -33,6 +33,7 @@ from nightcrate.services.imaging import (
     STF_SHADOWS_CLIP,
     STF_TARGET_BG,
     _mtf_scalar,
+    area_reduce,
 )
 from nightcrate.services.pixel_loader import load_image, superpixels_of
 
@@ -53,16 +54,7 @@ def _area_reduce(data: np.ndarray, max_px: int) -> np.ndarray:
     """Reduce spatial axes by block means, retaining partial edge blocks."""
     height, width = data.shape[-2:]
     step = _decimate_step(max(height, width), max_px)
-    if step <= 1:
-        return np.ascontiguousarray(data)
-    y_starts = np.arange(0, height, step)
-    x_starts = np.arange(0, width, step)
-    y_counts = np.minimum(step, height - y_starts)
-    x_counts = np.minimum(step, width - x_starts)
-    reduced = np.add.reduceat(data.astype(np.float32), y_starts, axis=-2)
-    reduced = np.add.reduceat(reduced, x_starts, axis=-1)
-    divisor = y_counts[:, None] * x_counts[None, :]
-    return np.ascontiguousarray(reduced / divisor)
+    return np.ascontiguousarray(area_reduce(data, step))
 
 
 def _stf_params(plane01: np.ndarray) -> tuple[float, float]:

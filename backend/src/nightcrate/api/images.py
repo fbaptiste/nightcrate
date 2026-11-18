@@ -1,7 +1,9 @@
 """Unified image API endpoints — dispatches by file type (FITS, XISF, PNG/JPEG/TIFF)."""
 
 import asyncio
+import io
 import logging
+import math
 import threading
 import time
 from dataclasses import asdict
@@ -20,10 +22,17 @@ from nightcrate.services import (
     image_preview,
     pxiproject_io,
     raw_io,
+    raw_support,
     standard_io,
     xisf_io,
 )
-from nightcrate.services.cfa import CfaPattern, parse_bayer
+from nightcrate.services.cfa import (
+    CfaPattern,
+    PatternInfo,
+    parse_bayer,
+    pattern_from_fits,
+    pattern_from_xisf,
+)
 from nightcrate.services.fits_header_map import (
     FITS_KEYWORD_ALIASES,
     extract_metadata,
@@ -177,10 +186,9 @@ def _get_or_compute_stats(
 STRUCTURAL_KEYWORDS = fits_io.STRUCTURAL_KEYWORDS
 
 
-def _colour_info(image: LoadedImage) -> dict:
-    info = image.pattern
+def _colour_info_values(kind: str, info: PatternInfo | None) -> dict:
     return {
-        "kind": image.kind,
+        "kind": kind,
         "pattern": "".join(info.pattern.rows) if info is not None else None,
         "source": info.source if info is not None else None,
         "detail": info.detail if info is not None else None,
@@ -188,9 +196,119 @@ def _colour_info(image: LoadedImage) -> dict:
     }
 
 
-def _image_http_error(exc: ValueError | RuntimeError) -> HTTPException:
+def _colour_info(image: LoadedImage) -> dict:
+    return _colour_info_values(image.kind, image.pattern)
+
+
+_IMAGE_READ_ERRORS = (ValueError, OSError, raw_support.RawUnavailable)
+
+
+def _image_http_error(exc: ValueError | OSError | raw_support.RawUnavailable) -> HTTPException:
     status = 400 if str(exc) == "A colour pattern is already recorded for this image" else 422
     return HTTPException(status_code=status, detail=str(exc))
+
+
+def _cards_map(cards: list[dict]) -> dict[str, str]:
+    return {card["key"]: card["value"] for card in cards if card.get("key")}
+
+
+def _header_colour(cards: list[dict], *, kind_hint: str | None = None) -> dict:
+    header = _cards_map(cards)
+    height = int(header.get("NAXIS2", 0) or 0)
+    axes = int(header.get("NAXIS", 0) or 0)
+    axis1 = int(header.get("NAXIS1", 0) or 0)
+    axis3 = int(header.get("NAXIS3", 0) or 0)
+    kind = kind_hint or ("colour" if axes == 3 and 3 in {axis1, axis3} else "mono")
+    pattern = pattern_from_fits(header, height) if kind == "mono" and height > 0 else None
+    if pattern is not None:
+        kind = "mosaic"
+    return _colour_info_values(kind, pattern)
+
+
+def _source_factory(source: Path | BinaryIO):
+    if isinstance(source, Path):
+        return lambda: source
+    source.seek(0)
+    payload = source.read()
+    return lambda: io.BytesIO(payload)
+
+
+def _list_extensions(path: str) -> list[dict]:
+    """List image metadata without decoding or populating the pixel cache."""
+    p, ft, idx, _cache_key = resolve_path(path)
+    fresh_source = _source_factory(p)
+    stretch = ft in ("fits", "xisf", "float_tiff", "pxiproject", "raw")
+    if ft == "raw":
+        layout = raw_io.read_raw_layout(fresh_source())
+        width, height = layout.visible[2:]
+        exts = [
+            {
+                "index": 0,
+                "name": Path(path.rsplit("::", 1)[-1]).name,
+                "type": f"Camera raw ({width}x{height})",
+                "has_image": True,
+                "colour": _colour_info_values(
+                    "mosaic" if layout.pattern is not None else "mono", layout.pattern
+                ),
+            }
+        ]
+    elif ft == "pxiproject":
+        exts = pxiproject_io.list_extensions(p, idx)
+        cards = pxiproject_io.read_header(p, idx)
+        exts[0]["colour"] = _header_colour(cards)
+    elif ft == "fits":
+        exts = fits_io.list_extensions(fresh_source())
+        for ext in exts:
+            ext["colour"] = (
+                _header_colour(fits_io.read_header(fresh_source(), ext["index"]))
+                if ext.get("has_image")
+                else None
+            )
+    elif ft == "xisf":
+        exts = xisf_io.list_extensions(fresh_source())
+        for ext in exts:
+            pattern = pattern_from_xisf(xisf_io.cfa_attributes(fresh_source(), ext["index"]))
+            kind = (
+                "mosaic"
+                if pattern is not None
+                else ("colour" if " RGB " in f" {ext['type']} " else "mono")
+            )
+            if pattern is None:
+                cards = xisf_io.read_header(fresh_source(), ext["index"])
+                colour = _header_colour(cards, kind_hint=kind)
+            else:
+                colour = _colour_info_values(kind, pattern)
+            ext["colour"] = colour
+    else:
+        exts = standard_io.list_extensions(fresh_source())
+        for ext in exts:
+            mode = str(ext["type"]).split(" ", 1)[0].upper()
+            if mode in {"1", "L", "I", "F", "I;16"}:
+                kind = "mono"
+            elif ft == "float_tiff":
+                cards = _cards_map(standard_io.read_header(fresh_source()))
+                kind = "colour" if int(cards.get("SamplesPerPixel", 1)) >= 3 else "mono"
+            else:
+                kind = "colour"
+            ext["colour"] = _colour_info_values(kind, None)
+    for ext in exts:
+        ext["supports_stretch"] = stretch
+        if not ext.get("has_image"):
+            ext["colour"] = None
+    return exts
+
+
+def _read_header(path: str, hdu: int) -> list[dict]:
+    p, ft, idx, _cache_key = resolve_path(path)
+    if ft == "raw":
+        return raw_io.read_header(p)
+    if ft == "pxiproject":
+        return pxiproject_io.read_header(p, idx)
+    if ft == "fits":
+        return fits_io.read_header(p, hdu)
+    if ft == "xisf":
+        return xisf_io.read_header(p, hdu)
+    return standard_io.read_header(p)
 
 
 @router.get("/extensions")
@@ -198,47 +316,15 @@ async def get_extensions(
     path: str = Query(..., description="Absolute path to image file"),
 ) -> list[dict]:
     """List extensions/layers in the file, with stretch capability flag."""
-    p, ft, idx, cache_key = resolve_path(path)
-    stretch = ft in ("fits", "xisf", "float_tiff", "pxiproject", "raw")
     try:
-        if ft == "raw":
-            image = _get_cached_image(p, ft, idx, 0, cache_key=cache_key)
-            exts = [
-                {
-                    "index": 0,
-                    "name": Path(path.rsplit("::", 1)[-1]).name,
-                    "type": f"Camera raw ({image.width}x{image.height})",
-                    "has_image": True,
-                }
-            ]
-        elif ft == "pxiproject":
-            exts = pxiproject_io.list_extensions(p, idx)
-        elif ft == "fits":
-            exts = fits_io.list_extensions(p)
-        elif ft == "xisf":
-            exts = xisf_io.list_extensions(p)
-        else:
-            exts = standard_io.list_extensions(p)
-        for ext in exts:
-            ext["supports_stretch"] = stretch
-            if ext.get("has_image"):
-                # FITS/XISF readers may close an archive-backed BytesIO. Resolve
-                # again so the colour probe owns a fresh stream instead of
-                # reusing the one consumed by list_extensions().
-                image_source, image_type, image_index, image_cache_key = resolve_path(path)
-                image = _get_cached_image(
-                    image_source,
-                    image_type,
-                    image_index,
-                    ext["index"],
-                    cache_key=image_cache_key,
-                )
-                ext["colour"] = _colour_info(image)
-            else:
-                ext["colour"] = None
-        return exts
-    except (ValueError, RuntimeError) as exc:
+        return await asyncio.to_thread(_list_extensions, path)
+    except HTTPException:
+        raise
+    except _IMAGE_READ_ERRORS as exc:
         raise _image_http_error(exc) from exc
+    except Exception as exc:
+        logger.exception("extension listing failed for %s", path)
+        raise HTTPException(status_code=500, detail="Internal processing error") from exc
 
 
 @router.get("/header")
@@ -247,21 +333,14 @@ async def get_header(
     hdu: int = Query(0, description="Extension index"),
 ) -> list[dict]:
     """Return metadata cards for the specified extension."""
-    p, ft, idx, _ck = resolve_path(path)
     try:
-        if ft == "raw":
-            return raw_io.read_header(p)
-        if ft == "pxiproject":
-            return pxiproject_io.read_header(p, idx)
-        if ft == "fits":
-            return fits_io.read_header(p, hdu)
-        if ft == "xisf":
-            return xisf_io.read_header(p, hdu)
-        return standard_io.read_header(p)
-    except (ValueError, RuntimeError) as exc:
+        return await asyncio.to_thread(_read_header, path, hdu)
+    except HTTPException:
+        raise
+    except _IMAGE_READ_ERRORS as exc:
         raise _image_http_error(exc) from exc
     except Exception as exc:
-        logger.exception("read_header failed for %s (ft=%s, hdu=%s)", path, ft, hdu)
+        logger.exception("read_header failed for %s (hdu=%s)", path, hdu)
         raise HTTPException(status_code=500, detail="Internal processing error") from exc
 
 
@@ -321,7 +400,7 @@ async def get_metadata(
     file_size_bytes = _file_size_bytes(p, ft, idx)
     try:
         if ft == "raw":
-            metadata = raw_io.read_raw_metadata(p)
+            metadata = await asyncio.to_thread(raw_io.read_raw_metadata, p)
             canonical = {
                 "captured_local": (
                     metadata.captured_local.isoformat() if metadata.captured_local else None
@@ -351,14 +430,14 @@ async def get_metadata(
                 "file_size_bytes": file_size_bytes,
             }
         if ft == "pxiproject":
-            cards = pxiproject_io.read_header(p, idx)
+            cards = await asyncio.to_thread(pxiproject_io.read_header, p, idx)
         elif ft == "fits":
-            cards = fits_io.read_header(p, hdu)
+            cards = await asyncio.to_thread(fits_io.read_header, p, hdu)
         elif ft == "xisf":
-            cards = xisf_io.read_header(p, hdu)
+            cards = await asyncio.to_thread(xisf_io.read_header, p, hdu)
         else:
-            cards = standard_io.read_header(p)
-    except (ValueError, RuntimeError) as exc:
+            cards = await asyncio.to_thread(standard_io.read_header, p)
+    except _IMAGE_READ_ERRORS as exc:
         raise _image_http_error(exc) from exc
     except Exception as exc:
         logger.exception("fits_keywords failed for %s (ft=%s, hdu=%s)", p, ft, hdu)
@@ -449,7 +528,7 @@ async def get_stats(
         )
     try:
         return await asyncio.to_thread(_compute_stats, p, ft, idx, hdu, ck, pattern)
-    except (ValueError, RuntimeError) as exc:
+    except _IMAGE_READ_ERRORS as exc:
         raise _image_http_error(exc) from exc
     except Exception as exc:
         logger.exception("stats failed for %s (ft=%s, hdu=%s)", p, ft, hdu)
@@ -495,7 +574,7 @@ async def get_quality(
     try:
         async with _QUALITY_SEM:
             return await asyncio.to_thread(_compute_quality, p, ft, idx, hdu, ck)
-    except (ValueError, RuntimeError) as exc:
+    except _IMAGE_READ_ERRORS as exc:
         raise _image_http_error(exc) from exc
     except Exception as exc:
         logger.exception("quality failed for %s (ft=%s, hdu=%s)", p, ft, hdu)
@@ -567,7 +646,7 @@ async def get_pixel(
         return await asyncio.to_thread(_read_pixel, p, ft, idx, hdu, x, y, ck, pattern)
     except HTTPException:
         raise
-    except (ValueError, RuntimeError) as exc:
+    except _IMAGE_READ_ERRORS as exc:
         raise _image_http_error(exc) from exc
     except Exception as exc:
         logger.exception("pixel read failed for %s (x=%s, y=%s, hdu=%s)", p, x, y, hdu)
@@ -575,6 +654,11 @@ async def get_pixel(
 
 
 _HISTOGRAM_MAX_PIXELS = 2_000_000
+
+
+def _histogram_stride(pixel_count: int) -> int:
+    """Return a flat stride whose sample count does not exceed the histogram budget."""
+    return max(1, math.ceil(max(0, pixel_count) / _HISTOGRAM_MAX_PIXELS))
 
 
 def _compute_histogram(image: LoadedImage, bins: int = 256) -> dict:
@@ -588,7 +672,7 @@ def _compute_histogram(image: LoadedImage, bins: int = 256) -> dict:
     normalised = {name: image.display_normalise(values) for name, values in samples.items()}
     color = len(normalised) == 3
     pixel_count = max((values.size for values in normalised.values()), default=0)
-    stride = max(1, int(np.sqrt(pixel_count / _HISTOGRAM_MAX_PIXELS)))
+    stride = _histogram_stride(pixel_count)
 
     channels = []
     for name, values in normalised.items():
@@ -597,9 +681,9 @@ def _compute_histogram(image: LoadedImage, bins: int = 256) -> dict:
         channels.append({"name": name, "bins": counts.tolist()})
 
     if image.kind == "colour":
-        r = normalised["R"][::stride, ::stride]
-        g = normalised["G"][::stride, ::stride]
-        b = normalised["B"][::stride, ::stride]
+        r = normalised["R"].ravel()[::stride]
+        g = normalised["G"].ravel()[::stride]
+        b = normalised["B"].ravel()[::stride]
         lum = LUM_R * r + LUM_G * g + LUM_B * b
         lum_counts, _ = np.histogram(lum, bins=bin_edges)
         luminosity = lum_counts.tolist()
@@ -641,7 +725,7 @@ async def get_histogram(
     p, ft, idx, ck = resolve_path(path)
     try:
         return await asyncio.to_thread(_load_and_histogram, p, ft, idx, hdu, bins, ck, pattern)
-    except (ValueError, RuntimeError) as exc:
+    except _IMAGE_READ_ERRORS as exc:
         raise _image_http_error(exc) from exc
     except Exception as exc:
         logger.exception("histogram failed for %s (ft=%s, hdu=%s, bins=%s)", p, ft, hdu, bins)
@@ -684,7 +768,7 @@ async def get_stats_and_histogram(
         return await asyncio.to_thread(
             _compute_stats_and_histogram, p, ft, idx, hdu, bins, ck, pattern
         )
-    except (ValueError, RuntimeError) as exc:
+    except _IMAGE_READ_ERRORS as exc:
         raise _image_http_error(exc) from exc
     except Exception as exc:
         logger.exception("stats+histogram failed for %s (ft=%s, hdu=%s)", p, ft, hdu)
@@ -775,7 +859,7 @@ async def get_image(
             _render_image, p, ft, idx, hdu, linked, per_channel, ck, pattern
         )
         return Response(content=png_bytes, media_type="image/png")
-    except (ValueError, RuntimeError) as exc:
+    except _IMAGE_READ_ERRORS as exc:
         raise _image_http_error(exc) from exc
     except Exception as exc:
         logger.exception("image render failed for %s (ft=%s, hdu=%s)", p, ft, hdu)

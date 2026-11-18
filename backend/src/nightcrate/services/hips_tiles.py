@@ -26,7 +26,7 @@ from astropy_healpix import lonlat_to_healpix
 from numpy.typing import NDArray
 from PIL import Image
 
-from nightcrate.core.tasks import settle
+from nightcrate.core.tasks import drain_task_map, settle
 from nightcrate.services import http_client
 
 logger = logging.getLogger("nightcrate.hips_tiles")
@@ -327,15 +327,7 @@ def _clock() -> float:
 
 async def drain_background_fetches() -> None:
     """Cancel and await the tile fetches present when draining starts."""
-    snapshot = tuple(_in_flight.items())
-    pending = tuple(task for _, task in snapshot if not task.done())
-    for task in pending:
-        task.cancel()
-    if pending:
-        await asyncio.gather(*pending, return_exceptions=True)
-    for key, task in snapshot:
-        if _in_flight.get(key) is task:
-            _in_flight.pop(key, None)
+    await drain_task_map(_in_flight)
 
 
 async def reset_state() -> None:

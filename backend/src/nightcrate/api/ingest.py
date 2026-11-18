@@ -46,6 +46,7 @@ from nightcrate.api.app_activity import admit_work
 from nightcrate.core import app_config, child_processes
 from nightcrate.core.compute import effective_worker_count
 from nightcrate.core.config import get_settings
+from nightcrate.core.tasks import drain_task_map
 from nightcrate.db.session import get_db, workspace_key
 from nightcrate.services import ingest_progress
 from nightcrate.services.catalog_thumbnail import (
@@ -2043,18 +2044,11 @@ def _refresh_thumbnail_in_background(
 
 async def drain_background_thumbnail_refreshes(*, cancel_pending: bool = False) -> None:
     """Drain thumbnail refreshes, optionally cancelling queued work."""
-    snapshot = tuple(_thumbnail_in_flight.items())
-    tasks = tuple(task for _, task in snapshot)
-    if cancel_pending:
-        running = _thumbnail_running.copy()
-        for task in tasks:
-            if not task.done() and task not in running:
-                task.cancel()
-    if tasks:
-        await asyncio.gather(*tasks, return_exceptions=True)
-    for path, task in snapshot:
-        if _thumbnail_in_flight.get(path) is task:
-            _thumbnail_in_flight.pop(path, None)
+    await drain_task_map(
+        _thumbnail_in_flight,
+        cancel_pending=cancel_pending,
+        running=_thumbnail_running.copy(),
+    )
 
 
 def _write_cache_atomic(cache_path: Path, data: bytes) -> bool:
@@ -2182,7 +2176,10 @@ def _coerce_date_obs(meta: dict, fallback_mtime: str, geo_tz: str | None) -> tup
     """Return capture time in UTC and the provenance of its timezone."""
     header = _as_str(meta.get("date_obs"))
     if header is not None:
-        return _utc_iso(header, UTC), "header"
+        try:
+            return _utc_iso(header, UTC), "header"
+        except ValueError:
+            pass
 
     captured = _as_str(meta.get("captured_local"))
     if captured is not None:
@@ -2190,19 +2187,29 @@ def _coerce_date_obs(meta: dict, fallback_mtime: str, geo_tz: str | None) -> tup
         if offset_minutes is not None:
             source = meta.get("time_source")
             provenance = "maker_note" if source == "maker_note" else "exif_offset"
-            return _utc_iso(captured, timezone(timedelta(minutes=offset_minutes))), provenance
+            try:
+                return _utc_iso(captured, timezone(timedelta(minutes=offset_minutes))), provenance
+            except ValueError:
+                pass
         if geo_tz:
             try:
                 zone = ZoneInfo(geo_tz)
             except ZoneInfoNotFoundError:
                 zone = None
             if zone is not None:
-                return _utc_iso(captured, zone), "estimated_project_zone"
+                try:
+                    return _utc_iso(captured, zone), "estimated_project_zone"
+                except ValueError:
+                    pass
         # A naive datetime's astimezone() uses the computer's local timezone
         # rules for that date. Reusing today's fixed-offset tzinfo would shift
         # winter captures scanned in summer (and vice versa) by an hour.
-        local_time = datetime.fromisoformat(captured.strip())
-        return local_time.astimezone(UTC).isoformat(), "estimated_computer_zone"
+        try:
+            local_time = datetime.fromisoformat(captured.strip())
+        except ValueError:
+            pass
+        else:
+            return local_time.astimezone(UTC).isoformat(), "estimated_computer_zone"
 
     return _utc_iso(fallback_mtime, UTC), "file_time"
 

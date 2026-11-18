@@ -38,7 +38,7 @@ from typing import Literal
 import aiosqlite
 from astropy.wcs import WCS
 
-from nightcrate.core.tasks import settle
+from nightcrate.core.tasks import cancellation_safe_connection, drain_task_map
 from nightcrate.services import hips_tiles, image_cache
 
 logger = logging.getLogger("nightcrate.thumbnails")
@@ -328,15 +328,7 @@ _failure_backoff: dict[ThumbnailKey, float] = {}
 
 async def drain_background_fetches() -> None:
     """Cancel and await the fetches present when draining starts."""
-    snapshot = tuple(_in_flight.items())
-    pending = tuple(task for _, task in snapshot if not task.done())
-    for task in pending:
-        task.cancel()
-    if pending:
-        await asyncio.gather(*pending, return_exceptions=True)
-    for key, task in snapshot:
-        if _in_flight.get(key) is task:
-            _in_flight.pop(key, None)
+    await drain_task_map(_in_flight)
 
 
 def _clock() -> float:
@@ -743,7 +735,7 @@ async def _background_wrapper(
     request's connection context is already closed, so we open our own.
     """
     try:
-        async with _cancellation_safe_connection(conn_factory) as conn:
+        async with cancellation_safe_connection(conn_factory) as conn:
             conn.row_factory = aiosqlite.Row
             await _fetch_and_store(
                 conn,
@@ -758,28 +750,6 @@ async def _background_wrapper(
     finally:
         if _in_flight.get(key) is asyncio.current_task():
             _in_flight.pop(key, None)
-
-
-@asynccontextmanager
-async def _cancellation_safe_connection(conn_factory):
-    """Open and close a connection without cancelling either operation."""
-    manager = conn_factory()
-    open_task = asyncio.create_task(manager.__aenter__())
-    opened = False
-    try:
-        try:
-            conn = await settle(open_task)
-            opened = True
-        except BaseException:
-            opened = (
-                open_task.done() and not open_task.cancelled() and open_task.exception() is None
-            )
-            raise
-        yield conn
-    finally:
-        if opened:
-            close_task = asyncio.create_task(manager.__aexit__(None, None, None))
-            await settle(close_task)
 
 
 # ── Public API ───────────────────────────────────────────────────────────────

@@ -35,6 +35,7 @@ from nightcrate.core.app_config import get_projects_root
 from nightcrate.db.session import get_db, workspace_key
 from nightcrate.services import archive_io, pixel_loader, pxiproject_io, xisf_io
 from nightcrate.services.ingest_sessions import assign_rigs_and_sessions, project_geo_timezone
+from nightcrate.services.path_resolver import ALL_EXTENSIONS
 from nightcrate.services.project_images import (
     VARIANT_SIZES,
     CropFrameError,
@@ -53,7 +54,7 @@ router = APIRouter(prefix="/api/projects", tags=["Projects"])
 
 _VALID_STATUSES = {"active", "ready_to_process", "paused", "complete", "abandoned"}
 _VALID_SORTS = {"name", "created_at", "updated_at"}
-_IMAGE_SUFFIXES = {".fits", ".fit", ".fts", ".xisf", ".png", ".jpg", ".jpeg", ".tif", ".tiff"}
+_IMAGE_SUFFIXES = ALL_EXTENSIONS
 _VALID_VARIANTS = set(VARIANT_SIZES.keys())
 _VALID_THUMB_SIZES = {"small", "medium", "large"}
 _THUMB_FALLBACK = {"small": "thumb_sm", "medium": "thumb_md", "large": "thumb_lg"}

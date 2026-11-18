@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
+from threading import Lock
 from typing import Literal
 
 import numpy as np
@@ -41,6 +42,8 @@ class LoadedImage:
     _normalise_min: float = field(default=0.0, repr=False)
     _normalise_max: float = field(default=1.0, repr=False)
     _normalised_cache: np.ndarray | None = field(default=None, init=False, repr=False)
+    _display_cache: np.ndarray | None = field(default=None, init=False, repr=False, compare=False)
+    _display_lock: Lock = field(default_factory=Lock, init=False, repr=False, compare=False)
 
     def normalise(self, values: np.ndarray) -> np.ndarray:
         """Map recorded samples into working units without losing excursions.
@@ -246,9 +249,15 @@ def _mosaic(image: LoadedImage, *, display: bool = False) -> Mosaic:
 
 
 def display_of(image: LoadedImage) -> np.ndarray:
-    if image.kind == "mosaic":
-        return display_rgb(_mosaic(image, display=True))
-    return image.display_normalised()
+    if image._display_cache is None:
+        with image._display_lock:
+            if image._display_cache is None:
+                image._display_cache = (
+                    display_rgb(_mosaic(image, display=True))
+                    if image.kind == "mosaic"
+                    else image.display_normalised()
+                )
+    return image._display_cache
 
 
 def samples_of(image: LoadedImage) -> dict[str, np.ndarray]:

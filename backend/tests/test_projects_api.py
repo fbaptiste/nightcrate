@@ -428,6 +428,7 @@ class TestImages:
         mock_contents = [
             {"name": "img1.fits", "type": "file", "size": 100},
             {"name": "img2.xisf", "type": "file", "size": 200},
+            {"name": "capture.dng", "type": "file", "size": 300},
             {"name": "readme.txt", "type": "file", "size": 50},
         ]
         with (
@@ -443,7 +444,9 @@ class TestImages:
         paths = {i["file_path"] for i in resp.json()}
         assert f"{archive}::img1.fits" in paths
         assert f"{archive}::img2.xisf" in paths
-        assert len(paths) == 2
+        assert f"{archive}::capture.dng" in paths
+        assert f"{archive}::readme.txt" not in paths
+        assert len(paths) == 3
 
     async def test_remove_image(self, client: AsyncClient, tmp_path: Path):
         r = await client.post("/api/projects", json={"name": "Remove"})

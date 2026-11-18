@@ -85,6 +85,18 @@ def test_raw_colour_indices_use_colour_description():
     assert info.pattern.rows == ("RG", "GB")
 
 
+@pytest.mark.parametrize(
+    ("indices", "description"),
+    [
+        (np.array([[4, 4], [4, 4]], dtype=np.uint8), b"RGBG"),
+        (np.zeros((2, 2), dtype=np.uint8), b"RGBG"),
+        (np.zeros((2, 2), dtype=np.uint8), b""),
+    ],
+)
+def test_raw_without_a_colour_filter_is_mono(indices, description):
+    assert pattern_from_raw(indices, description) is None
+
+
 def test_parse_bayer_is_strict_but_case_insensitive():
     assert parse_bayer(" rGgB ") == CfaPattern(("RG", "GB"))
     assert parse_bayer("RGBG") is None

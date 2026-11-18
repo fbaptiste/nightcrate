@@ -329,6 +329,21 @@ raw format today (CR2/CR3, NEF, ARW, RAF, ORF, RW2, PEF, DNG).
     changes found seven issues, all fixed and re-checked in a browser.
 - [x] Fred's acceptance (2026-11-18: "ok, I'm happy with things now. please
   continue and finalize").
+- [x] **Local review before publishing** (2026-11-18): ten findings, all fixed
+  at Fred's request ("fix all 10 identified issues"), plus a Windows-only test
+  path from the CI dry run:
+  - opening a file in the Image Analyzer no longer decodes every image on the
+    server's main loop (a raw now opens its list and metadata in about 0.2 s);
+  - a frame whose `DATE-OBS` isn't ISO is catalogued again, timed from the
+    camera or file time (it was rejected; v0.54.1 catalogued it);
+  - the histogram samples the intended size; damaged files give a clear 422
+    again and unexpected faults are logged; mono raws load as mono; plate-solve
+    previews of mono FITS read only the rows they need and mask BLANK again;
+    a colour image's display is computed once per image; raw entries in
+    archives are listed like single raws; shared task and reduction helpers
+    are merged without changing any output.
+  - Checks: the full backend suite, 4,718 passed and 5 skipped; ruff, format
+    and bandit clean; the Analyzer re-checked in a browser.
 
 **Decisions made overnight** (Claude, 2026-11-17, under Fred's delegation;
 Codex consulted):

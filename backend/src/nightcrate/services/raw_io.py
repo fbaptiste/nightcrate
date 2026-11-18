@@ -446,9 +446,9 @@ def _reusable_sources(source: Path | BinaryIO) -> tuple[Path | BinaryIO, Path | 
 
 def read_header(source: Path | BinaryIO) -> list[dict]:
     """Return raw metadata cards in stable, user-facing group order."""
-    metadata_source, samples_source = _reusable_sources(source)
+    metadata_source, layout_source = _reusable_sources(source)
     metadata = read_raw_metadata(metadata_source)
-    samples = read_raw_samples(samples_source)
+    layout = read_raw_layout(layout_source)
     summary: list[dict] = []
 
     def add(group: str, key: str, value, comment: str = "") -> None:
@@ -466,12 +466,12 @@ def read_header(source: Path | BinaryIO) -> list[dict]:
     add("Camera and lens", "Lens serial", metadata.lens_serial)
     add("Camera and lens", "Focal length", metadata.focal_length_mm, "millimetres")
     add("Camera and lens", "Orientation", metadata.orientation, "listed, not applied")
-    if samples.pattern is not None:
-        add("Colour data", "Pattern", "/".join(samples.pattern.pattern.rows))
-        add("Colour data", "Pattern source", samples.pattern.detail)
-    add("Colour data", "Black levels", ", ".join(f"{value:g}" for value in samples.black_levels))
-    add("Colour data", "White level", samples.white_level)
-    add("Colour data", "Visible area", samples.visible, "left, top, width, height")
+    if layout.pattern is not None:
+        add("Colour data", "Pattern", "/".join(layout.pattern.pattern.rows))
+        add("Colour data", "Pattern source", layout.pattern.detail)
+    add("Colour data", "Black levels", ", ".join(f"{value:g}" for value in layout.black_levels))
+    add("Colour data", "White level", layout.white_level)
+    add("Colour data", "Visible area", layout.visible, "left, top, width, height")
     return summary + metadata.cards
 
 

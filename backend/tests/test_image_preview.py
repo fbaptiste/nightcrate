@@ -17,7 +17,7 @@ from httpx import ASGITransport, AsyncClient
 from PIL import Image
 
 from nightcrate.main import app
-from nightcrate.services import image_preview
+from nightcrate.services import archive_io, image_preview
 from nightcrate.services.catalog_thumbnail import render_array_jpeg
 
 
@@ -144,6 +144,64 @@ async def test_fits_scaling_color_and_orientation(client, tmp_path, kind):
     image = _jpeg(response.content)
     assert image.size == (40, 20)
     assert image.mode == ("RGB" if kind == "color" else "L")
+
+
+def test_mono_fits_preview_uses_decimated_reader(tmp_path, monkeypatch):
+    path = tmp_path / "mono-fast.fits"
+    fits.PrimaryHDU(np.arange(80, dtype=np.uint16).reshape(8, 10)).writeto(path)
+    monkeypatch.setattr(
+        image_preview,
+        "load_resolved",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("full image decoded")),
+    )
+
+    payload = image_preview._render(str(path), 0, 256)
+
+    assert payload[:2] == b"\xff\xd8"
+
+
+def test_mosaic_fits_preview_keeps_superpixel_path(tmp_path, monkeypatch):
+    path = tmp_path / "mosaic-preview.fits"
+    hdu = fits.PrimaryHDU(np.arange(80, dtype=np.uint16).reshape(8, 10))
+    hdu.header["BAYERPAT"] = "RGGB"
+    hdu.header["ROWORDER"] = "TOP-DOWN"
+    hdu.writeto(path)
+    original = image_preview.load_resolved
+    calls = []
+
+    def load(*args, **kwargs):
+        calls.append(args)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(image_preview, "load_resolved", load)
+    monkeypatch.setattr(
+        image_preview,
+        "_load_fits",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("mosaic decimated")),
+    )
+
+    payload = image_preview._render(str(path), 0, 256)
+
+    assert payload[:2] == b"\xff\xd8"
+    assert len(calls) == 1
+
+
+def test_archived_fits_preview_extracts_once(tmp_path, monkeypatch):
+    archive = tmp_path / "preview.zip"
+    with zipfile.ZipFile(archive, "w") as output:
+        output.writestr("image.fits", _fits_bytes())
+    original = archive_io.extract_entry
+    calls = []
+
+    def extract(*args, **kwargs):
+        calls.append(args)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(archive_io, "extract_entry", extract)
+    result = image_preview.get_preview(f"{archive}::image.fits", max_px=256)
+
+    assert result.content[:2] == b"\xff\xd8"
+    assert len(calls) == 1
 
 
 @pytest.mark.anyio

@@ -27,8 +27,10 @@ from pathlib import Path
 import numpy as np
 from PIL import Image as PILImage
 
+from nightcrate.core.tasks import drain_task_map
 from nightcrate.services import standard_io
 from nightcrate.services.catalog_thumbnail import render_array_jpeg
+from nightcrate.services.imaging import area_reduce
 from nightcrate.services.path_resolver import resolve_path
 from nightcrate.services.pixel_loader import load_image, superpixels_of
 
@@ -52,15 +54,7 @@ def _downsample(data: np.ndarray, max_dim: int) -> np.ndarray:
     """Area-reduce so the largest spatial dimension is at most *max_dim*."""
     h, w = data.shape[-2], data.shape[-1]
     step = max(1, math.ceil(max(h, w) / max_dim))
-    if step <= 1:
-        return data
-    y_starts = np.arange(0, h, step)
-    x_starts = np.arange(0, w, step)
-    y_counts = np.minimum(step, h - y_starts)
-    x_counts = np.minimum(step, w - x_starts)
-    reduced = np.add.reduceat(data.astype(np.float32), y_starts, axis=-2)
-    reduced = np.add.reduceat(reduced, x_starts, axis=-1)
-    return reduced / (y_counts[:, None] * x_counts[None, :])
+    return area_reduce(data, step)
 
 
 def _load_raw(file_path: str) -> tuple[str, object]:
@@ -228,18 +222,11 @@ def refresh_in_background(
 
 async def drain_background_refreshes(*, cancel_pending: bool = False) -> None:
     """Drain current refreshes, optionally cancelling work not yet rendering."""
-    snapshot = tuple(_in_flight.items())
-    tasks = tuple(task for _, task in snapshot)
-    if cancel_pending:
-        running = _running_refreshes.copy()
-        for task in tasks:
-            if not task.done() and task not in running:
-                task.cancel()
-    if tasks:
-        await asyncio.gather(*tasks, return_exceptions=True)
-    for target, task in snapshot:
-        if _in_flight.get(target) is task:
-            _in_flight.pop(target, None)
+    await drain_task_map(
+        _in_flight,
+        cancel_pending=cancel_pending,
+        running=_running_refreshes.copy(),
+    )
 
 
 def fit_box(width: int, height: int) -> tuple[float, float, float, float]:

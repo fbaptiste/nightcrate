@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import io
 import math
 import threading
 from collections import OrderedDict
@@ -16,9 +17,10 @@ from PIL import Image
 
 from nightcrate.services import pxiproject_io
 from nightcrate.services.catalog_thumbnail import render_array_jpeg
+from nightcrate.services.cfa import pattern_from_fits
 from nightcrate.services.imaging import normalize_to_01, reshape_color
 from nightcrate.services.path_resolver import file_type, resolve_path
-from nightcrate.services.pixel_loader import load_image, superpixels_of
+from nightcrate.services.pixel_loader import load_resolved, superpixels_of
 
 MIN_MAX_PX = 256
 MAX_MAX_PX = 2400
@@ -263,13 +265,6 @@ def _load_standard(source: Path | BinaryIO, max_px: int) -> np.ndarray:
     return reshape_color(np.clip(result, 0.0, 1.0))
 
 
-def _decimate(data: np.ndarray, max_px: int) -> np.ndarray:
-    height, width = data.shape[-2:]
-    step = max(1, math.ceil(max(height, width) / max_px))
-    small = data[::step, ::step] if data.ndim == 2 else data[:, ::step, ::step]
-    return np.asarray(small, dtype=np.float32)
-
-
 def _resolve(path: str) -> tuple[Path | BinaryIO, str, int]:
     try:
         source, kind, image_index, _cache_key = resolve_path(path)
@@ -281,14 +276,38 @@ def _resolve(path: str) -> tuple[Path | BinaryIO, str, int]:
         raise PreviewUnreadable(detail) from exc
 
 
+def _reusable_sources(source: Path | BinaryIO) -> tuple[Path | BinaryIO, Path | BinaryIO]:
+    if isinstance(source, Path):
+        return source, source
+    source.seek(0)
+    payload = source.read()
+    return io.BytesIO(payload), io.BytesIO(payload)
+
+
+def _fits_has_pattern(source: Path | BinaryIO, hdu: int) -> bool:
+    with fits.open(source, memmap=False, do_not_scale_image_data=True) as hdul:
+        if hdu < 0 or hdu >= len(hdul):
+            raise PreviewUnreadable(f"HDU index {hdu} out of range (file has {len(hdul)} HDUs)")
+        target = hdul[hdu]
+        height = int(target.header.get("NAXIS2", 0))
+        return height > 0 and pattern_from_fits(target.header, height) is not None
+
+
 def _render(path: str, hdu: int, max_px: int) -> bytes:
-    source, kind, _image_index = _resolve(path)
+    source, kind, image_index = _resolve(path)
     try:
         if kind == "standard":
             data = _load_standard(source, max_px)
             stretch = "none"
+        elif kind == "fits":
+            header_source, image_source = _reusable_sources(source)
+            if _fits_has_pattern(header_source, hdu):
+                data = superpixels_of(load_resolved(image_source, kind, image_index, hdu))
+            else:
+                data = _load_fits(image_source, hdu, max_px)
+            stretch = "auto"
         else:
-            data = superpixels_of(load_image(path, hdu))
+            data = superpixels_of(load_resolved(source, kind, image_index, hdu))
             stretch = "auto"
         return render_array_jpeg(data, max_px, quality=85, stretch=stretch)
     except PreviewError:

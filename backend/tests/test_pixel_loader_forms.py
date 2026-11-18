@@ -6,6 +6,7 @@ import numpy as np
 from astropy.io import fits
 from PIL import Image
 
+from nightcrate.services import pixel_loader
 from nightcrate.services.catalog_thumbnail import render_array_jpeg
 from nightcrate.services.cfa import CfaPattern
 from nightcrate.services.pixel_loader import display_of, grey_of, load_image, samples_of
@@ -23,6 +24,29 @@ def test_fits_bayer_is_mosaic(tmp_path):
     image = load_image(str(path))
     assert image.kind == "mosaic"
     assert image.pattern.pattern.rows == ("RG", "GB")
+
+
+def test_display_colour_is_cached_with_loaded_image(tmp_path, monkeypatch):
+    path = tmp_path / "cached-bayer.fits"
+    hdu = fits.PrimaryHDU(np.arange(48, dtype=np.uint16).reshape(6, 8))
+    hdu.header["BAYERPAT"] = "RGGB"
+    hdu.header["ROWORDER"] = "TOP-DOWN"
+    hdu.writeto(path)
+    image = load_image(str(path))
+    original = pixel_loader.display_rgb
+    calls = 0
+
+    def counted(mosaic):
+        nonlocal calls
+        calls += 1
+        return original(mosaic)
+
+    monkeypatch.setattr(pixel_loader, "display_rgb", counted)
+    first = display_of(image)
+    second = display_of(image)
+
+    assert first is second
+    assert calls == 1
 
 
 def test_three_planes_with_bayerpat_is_colour(tmp_path):
