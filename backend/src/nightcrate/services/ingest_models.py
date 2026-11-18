@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from nightcrate.services.ingest_classify import FRAME_TYPES
 
@@ -121,7 +121,9 @@ class CatalogFrame(BaseModel):
     object_hint: str | None = None
     exposure_seconds: float | None = None
     gain: float | None = None
+    iso: int | None = None
     set_temp_c: float | None = None
+    camera_temp_c: float | None = None
     binning: str | None = None
     image_width: int | None = None
     image_height: int | None = None
@@ -135,6 +137,9 @@ class CatalogFrame(BaseModel):
     rig_name: str | None = None
     # Classification (v0.41.1) — hand-correctable, guarded by a source flag.
     frame_type_source: str | None = None
+    frame_type_basis: str | None = None
+    filter_name_source: str | None = None
+    date_obs_source: str | None = None
     # Quality metrics (v0.41.3). All NULL until the analyze pass has run over this
     # frame. hfr / star_count / snr_estimate stay NULL on calibration frames even
     # after a successful run — only lights carry stars. See services/frame_quality.py
@@ -146,6 +151,7 @@ class CatalogFrame(BaseModel):
     snr_estimate: float | None = None
     quality_status: str | None = None  # ok | no_stars | unreadable
     quality_analyzed_at: str | None = None
+    quality_units: str | None = None
     # Derived on read, never stored (v0.41.3). The frame's plate-solved scale if
     # it has one, else computed from the tagged rig's focal length and sensor
     # pitch (times binning). NULL when the rig is untagged or its equipment record
@@ -160,7 +166,7 @@ class CatalogFrame(BaseModel):
     full_scale_adu: int | None = None
 
 
-CorrectableField = Literal["frame_type"]
+CorrectableField = Literal["frame_type", "filter"]
 
 
 class FrameCorrection(BaseModel):
@@ -173,7 +179,13 @@ class FrameCorrection(BaseModel):
     """
 
     frame_type: FrameTypeName | None = None
+    filter: str | None = Field(default=None, min_length=1, max_length=80)
     reset_to_auto: list[CorrectableField] = []
+
+    @field_validator("filter", mode="before")
+    @classmethod
+    def _trim_filter(cls, value):
+        return value.strip() if isinstance(value, str) else value
 
 
 class BulkFrameCorrection(FrameCorrection):

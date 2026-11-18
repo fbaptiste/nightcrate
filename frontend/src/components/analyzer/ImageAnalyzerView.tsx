@@ -1,10 +1,14 @@
-import { Fragment, useCallback, useEffect, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useLocation } from "react-router-dom";
 import Alert from "@mui/material/Alert";
 import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
 import Divider from "@mui/material/Divider";
+import FormControl from "@mui/material/FormControl";
+import InputLabel from "@mui/material/InputLabel";
+import MenuItem from "@mui/material/MenuItem";
+import Select from "@mui/material/Select";
 import Tab from "@mui/material/Tab";
 import Tabs from "@mui/material/Tabs";
 import Typography from "@mui/material/Typography";
@@ -27,6 +31,7 @@ import {
   fetchHeader,
   fetchMetadata,
   fetchImageQuality,
+  fetchPixel,
   fetchStatsAndHistogram,
   imageUrl,
   isFitsPath,
@@ -35,6 +40,8 @@ import {
   parsePath,
   stfToStretch,
   type ImageStats,
+  type HeaderCard,
+  type PatternName,
   type StfParams,
   type StretchParams,
 } from "@/api/images";
@@ -47,7 +54,7 @@ import { ZoneOverlayMap } from "@/components/aberration/ZoneOverlayMap";
 import { SidebarSection } from "@/components/SidebarSection";
 import { FitsHeaderTable } from "@/components/fits/FitsHeaderTable";
 import { FitsImage, type FitsImageHandle, type PixelInfo } from "@/components/fits/FitsImage";
-import { formatSize } from "@/components/projects/CatalogCards";
+import { formatSize, formatSubExposure } from "@/components/projects/CatalogCards";
 import { HduSelector } from "@/components/fits/HduSelector";
 import { Histogram } from "@/components/fits/Histogram";
 import { StretchControls } from "@/components/fits/StretchControls";
@@ -68,10 +75,23 @@ import {
 import { ApiError, setActivity } from "@/api/client";
 import DsoAnnotationOverlay from "@/components/plate-solve/DsoAnnotationOverlay";
 import { CHANNEL_COLOR_ARRAY, CHANNEL_COLORS, LUMINOSITY_COLOR } from "@/lib/channelColors";
-import { rgbToHex, findColorName } from "@/lib/colorName";
+import { findColorName, rgbToHex } from "@/lib/colorName";
 import { useDebounce } from "@/lib/useDebounce";
 import { monoFontFamily } from "@/theme/theme";
 import { headerNumber, headerValue } from "./analyzerHelpers";
+import InferredPill from "@/components/common/InferredPill";
+import { qualityLevelText } from "@/components/projects/catalogMarkers";
+import {
+  analyzerImageKey,
+  inspectorLabel,
+  imageInfoFields,
+  metadataGroups,
+  patternOptions,
+  pixelPlaceholderData,
+  showPatternChoicePill,
+  shouldResetPatternChoice,
+  type PatternChoice,
+} from "./analyzerColour";
 
 const IMAGE_COMMENTARY = [
   "Ah yes, the classic 'is it signal or noise?' game",
@@ -218,16 +238,15 @@ export interface ImageAnalyzerViewProps {
   emptyState?: React.ReactNode;
   /** Query failures bubble here so only the visible host shows a snackbar. */
   onError?: (msg: string) => void;
+  /** Optional view-only CFA suggestion from the project frame's rig camera. */
+  suggestedPattern?: string | null;
 }
 
-/**
- * Normalized [0, 1] value as 16-bit-equivalent ADU — the same convention the
- * catalog's quality columns use (`services/frame_quality.py`). True ADU for
- * integer sources; for PixInsight float data, which carries no bit depth, it is
- * a comparable 16-bit-equivalent scale rather than a literal sensor reading.
- */
-function adu(v: number): string {
-  return Math.round(v * 65535).toLocaleString();
+/** Format a statistic in the units supplied by the image endpoint. */
+function statisticsLevel(v: number, units: string): string {
+  return units === "adu"
+    ? Math.round(v).toLocaleString()
+    : v.toLocaleString("en-US", { maximumFractionDigits: 6, useGrouping: false });
 }
 
 export default function ImageAnalyzerView({
@@ -237,6 +256,7 @@ export default function ImageAnalyzerView({
   toolbarEnd,
   emptyState,
   onError,
+  suggestedPattern,
 }: ImageAnalyzerViewProps) {
   const queryClient = useQueryClient();
   const location = useLocation();
@@ -266,22 +286,17 @@ export default function ImageAnalyzerView({
   const [appliedDefaultsFor, setAppliedDefaultsFor] = useState("");
   const [selectedAnnotationId, setSelectedAnnotationId] = useState<number | null>(null);
   const imageRef = useRef<FitsImageHandle>(null);
-  const annotationObserverRef = useRef<ResizeObserver | null>(null);
-  const [annotationViewerWidth, setAnnotationViewerWidth] = useState(0);
   const [currentZoom, setCurrentZoom] = useState(1);
+  const [patternChoice, setPatternChoice] = useState<PatternChoice | null>(null);
+  const patternImageKey = analyzerImageKey(activePath, selectedHdu);
+  const [patternChoiceFor, setPatternChoiceFor] = useState(patternImageKey);
+  if (shouldResetPatternChoice(patternChoiceFor, activePath, selectedHdu)) {
+    setPatternChoiceFor(patternImageKey);
+    setPatternChoice(null);
+    setAppliedDefaultsFor("");
+  }
 
   const [plateSolveOpen, setPlateSolveOpen] = useState(false);
-
-  const setAnnotationViewerElement = useCallback((viewer: HTMLDivElement | null) => {
-    annotationObserverRef.current?.disconnect();
-    annotationObserverRef.current = null;
-    if (!viewer) return;
-    const updateWidth = () => setAnnotationViewerWidth(viewer.getBoundingClientRect().width);
-    updateWidth();
-    const observer = new ResizeObserver(updateWidth);
-    observer.observe(viewer);
-    annotationObserverRef.current = observer;
-  }, []);
 
   // Plate Solve tab (annotations) — state lives in the store
   const [annotationFilters, setAnnotationFilters] = useState<AnnotationFilters>(DEFAULT_FILTERS);
@@ -319,10 +334,11 @@ export default function ImageAnalyzerView({
 
   // Whether the active file supports stretch — authoritative, from backend
   const hasStretch = extensionsQuery.data?.[0]?.supports_stretch === true;
+  const activePattern: PatternName | undefined = patternChoice || undefined;
 
   const statsHistogramQuery = useQuery({
-    queryKey: ["stats-histogram", activePath, selectedHdu],
-    queryFn: () => fetchStatsAndHistogram(activePath, selectedHdu),
+    queryKey: ["stats-histogram", activePath, selectedHdu, activePattern],
+    queryFn: () => fetchStatsAndHistogram(activePath, selectedHdu, activePattern),
     enabled: hasStretch,
     staleTime: Infinity,
     refetchOnWindowFocus: false,
@@ -354,6 +370,7 @@ export default function ImageAnalyzerView({
     setLastImageKey(imageKey);
     setSettledImageKey(null);
     setQualityReadyKey(null);
+    setPixelData(null);
   }
   // Start detection only once the picture has stayed briefly, so stepping
   // quickly through frames doesn't start it for frames passed over.
@@ -384,6 +401,38 @@ export default function ImageAnalyzerView({
     enabled: activePath !== "",
     staleTime: Infinity,
     refetchOnWindowFocus: false,
+  });
+
+  const pixelCoordinates = useMemo(
+    () => pixelData ? { x: pixelData.x, y: pixelData.y } : null,
+    [pixelData],
+  );
+  const debouncedPixelCoordinates = useDebounce(pixelCoordinates, 100);
+  const recordedPixelQuery = useQuery({
+    queryKey: [
+      "image-pixel",
+      activePath,
+      selectedHdu,
+      debouncedPixelCoordinates?.x,
+      debouncedPixelCoordinates?.y,
+      activePattern,
+    ],
+    queryFn: () => fetchPixel(
+      activePath,
+      selectedHdu,
+      debouncedPixelCoordinates!.x,
+      debouncedPixelCoordinates!.y,
+      activePattern,
+    ),
+    enabled: pixelInspectorOn && debouncedPixelCoordinates != null,
+    placeholderData: (previousData, previousQuery) => pixelPlaceholderData(
+      previousData,
+      previousQuery?.queryKey,
+      activePath,
+      selectedHdu,
+      activePattern,
+    ),
+    staleTime: Infinity,
   });
 
   const debouncedFilters = useDebounce(starFilters, 500);
@@ -464,7 +513,7 @@ export default function ImageAnalyzerView({
   useEffect(() => {
     if (!statsQuery.data || statsQuery.isFetching) return;
 
-    const key = `${activePath}::${selectedHdu}`;
+    const key = `${activePath}::${selectedHdu}::${activePattern ?? "mono"}`;
     if (appliedDefaultsFor === key) return;
     setAppliedDefaultsFor(key);
 
@@ -489,7 +538,7 @@ export default function ImageAnalyzerView({
     // Linear image — populate slider values from computed STF (keeping stretch="auto"
     // so the image URL doesn't change — backend already applied these params).
     applyAutoStf(stats, setLinked, setPerChannel);
-  }, [statsQuery.data, statsQuery.isFetching, extensionsQuery.data, selectedHdu, activePath, appliedDefaultsFor]);
+  }, [statsQuery.data, statsQuery.isFetching, extensionsQuery.data, selectedHdu, activePath, activePattern, appliedDefaultsFor]);
 
   // Show error snackbar on query failures
   useEffect(() => {
@@ -532,6 +581,7 @@ export default function ImageAnalyzerView({
     setAnnotationFilters(DEFAULT_FILTERS);
     setAppliedDefaultsFor("");
     setLinearityOverride("auto");
+    setPatternChoice(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- setters are stable; re-running on displayName would reset mid-view
   }, [path]);
 
@@ -579,6 +629,35 @@ export default function ImageAnalyzerView({
   const selectedExtInfo = extensions.find((h) => h.index === selectedHdu);
   const hasFile = activePath !== "";
   const isColor = statsQuery.data?.color ?? false;
+  const isRaw = selectedExtInfo?.type.startsWith("Camera raw") === true;
+  const showPatternChoice = selectedExtInfo?.has_image === true &&
+    selectedExtInfo.colour?.kind === "mono";
+  const colourPatternOptions = patternOptions(suggestedPattern);
+  const metadataCards = useMemo<HeaderCard[]>(() => {
+    const cards = headerQuery.data ?? [];
+    if (isRaw) return cards;
+    const assumptions = selectedExtInfo?.colour?.assumptions ?? [];
+    return [
+      ...cards,
+      ...assumptions.map((assumption, index): HeaderCard => ({
+        key: assumption.startsWith("ROWORDER") ? "Row order" : `Colour assumption ${index + 1}`,
+        value: assumption.startsWith("ROWORDER")
+          ? "Assumed top-down: the file doesn't say"
+          : assumption,
+        comment: "",
+        description: "",
+        inferred: {
+          label: "estimated",
+          title: "Estimated from the colour metadata recorded in the file",
+        },
+        readOnly: true,
+      })),
+    ];
+  }, [headerQuery.data, isRaw, selectedExtInfo?.colour?.assumptions]);
+  const rawMetadataGroups = useMemo(
+    () => isRaw ? metadataGroups(headerQuery.data ?? []) : undefined,
+    [headerQuery.data, isRaw],
+  );
 
   // View shortcuts are scoped to this container, not `window`. Two instances can
   // be mounted at once (the standalone page stays mounted-but-hidden while the
@@ -701,6 +780,37 @@ export default function ImageAnalyzerView({
             </>
           )}
 
+          {showPatternChoice && (
+            <>
+              <Divider orientation="vertical" flexItem />
+              <FormControl size="small" sx={{ minWidth: 150 }}>
+                <InputLabel id="colour-pattern-label">Colour pattern</InputLabel>
+                <Select
+                  labelId="colour-pattern-label"
+                  label="Colour pattern"
+                  value={patternChoice ?? ""}
+                  onChange={(event) => {
+                    setPatternChoice(event.target.value as PatternChoice);
+                    setAppliedDefaultsFor("");
+                  }}
+                  inputProps={{ "aria-label": "Colour pattern" }}
+                >
+                  {colourPatternOptions.map((option) => (
+                    <MenuItem key={option.value || "mono"} value={option.value}>
+                      {option.label}
+                    </MenuItem>
+                  ))}
+                </Select>
+              </FormControl>
+              {showPatternChoicePill(patternChoice) && (
+                <InferredPill
+                  label="your choice"
+                  title="Shown with the colour pattern you chose. It isn't saved and doesn't affect measurements."
+                />
+              )}
+            </>
+          )}
+
           {toolbarEnd}
         </Box>
 
@@ -711,14 +821,14 @@ export default function ImageAnalyzerView({
               <Tabs
                 value={tab}
                 onChange={(_, v) => {
-                  const labels = ["View image", "View header", "Identify objects", "Analyze aberration"];
+                  const labels = ["View image", "View metadata", "Identify objects", "Analyze aberration"];
                   setActivity(labels[v] ?? `Tab ${v}`);
                   setTab(v);
                 }}
                 sx={{ px: 2 }}
               >
                 <Tab label="Image" disabled={!selectedExtInfo?.has_image} />
-                <Tab label="Header" />
+                <Tab label="Metadata" />
                 <Tab label="Identify" disabled={!hasFile || !selectedExtInfo?.has_image} />
                 <Tab label="Aberration" disabled={!hasFile || !selectedExtInfo?.has_image} />
               </Tabs>
@@ -798,6 +908,7 @@ export default function ImageAnalyzerView({
                       hdu={selectedHdu}
                       linked={appliedLinked}
                       perChannel={hasStretch ? activePerChannel : undefined}
+                      pattern={activePattern}
                       activity={imageActivity}
                       onZoomChange={setCurrentZoom}
                       onPixelHover={pixelInspectorOn ? setPixelData : undefined}
@@ -854,8 +965,12 @@ export default function ImageAnalyzerView({
                       isColor && statsQuery.data
                         ? statsQuery.data.channels.map((ch, i) => ({
                             name: ["R", "G", "B"][i] ?? `${i}`,
-                            median: ch.median,
-                            mad: ch.mad,
+                            median: statsQuery.data!.full_scale
+                              ? ch.median / statsQuery.data!.full_scale
+                              : ch.median,
+                            mad: statsQuery.data!.full_scale
+                              ? ch.mad / statsQuery.data!.full_scale
+                              : ch.mad,
                             color: CHANNEL_COLOR_ARRAY[i] ?? LUMINOSITY_COLOR,
                           }))
                         : undefined
@@ -869,23 +984,33 @@ export default function ImageAnalyzerView({
               )}
             </Box>
 
-            {/* Header tab */}
+            {/* Metadata tab */}
             <Box sx={{ flexGrow: 1, overflow: "hidden", display: tab === 1 ? "flex" : "none", flexDirection: "column" }}>
               {headerQuery.isLoading && (
-                <Typography sx={{ p: 2 }} color="text.secondary">Loading header…</Typography>
+                <Typography sx={{ p: 2 }} color="text.secondary">Loading metadata…</Typography>
               )}
               {!headerQuery.isLoading && headerQuery.data && (
-                <FitsHeaderTable
-                  key={`${activePath}:${selectedHdu}`}
-                  cards={headerQuery.data}
-                  editable={!isVirtualPath(activePath) && isFitsPath(activePath)}
-                  path={activePath}
-                  hdu={selectedHdu}
-                  onSaved={() => {
-                    queryClient.invalidateQueries({ queryKey: ["header", activePath, selectedHdu] });
-                    queryClient.invalidateQueries({ queryKey: ["metadata", activePath, selectedHdu] });
-                  }}
-                />
+                <>
+                  {isRaw && (
+                    <Typography color="text.secondary" sx={{ px: 2, pt: 1.5, pb: 0.5, fontSize: "13px" }}>
+                      Raw files are read-only. NightCrate shows their metadata but never changes them.
+                    </Typography>
+                  )}
+                  <Box sx={{ flexGrow: 1, minHeight: 0 }}>
+                    <FitsHeaderTable
+                      key={`${activePath}:${selectedHdu}`}
+                      cards={metadataCards}
+                      groups={rawMetadataGroups}
+                      editable={!isRaw && !isVirtualPath(activePath) && isFitsPath(activePath)}
+                      path={activePath}
+                      hdu={selectedHdu}
+                      onSaved={() => {
+                        queryClient.invalidateQueries({ queryKey: ["header", activePath, selectedHdu] });
+                        queryClient.invalidateQueries({ queryKey: ["metadata", activePath, selectedHdu] });
+                      }}
+                    />
+                  </Box>
+                </>
               )}
             </Box>
 
@@ -966,15 +1091,14 @@ export default function ImageAnalyzerView({
 
                 return (
                   <>
-                    <Box ref={setAnnotationViewerElement} sx={{ flexGrow: 1, minHeight: 0, overflow: "hidden", display: "flex", alignItems: "center", justifyContent: "center", position: "relative" }}>
+                    <Box sx={{ flexGrow: 1, minHeight: 0, overflow: "hidden", display: "flex", alignItems: "center", justifyContent: "center", position: "relative" }}>
                       <DsoAnnotationOverlay
-                        imageHref={imageUrl(activePath, selectedHdu, appliedLinked, activePerChannel, imageActivity)}
+                        imageHref={imageUrl(activePath, selectedHdu, appliedLinked, activePerChannel, imageActivity, activePattern)}
                         imgW={imgW}
                         imgH={imgH}
                         dsos={filtered}
                         selectedId={selectedAnnotationId}
                         onSelect={setSelectedAnnotationId}
-                        displayWidthPx={annotationViewerWidth}
                       />
                       {effectiveWcs && (
                         <Box
@@ -1107,22 +1231,12 @@ export default function ImageAnalyzerView({
           {(() => {
             const meta = metadataQuery.data?.canonical ?? {};
             const fileSize = metadataQuery.data?.file_size_bytes ?? null;
-            const displayFields: [string, string][] = [
-              ["object_name", "Object"],
-              ["filter_name", "Filter"],
-              ["exposure_time", "Exposure"],
-              ["gain", "Gain"],
-              ["sensor_temp", "Sensor"],
-              ["camera_name", "Camera"],
-              ["telescope_name", "Telescope"],
-              ["focal_length", "Focal Len"],
-              ["frame_type", "Type"],
-            ];
-            const rows = displayFields
-              .filter(([key]) => meta[key] != null && String(meta[key]).trim() !== "")
+            const rows = imageInfoFields(meta, isRaw)
               .map(([key, label]) => {
                 let val: React.ReactNode = String(meta[key]);
-                if (key === "exposure_time") val = `${meta[key]}s`;
+                if (key === "exposure_time") {
+                  val = isRaw ? formatSubExposure(Number(meta[key])) : `${meta[key]}s`;
+                }
                 if (key === "sensor_temp") {
                   // The header map sends the value as text ("-5.30000019073486").
                   const sensorTemp = meta[key];
@@ -1131,7 +1245,7 @@ export default function ImageAnalyzerView({
                     ? `${celsius.toFixed(1).replace("-", "−")} °C`
                     : `${sensorTemp}\u00B0C`;
                 }
-                if (key === "focal_length") {
+                if (key === "focal_length" || key === "focal_length_mm") {
                   val = <>{Number(meta[key]).toFixed(0)} mm{meta["focal_ratio"] != null && <span style={{ color: "var(--mui-palette-text-secondary)" }}> (f/{Number(meta["focal_ratio"]).toFixed(1)})</span>}</>;
                 }
                 return { label, val };
@@ -1272,18 +1386,28 @@ export default function ImageAnalyzerView({
                   value={patchRadius}
                   onChange={(_, v) => setPatchRadius(v as number)}
                   size="small"
+                  aria-label="Pixel inspector magnification"
                   sx={{
                     height: 120,
                     "& .MuiSlider-thumb": { width: 10, height: 10 },
                   }}
                 />
               </Box>
+              <Typography sx={{ fontSize: "0.7rem", fontFamily: monoFontFamily }}>
+                {pixelData === null
+                  ? inspectorLabel(null)
+                  : recordedPixelQuery.data
+                    ? inspectorLabel(recordedPixelQuery.data)
+                    : "\u00a0"}
+              </Typography>
+              <Typography sx={{ fontSize: "0.65rem", fontFamily: monoFontFamily, color: "text.secondary" }}>
+                {pixelData ? `${pixelData.x}, ${pixelData.y}` : "—, —"}
+              </Typography>
+              <Typography sx={{ mt: 0.75, fontSize: 12, color: "text.secondary" }}>
+                On screen
+              </Typography>
               <table style={{ borderCollapse: "collapse", fontSize: "0.65rem", fontFamily: monoFontFamily }}>
                 <tbody>
-                  <tr>
-                    <td style={{ color: "var(--mui-palette-text-secondary)", paddingRight: 8 }}>X, Y</td>
-                    <td>{pixelData ? `${pixelData.x}, ${pixelData.y}` : "—, —"}</td>
-                  </tr>
                   <tr>
                     <td style={{ color: CHANNEL_COLORS.R, paddingRight: 8 }}>R</td>
                     <td>{pixelData ? pixelData.R.toFixed(5) : "0.00000"}</td>
@@ -1344,20 +1468,20 @@ export default function ImageAnalyzerView({
                         <Tooltip title="Median pixel value" arrow>
                           <Typography sx={{ fontSize: "inherit", fontFamily: "inherit", color: "text.secondary", cursor: "help" }}>Med</Typography>
                         </Tooltip>
-                        <Typography sx={{ fontSize: "inherit", fontFamily: "inherit", textAlign: "right" }}>{ch.median.toFixed(6)}</Typography>
-                        <Typography sx={{ fontSize: "inherit", fontFamily: "inherit", textAlign: "right", color: "text.secondary" }}>{adu(ch.median)}</Typography>
+                        <Typography sx={{ fontSize: "inherit", fontFamily: "inherit", textAlign: "right" }}>{statisticsLevel(ch.median, statsQuery.data!.units)}</Typography>
+                        <Typography sx={{ fontSize: "inherit", fontFamily: "inherit", textAlign: "right", color: "text.secondary" }}>{statsQuery.data!.units === "adu" ? "ADU" : statsQuery.data!.units}</Typography>
 
                         <Tooltip title="Median Absolute Deviation — noise measure" arrow>
                           <Typography sx={{ fontSize: "inherit", fontFamily: "inherit", color: "text.secondary", cursor: "help" }}>MAD</Typography>
                         </Tooltip>
-                        <Typography sx={{ fontSize: "inherit", fontFamily: "inherit", textAlign: "right" }}>{ch.mad.toFixed(6)}</Typography>
-                        <Typography sx={{ fontSize: "inherit", fontFamily: "inherit", textAlign: "right", color: "text.secondary" }}>{adu(ch.mad)}</Typography>
+                        <Typography sx={{ fontSize: "inherit", fontFamily: "inherit", textAlign: "right" }}>{statisticsLevel(ch.mad, statsQuery.data!.units)}</Typography>
+                        <Typography sx={{ fontSize: "inherit", fontFamily: "inherit", textAlign: "right", color: "text.secondary" }}>{statsQuery.data!.units === "adu" ? "ADU" : statsQuery.data!.units}</Typography>
 
                         <Tooltip title="Average Deviation — used by auto stretch algorithm" arrow>
                           <Typography sx={{ fontSize: "inherit", fontFamily: "inherit", color: "text.secondary", cursor: "help" }}>AvgDev</Typography>
                         </Tooltip>
-                        <Typography sx={{ fontSize: "inherit", fontFamily: "inherit", textAlign: "right" }}>{ch.avg_dev.toFixed(6)}</Typography>
-                        <Typography sx={{ fontSize: "inherit", fontFamily: "inherit", textAlign: "right", color: "text.secondary" }}>{adu(ch.avg_dev)}</Typography>
+                        <Typography sx={{ fontSize: "inherit", fontFamily: "inherit", textAlign: "right" }}>{statisticsLevel(ch.avg_dev, statsQuery.data!.units)}</Typography>
+                        <Typography sx={{ fontSize: "inherit", fontFamily: "inherit", textAlign: "right", color: "text.secondary" }}>{statsQuery.data!.units === "adu" ? "ADU" : statsQuery.data!.units}</Typography>
 
                         <Tooltip title="Median divided by sigma (MAD x 1.4826) — the sky level against its own noise. NOT the same as Star SNR below, which measures the detected stars." arrow>
                           <Typography sx={{ fontSize: "inherit", fontFamily: "inherit", color: "text.secondary", cursor: "help" }}>Med/{"\u03c3"}</Typography>
@@ -1371,7 +1495,7 @@ export default function ImageAnalyzerView({
                               <Typography sx={{ fontSize: "inherit", fontFamily: "inherit", color: "text.secondary", cursor: "help" }}>Δbkg</Typography>
                             </Tooltip>
                             <Typography sx={{ fontSize: "inherit", fontFamily: "inherit", textAlign: "right", color: Math.abs(delta) < 0.001 ? "inherit" : "#d4993f" }}>
-                              {delta >= 0 ? "+" : ""}{delta.toFixed(6)}
+                              {delta >= 0 ? "+" : ""}{statisticsLevel(delta, statsQuery.data!.units)}
                             </Typography>
                             <Typography />
                           </>
@@ -1380,6 +1504,18 @@ export default function ImageAnalyzerView({
                     </Box>
                   );
                 })}
+
+                {statsQuery.data.full_scale != null && (
+                  <Box sx={{ display: "grid", gridTemplateColumns: "auto 1fr auto", columnGap: 1, fontSize: "0.65rem", fontFamily: monoFontFamily }}>
+                    <Typography sx={{ fontSize: "inherit", fontFamily: "inherit", color: "text.secondary" }}>Full scale</Typography>
+                    <Typography sx={{ fontSize: "inherit", fontFamily: "inherit", textAlign: "right" }}>
+                      {statisticsLevel(statsQuery.data.full_scale, statsQuery.data.units)}
+                    </Typography>
+                    <Typography sx={{ fontSize: "inherit", fontFamily: "inherit", textAlign: "right", color: "text.secondary" }}>
+                      {statsQuery.data.units === "adu" ? "ADU" : statsQuery.data.units}
+                    </Typography>
+                  </Box>
+                )}
 
                 {/* Lab a* color balance diagnostic — color images only */}
                 {statsQuery.data.lab_a_median != null && (
@@ -1447,15 +1583,15 @@ export default function ImageAnalyzerView({
                         </Typography>
                         <Typography />
 
-                        <Tooltip title="Sky background from the detection pass, in 16-bit-equivalent ADU. Rises with moonlight, twilight and light pollution." arrow>
+                        <Tooltip title="Sky background from the detection pass, in the file's recorded units. Rises with moonlight, twilight and light pollution." arrow>
                           <Typography sx={{ fontSize: "inherit", fontFamily: "inherit", color: "text.secondary", cursor: "help" }}>Sky</Typography>
                         </Tooltip>
                         <Typography sx={{ fontSize: "inherit", fontFamily: "inherit", textAlign: "right" }}>
                           {qualityQuery.data!.background_adu != null
-                            ? Math.round(qualityQuery.data!.background_adu).toLocaleString()
+                            ? qualityLevelText(qualityQuery.data!.background_adu, qualityQuery.data!.quality_units)
                             : "—"}
                         </Typography>
-                        <Typography sx={{ fontSize: "inherit", fontFamily: "inherit", textAlign: "right", color: "text.secondary" }}>ADU</Typography>
+                        <Typography />
                       </Box>
                     )}
                   </Box>

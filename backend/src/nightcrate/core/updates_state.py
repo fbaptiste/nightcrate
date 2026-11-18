@@ -26,6 +26,7 @@ class LatestApp(BaseModel):
     notes: list[str] = []
     release_url: str
     platforms: list[str] = []
+    min_os: dict[str, str] = {}
 
     _published_is_aware = field_validator("published_at")(_aware)
 

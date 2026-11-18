@@ -16,6 +16,7 @@ export interface AnalyzerItem {
   id: number;
   path: string;
   name: string;
+  suggestedPattern?: string | null;
 }
 
 interface Props {
@@ -126,6 +127,7 @@ export default function AnalyzerOverlay({
       <ImageAnalyzerView
         path={current?.path ?? ""}
         displayName={current?.name}
+        suggestedPattern={current?.suggestedPattern}
         toolbarStart={toolbarStart}
         toolbarEnd={toolbarEnd}
       />

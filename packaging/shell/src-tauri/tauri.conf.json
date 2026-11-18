@@ -29,7 +29,7 @@
     ],
     "macOS": {
       "signingIdentity": "-",
-      "minimumSystemVersion": "11.0",
+      "minimumSystemVersion": "14.0",
       "infoPlist": "Info.plist",
       "entitlements": "Entitlements.plist"
     },

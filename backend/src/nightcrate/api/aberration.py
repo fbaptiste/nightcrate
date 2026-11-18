@@ -9,7 +9,6 @@ from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import Response
 
 from nightcrate.db.session import get_db
-from nightcrate.services import fits_io, standard_io, xisf_io
 from nightcrate.services.aberration import (
     AnalysisResult,
     DetectionSettings,
@@ -18,15 +17,9 @@ from nightcrate.services.aberration import (
     compute_sample_grid,
     detect_stars,
 )
-from nightcrate.services.imaging import (
-    LUM_B,
-    LUM_G,
-    LUM_R,
-    StretchParams,
-    compute_image_stats,
-    render_image_png,
-)
+from nightcrate.services.imaging import StretchParams, compute_image_stats, render_image_png
 from nightcrate.services.path_resolver import resolve_path
+from nightcrate.services.pixel_loader import grey_of, load_resolved
 
 router = APIRouter(prefix="/api/aberration", tags=["Aberration Inspector"])
 
@@ -34,49 +27,38 @@ router = APIRouter(prefix="/api/aberration", tags=["Aberration Inspector"])
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 
-def _validate_and_resolve(file_path: str) -> tuple[Path | BinaryIO, str]:
+def _validate_and_resolve(file_path: str) -> tuple[Path | BinaryIO, str, int]:
     """Validate and resolve path, returning (source, file_type).
 
     Handles regular paths and archive virtual paths (archive.zip::entry).
     """
-    source, ft, _idx, _ck = resolve_path(file_path)
-    return source, ft
+    source, ft, index, _ck = resolve_path(file_path)
+    return source, ft, index
 
 
 def _settings_key(settings: DetectionSettings) -> str:
     """Produce a stable JSON key from detection settings."""
+    return json.dumps({"measurement_version": 2, **settings.model_dump()}, sort_keys=True)
+
+
+def _legacy_settings_key(settings: DetectionSettings) -> str:
+    """Return the exact settings key written through v0.54.1."""
     return json.dumps(settings.model_dump(), sort_keys=True)
 
 
-def _load_mono_data(source: Path | BinaryIO, ft: str, hdu: int) -> np.ndarray:
+def _load_mono_data(
+    source: Path | BinaryIO,
+    ft: str,
+    hdu: int,
+    index: int = 0,
+) -> tuple[np.ndarray, int, tuple[int, int]]:
     """Load image data and convert color to luminance if needed.
 
     Returns a 2D float64 array normalized to [0, 1].
     """
-    if ft == "fits":
-        data = fits_io.load_image_data(source, hdu)
-    elif ft == "xisf":
-        data = xisf_io.load_image_data(source, hdu)
-    elif ft == "float_tiff":
-        data = standard_io.load_image_data(source)
-    elif ft == "standard":
-        data = standard_io.load_image_as_array(source)
-    elif ft == "pxiproject":
-        from nightcrate.services import pxiproject_io
-
-        data = pxiproject_io.load_image_data(source, hdu)
-    else:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Unsupported file type: {ft}",
-        )
-
-    # Convert color (3, H, W) to mono luminance
-    if data.ndim == 3 and data.shape[0] == 3:
-        mono = LUM_R * data[0] + LUM_G * data[1] + LUM_B * data[2]
-        return mono.astype(np.float64)
-
-    return data.astype(np.float64)
+    image = load_resolved(source, ft, index, hdu)
+    mono, block_size = grey_of(image)
+    return mono.astype(np.float64), block_size, (image.height, image.width)
 
 
 async def _get_cached_analysis(
@@ -125,6 +107,7 @@ async def _get_cached_analysis(
     ]
 
     settings_data = json.loads(row[7])
+    settings_data.pop("measurement_version", None)
 
     return AnalysisResult(
         stars=stars,
@@ -211,16 +194,35 @@ async def _run_analysis(file_path: str, hdu: int, settings: DetectionSettings) -
     if cached is not None:
         return cached
 
-    source, ft = _validate_and_resolve(file_path)
+    legacy_settings_json = _legacy_settings_key(settings)
     try:
-        mono = _load_mono_data(source, ft, hdu)
+        source, ft, index = _validate_and_resolve(file_path)
+    except Exception:
+        cached = await _get_cached_analysis(file_path, hdu, legacy_settings_json)
+        if cached is not None:
+            return cached
+        raise
+
+    try:
+        mono, block_size, original_shape = _load_mono_data(source, ft, hdu, index)
     except HTTPException:
+        cached = await _get_cached_analysis(file_path, hdu, legacy_settings_json)
+        if cached is not None:
+            return cached
         raise
     except Exception as exc:
+        cached = await _get_cached_analysis(file_path, hdu, legacy_settings_json)
+        if cached is not None:
+            return cached
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     try:
-        result = detect_stars(mono, settings)
+        result = detect_stars(
+            mono,
+            settings,
+            block_size=block_size,
+            original_shape=original_shape,
+        )
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Star detection failed: {exc}") from exc
 
@@ -277,20 +279,20 @@ async def get_crop(
     y1: int = Query(..., description="Bottom edge (pixels)"),
 ) -> Response:
     """Return an auto-stretched PNG crop of the specified region."""
-    source, ft = _validate_and_resolve(path)
+    source, ft, index = _validate_and_resolve(path)
 
     try:
-        mono = _load_mono_data(source, ft, hdu)
+        mono, block_size, _original_shape = _load_mono_data(source, ft, hdu, index)
     except HTTPException:
         raise
     except Exception as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     h, w = mono.shape
-    cx0 = max(0, min(x0, w))
-    cy0 = max(0, min(y0, h))
-    cx1 = max(0, min(x1, w))
-    cy1 = max(0, min(y1, h))
+    cx0 = max(0, min(x0 // block_size, w))
+    cy0 = max(0, min(y0 // block_size, h))
+    cx1 = max(0, min(int(np.ceil(x1 / block_size)), w))
+    cy1 = max(0, min(int(np.ceil(y1 / block_size)), h))
 
     crop = mono[cy0:cy1, cx0:cx1]
 

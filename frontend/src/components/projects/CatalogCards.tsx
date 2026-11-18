@@ -30,6 +30,9 @@ export function formatExposure(seconds: number | null): string {
 /** Single sub-frame exposure — astrophotographers quote these in seconds. */
 export function formatSubExposure(seconds: number | null): string {
   if (seconds == null) return "";
+  if (seconds < 1) {
+    return `${Number(seconds.toPrecision(3))}s`;
+  }
   return seconds < 10 ? `${seconds.toFixed(1)}s` : `${Math.round(seconds)}s`;
 }
 

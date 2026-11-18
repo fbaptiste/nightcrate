@@ -32,6 +32,7 @@ from typing import Literal
 
 import aiosqlite
 
+from nightcrate.core.tasks import cancellation_safe_connection, drain_task_map
 from nightcrate.services import hips_tiles, image_cache
 from nightcrate.services.sky_tiles import (
     TIERS,
@@ -236,6 +237,11 @@ _in_flight: dict[CellKey, asyncio.Task] = {}
 _failure_backoff: dict[CellKey, float] = {}
 
 
+async def drain_background_fetches() -> None:
+    """Cancel and await the fetches present when draining starts."""
+    await drain_task_map(_in_flight)
+
+
 def _clock() -> float:
     return time.monotonic()
 
@@ -363,7 +369,7 @@ async def _background_wrapper(
 ) -> None:
     """Run ``_fetch_and_store`` against a fresh aiosqlite connection."""
     try:
-        async with conn_factory() as conn:
+        async with cancellation_safe_connection(conn_factory) as conn:
             conn.row_factory = aiosqlite.Row
             await _fetch_and_store(
                 conn,
@@ -375,7 +381,8 @@ async def _background_wrapper(
     except Exception:  # noqa: BLE001 — background tasks mustn't crash the server
         logger.exception("[sky_tiles] background fetch crashed for cell=%s", key)
     finally:
-        _in_flight.pop(key, None)
+        if _in_flight.get(key) is asyncio.current_task():
+            _in_flight.pop(key, None)
 
 
 # ── Public API ───────────────────────────────────────────────────────────────

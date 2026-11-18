@@ -19,13 +19,16 @@ Key paths covered:
 from __future__ import annotations
 
 import asyncio
+import threading
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+import aiosqlite
 import pytest
+from aiosqlite.core import Connection
 
 from nightcrate.db.session import get_db
-from nightcrate.services import hips_tiles, sky_tile_cache
+from nightcrate.services import hips_tiles, sky_tile_cache, thumbnails
 from nightcrate.services.sky_tile_cache import (
     _PLACEHOLDER_PNG,
     CellKey,
@@ -63,20 +66,6 @@ def _redirect_cell_dir(tmp_path, monkeypatch):
     monkeypatch.setattr("nightcrate.core.app_config.APP_DIR", tmp_path)
 
 
-@pytest.fixture(autouse=True)
-async def _drain_in_flight():
-    sky_tile_cache._failure_backoff.clear()
-    yield
-    for key, task in list(sky_tile_cache._in_flight.items()):
-        task.cancel()
-        try:
-            await task
-        except BaseException:  # noqa: BLE001 — cleanup
-            pass
-        sky_tile_cache._in_flight.pop(key, None)
-    sky_tile_cache._failure_backoff.clear()
-
-
 def _default_key(cell_i: int = 0, cell_j: int = 0) -> CellKey:
     return make_cell_key(
         hips_survey="CDS/P/DSS2/color",
@@ -86,6 +75,234 @@ def _default_key(cell_i: int = 0, cell_j: int = 0) -> CellKey:
         cell_i=cell_i,
         cell_j=cell_j,
     )
+
+
+async def _wait_for_worker_stop(connection: Connection) -> None:
+    for _ in range(100):
+        if not connection._thread.is_alive():
+            return
+        await asyncio.sleep(0.01)
+    pytest.fail(f"aiosqlite worker still alive: {connection._thread.name}")
+
+
+_DRAIN_CASES = [
+    pytest.param(sky_tile_cache, _default_key(), id="sky-tile"),
+    pytest.param(
+        thumbnails,
+        thumbnails.make_key(42, "list", ra_deg=10.0, dec_deg=20.0),
+        id="thumbnail",
+    ),
+    pytest.param(hips_tiles, (1, 2), id="hips-tile"),
+]
+
+
+@pytest.mark.parametrize(("service", "key"), _DRAIN_CASES)
+async def test_drain_cancels_awaits_and_removes_pending_task(service, key):
+    cancelled = asyncio.Event()
+
+    async def pending():
+        try:
+            await asyncio.Event().wait()
+        finally:
+            cancelled.set()
+
+    task = asyncio.create_task(pending())
+    service._in_flight[key] = task
+    await asyncio.sleep(0)
+
+    await service.drain_background_fetches()
+
+    assert task.cancelled()
+    assert cancelled.is_set()
+    assert key not in service._in_flight
+
+
+@pytest.mark.parametrize(("service", "key"), _DRAIN_CASES)
+async def test_drain_with_empty_map_is_noop(service, key):
+    del key
+    assert not service._in_flight
+    await service.drain_background_fetches()
+    assert not service._in_flight
+
+
+@pytest.mark.parametrize(("service", "key"), _DRAIN_CASES)
+async def test_drain_leaves_finished_task_outcome_alone(service, key):
+    task = asyncio.create_task(asyncio.sleep(0, result="done"))
+    assert await task == "done"
+    service._in_flight[key] = task
+
+    await service.drain_background_fetches()
+
+    assert not task.cancelled()
+    assert task.result() == "done"
+    assert key not in service._in_flight
+
+
+@pytest.mark.parametrize(("service", "key"), _DRAIN_CASES)
+async def test_drain_removes_task_cancelled_before_it_started(service, key):
+    started = False
+
+    async def pending():
+        nonlocal started
+        started = True
+        await asyncio.Event().wait()
+
+    task = asyncio.create_task(pending())
+    service._in_flight[key] = task
+    task.cancel()
+
+    await service.drain_background_fetches()
+
+    assert task.cancelled()
+    assert started is False
+    assert key not in service._in_flight
+
+
+def _wrapper_call(service):
+    if service is sky_tile_cache:
+        return service._background_wrapper(
+            get_db,
+            _default_key(),
+            region_ra_deg=150.0,
+            region_dec_deg=40.0,
+            max_cache_bytes=10_000_000,
+        )
+    key = service.make_key(42, "list", ra_deg=10.0, dec_deg=20.0)
+    return service._background_wrapper(
+        get_db,
+        key,
+        ra_deg=10.0,
+        dec_deg=20.0,
+        extent_deg=1.0,
+        max_cache_bytes=10_000_000,
+    )
+
+
+@pytest.mark.parametrize("service", [sky_tile_cache, thumbnails])
+async def test_background_cancellation_during_connection_open_stops_worker(service, monkeypatch):
+    connections: list[Connection] = []
+    original_connect = aiosqlite.connect
+    entered = threading.Event()
+    release = threading.Event()
+
+    def tracking_connect(*args, **kwargs):
+        connection = original_connect(*args, **kwargs)
+        original_connector = connection._connector
+
+        def blocked_connector():
+            entered.set()
+            release.wait()
+            return original_connector()
+
+        connection._connector = blocked_connector
+        connections.append(connection)
+        return connection
+
+    monkeypatch.setattr(aiosqlite, "connect", tracking_connect)
+    task = asyncio.create_task(_wrapper_call(service))
+    while not entered.is_set():
+        await asyncio.sleep(0)
+    task.cancel()
+    release.set()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert len(connections) == 1
+    await _wait_for_worker_stop(connections[0])
+
+
+@pytest.mark.parametrize("service", [sky_tile_cache, thumbnails])
+async def test_background_cancellation_mid_query_stops_worker(service, monkeypatch):
+    connections: list[Connection] = []
+    original_connect = aiosqlite.connect
+    query_started = threading.Event()
+    query_release = threading.Event()
+
+    def tracking_connect(*args, **kwargs):
+        connection = original_connect(*args, **kwargs)
+        connections.append(connection)
+        return connection
+
+    def blocked_query():
+        query_started.set()
+        query_release.wait()
+        return 1
+
+    async def blocked_fetch(connection, *args, **kwargs):
+        await connection.create_function("blocked_query", 0, blocked_query)
+        await connection.execute("SELECT blocked_query()")
+
+    monkeypatch.setattr(aiosqlite, "connect", tracking_connect)
+    monkeypatch.setattr(service, "_fetch_and_store", blocked_fetch)
+    task = asyncio.create_task(_wrapper_call(service))
+    while not query_started.is_set():
+        await asyncio.sleep(0)
+    task.cancel()
+    query_release.set()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert len(connections) == 1
+    await _wait_for_worker_stop(connections[0])
+
+
+@pytest.mark.parametrize("service", [sky_tile_cache, thumbnails])
+async def test_background_cancellation_during_connection_close_stops_worker(service, monkeypatch):
+    connections: list[Connection] = []
+    original_connect = aiosqlite.connect
+    original_close = Connection.close
+    entered = asyncio.Event()
+    release = asyncio.Event()
+
+    def tracking_connect(*args, **kwargs):
+        connection = original_connect(*args, **kwargs)
+        connections.append(connection)
+        return connection
+
+    async def completed_fetch(*args, **kwargs):
+        return None
+
+    async def blocked_close(connection):
+        entered.set()
+        await release.wait()
+        await original_close(connection)
+
+    monkeypatch.setattr(aiosqlite, "connect", tracking_connect)
+    monkeypatch.setattr(service, "_fetch_and_store", completed_fetch)
+    monkeypatch.setattr(Connection, "close", blocked_close)
+    task = asyncio.create_task(_wrapper_call(service))
+    await entered.wait()
+    task.cancel()
+    release.set()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert len(connections) == 1
+    await _wait_for_worker_stop(connections[0])
+
+
+async def test_worker_guard_detects_old_unsafe_open_cancellation(aiosqlite_worker_guard):
+    connector_started = threading.Event()
+    connector_release = threading.Event()
+
+    def blocked_connector():
+        connector_started.set()
+        connector_release.wait()
+        return object()
+
+    connection = Connection(blocked_connector, 64)
+    task = asyncio.create_task(connection.__aenter__())
+    while not connector_started.is_set():
+        await asyncio.sleep(0)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    with pytest.raises(AssertionError, match="aiosqlite worker threads outlived the test"):
+        aiosqlite_worker_guard()
+
+    connector_release.set()
+    await _wait_for_worker_stop(connection)
 
 
 # ── Lookup / hit ─────────────────────────────────────────────────────────────

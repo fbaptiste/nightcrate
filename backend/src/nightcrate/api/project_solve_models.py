@@ -55,6 +55,7 @@ class IdentifiedDso(BaseModel):
     primary_designation: str
     common_name: str | None = None
     other_names: list[str]
+    catalogs: list[str]
     obj_type: str
     type_group: str
     constellation: str | None = None
@@ -70,17 +71,6 @@ class IdentifiedDso(BaseModel):
     ellipse_semi_major_px: float | None = None
     ellipse_semi_minor_px: float | None = None
     ellipse_angle_deg: float | None = None
-
-
-class FocalLengthEstimate(BaseModel):
-    rig_id: int
-    rig_setup_id: int | None
-    setup_until_at: str | None
-    rig_name: str
-    camera_name: str
-    pixel_size_um: float
-    rig_focal_length_mm: float
-    estimated_focal_length_mm: float
 
 
 class ProjectSolveResponse(BaseModel):
@@ -110,4 +100,3 @@ class ProjectSolveResponse(BaseModel):
     attempts: list[SolveAttempt] = Field(default_factory=list)
     wcs: WcsParams
     objects: list[IdentifiedDso]
-    focal_length_estimates: list[FocalLengthEstimate] = Field(default_factory=list)

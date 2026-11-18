@@ -40,21 +40,6 @@ def _redirect_thumb_dir(tmp_path, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
-async def _drain_in_flight():
-    """Background fetches carry over across tests if we don't drain them."""
-    thumbnails._failure_backoff.clear()
-    yield
-    for key, task in list(thumbnails._in_flight.items()):
-        task.cancel()
-        try:
-            await task
-        except BaseException:  # noqa: BLE001 — cleanup
-            pass
-        thumbnails._in_flight.pop(key, None)
-    thumbnails._failure_backoff.clear()
-
-
-@pytest.fixture(autouse=True)
 async def _seed_dso_rows():
     """thumbnail_cache has a FK to dso(id). Seed enough dummy DSO rows
     (and a source to satisfy ``source_catalog_id``) so the tests can

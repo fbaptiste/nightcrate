@@ -5,7 +5,6 @@ from pathlib import Path
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from nightcrate.api.project_solve import _load_focal_length_estimates
 from nightcrate.db.session import get_db
 from nightcrate.main import app
 from nightcrate.services.rig_setups import save_earlier_setup
@@ -107,7 +106,7 @@ async def test_untagged_single_rig_project_keeps_setups(client):
     assert set(stamps).issubset(frame_ids)
 
 
-async def test_second_project_rig_then_tag_restores_setup(client):
+async def test_second_project_rig_then_tag_restores_setup(client, tmp_path):
     equipment, rig_id, project_id, frame_ids = await _base(tagged=False, frame_count=1)
     setup_id = await _split(rig_id, equipment.camera_b)
     async with get_db() as conn:
@@ -120,8 +119,18 @@ async def test_second_project_rig_then_tag_restores_setup(client):
     sessions = await _derive(client, project_id)
     assert [(row["rig_id"], row["rig_setup_id"]) for row in sessions] == [(None, None)]
 
+    record_folder = tmp_path / "record"
+    record_file = record_folder / "light.fits"
     async with get_db() as conn:
-        await conn.execute("UPDATE sub_frame SET rig_id = ? WHERE id = ?", (rig_id, frame_ids[0]))
+        await conn.execute(
+            "INSERT INTO project_source_folder (project_id, path, rig_id) VALUES (?, ?, ?)",
+            (project_id, str(record_folder), rig_id),
+        )
+        await conn.execute(
+            "INSERT INTO file_location (project_id, path, category, sub_frame_id) "
+            "VALUES (?, ?, 'sub_frame', ?)",
+            (project_id, str(record_file), frame_ids[0]),
+        )
         await conn.commit()
     sessions = await _derive(client, project_id)
     assert [(row["rig_id"], row["rig_setup_id"]) for row in sessions] == [(rig_id, setup_id)]
@@ -277,28 +286,6 @@ async def test_manual_batch_setup_roundtrip(client):
     assert created.status_code == 201, created.text
     assert created.json()["rig_setup_id"] == setup_id
     assert created.json()["setup_until_at"] == "2026-11-07 12:00:00"
-
-
-async def test_focal_estimates_per_setup():
-    equipment, rig_id, project_id, _frame_ids = await _base()
-    setup_id = await _split(rig_id, equipment.camera_b)
-    async with get_db() as conn:
-        await conn.executemany(
-            "INSERT INTO project_session "
-            "(project_id, rig_id, rig_setup_id, line_name, exposure_seconds, "
-            "num_subs, session_date) "
-            "VALUES (?, ?, ?, 'Ha', 60, 1, ?)",
-            (
-                (project_id, rig_id, setup_id, "2026-11-01"),
-                (project_id, rig_id, None, "2026-11-02"),
-            ),
-        )
-        estimates = await _load_focal_length_estimates(conn, project_id, 0.9)
-    values = [(item.rig_setup_id, round(item.estimated_focal_length_mm, 1)) for item in estimates]
-    assert values == [
-        (None, 861.7),
-        (setup_id, 550.0),
-    ]
 
 
 async def test_rescan_through_scan_endpoint_keeps_stamps(client, tmp_path):

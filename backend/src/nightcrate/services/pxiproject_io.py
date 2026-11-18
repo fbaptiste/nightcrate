@@ -271,13 +271,10 @@ def _decompress_blob(raw_data: bytes, compression: str, num_channels: int) -> by
 BPS_TO_DTYPE = {32: np.float32, 64: np.float64, 16: np.uint16, 8: np.uint8}
 
 
-def load_image_data(project_dir: Path, image_index: int) -> np.ndarray:
-    """Load an image from a .pxiproject as a float array normalized to [0, 1].
-
-    For referenced images, delegates to xisf_io.
-    For embedded images, reads and decompresses the blob from project.data/.
-    Returns shape (H, W) for mono or (3, H, W) for color.
-    """
+def load_image_samples(
+    project_dir: Path, image_index: int
+) -> tuple[np.ndarray, tuple[float, float] | None, dict[str, str] | None]:
+    """Load recorded project samples, bounds, and a referenced XISF's CFA."""
     images, compression = _get_project_data(project_dir)
     if image_index < 0 or image_index >= len(images):
         raise ValueError(
@@ -292,7 +289,8 @@ def load_image_data(project_dir: Path, image_index: int) -> np.ndarray:
         ref_path = referenced_image_path(entry["file_path"])
         if not ref_path.exists():
             raise FileNotFoundError(f"Referenced file not found: {entry['file_path']}")
-        return xisf_io.load_image_data(ref_path)
+        samples, bounds = xisf_io.load_image_samples(ref_path)
+        return samples, bounds, xisf_io.cfa_attributes(ref_path)
 
     if not entry["data_src"]:
         raise PxiProjectError(f"No data source for embedded image '{entry['name']}'")
@@ -324,7 +322,18 @@ def load_image_data(project_dir: Path, image_index: int) -> np.ndarray:
     else:
         arr = arr.reshape(channels, height, width)
 
-    return reshape_color(normalize_to_01(arr))
+    return reshape_color(arr), None, None
+
+
+def load_image_data(project_dir: Path, image_index: int) -> np.ndarray:
+    """Load an image from a .pxiproject as a float array normalized to [0, 1]."""
+    arr, bounds, _cfa = load_image_samples(project_dir, image_index)
+    if bounds is not None and (np.issubdtype(arr.dtype, np.integer) or bounds != (0.0, 1.0)):
+        lower, upper = bounds
+        normalized = np.clip((arr.astype(np.float64) - lower) / (upper - lower), 0.0, 1.0)
+    else:
+        normalized = normalize_to_01(arr)
+    return reshape_color(normalized)
 
 
 def read_header(project_dir: Path, image_index: int) -> list[dict]:

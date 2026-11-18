@@ -1,11 +1,14 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useMutation } from "@tanstack/react-query";
+import Autocomplete from "@mui/material/Autocomplete";
 import Button from "@mui/material/Button";
+import Checkbox from "@mui/material/Checkbox";
 import Chip from "@mui/material/Chip";
 import Dialog from "@mui/material/Dialog";
 import DialogActions from "@mui/material/DialogActions";
 import DialogContent from "@mui/material/DialogContent";
 import DialogTitle from "@mui/material/DialogTitle";
+import FormControlLabel from "@mui/material/FormControlLabel";
 import MenuItem from "@mui/material/MenuItem";
 import Stack from "@mui/material/Stack";
 import TextField from "@mui/material/TextField";
@@ -21,6 +24,8 @@ import {
   type FrameCorrection,
   type FrameTypeName,
 } from "@/api/projectCatalog";
+import { LINE_NAMES } from "@/lib/lineNames";
+import { filterSuggestions, type FilterSuggestion } from "./catalogMarkers";
 
 /** Human labels for the frame_type vocabulary. "unknown" is offered so a user
  *  can un-classify a frame the header mislabeled into a real type. */
@@ -41,6 +46,7 @@ interface Props {
   frame: CatalogFrame | null;
   /** Bulk mode: the selected frame ids. Empty in single-frame mode. */
   frameIds?: number[];
+  rigFilters?: string[];
   onSaved: (updated: CatalogFrame | null) => void;
 }
 
@@ -50,23 +56,20 @@ export default function FrameCorrectionsDialog({
   projectId,
   frame,
   frameIds = [],
+  rigFilters = [],
   onSaved,
 }: Props) {
   const bulk = frame === null;
   const count = bulk ? frameIds.length : 1;
 
-  const [frameType, setFrameType] = useState<FrameTypeName | "">("");
+  const [frameType, setFrameType] = useState<FrameTypeName | "">(
+    (frame?.frame_type as FrameTypeName) ?? "",
+  );
   const [typeDirty, setTypeDirty] = useState(false);
+  const [filter, setFilter] = useState(frame?.filter_name ?? "");
+  const [filterDirty, setFilterDirty] = useState(false);
   const [resets, setResets] = useState<Set<CorrectableField>>(new Set());
   const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (!open) return;
-    setFrameType((frame?.frame_type as FrameTypeName) ?? "");
-    setTypeDirty(false);
-    setResets(new Set());
-    setError(null);
-  }, [open, frame]);
 
   const mutation = useMutation({
     mutationFn: (body: FrameCorrection) =>
@@ -80,12 +83,16 @@ export default function FrameCorrectionsDialog({
     onError: (e: Error) => setError(e.message),
   });
 
-  const anyChange = typeDirty || resets.size > 0;
+  const anyChange = typeDirty || filterDirty || resets.size > 0;
+  const suggestions = filterSuggestions(rigFilters, LINE_NAMES);
 
   const save = () => {
     const body: FrameCorrection = {};
     if (typeDirty && frameType !== "" && !resets.has("frame_type")) {
       body.frame_type = frameType;
+    }
+    if (filterDirty && !resets.has("filter")) {
+      body.filter = filter.trim() || null;
     }
     if (resets.size > 0) body.reset_to_auto = [...resets];
     mutation.mutate(body);
@@ -147,6 +154,43 @@ export default function FrameCorrectionsDialog({
               />
             )}
           </Stack>
+
+          <Autocomplete<FilterSuggestion, false, false, true>
+            freeSolo
+            size="small"
+            options={suggestions}
+            groupBy={(option) => option.group}
+            getOptionLabel={(option) => typeof option === "string" ? option : option.value}
+            value={filter}
+            disabled={resets.has("filter")}
+            onInputChange={(_, value, reason) => {
+              if (reason === "reset" && value === filter) return;
+              setFilter(value);
+              setFilterDirty(true);
+            }}
+            onChange={(_, value) => {
+              setFilter(typeof value === "string" ? value : value?.value ?? "");
+              setFilterDirty(true);
+            }}
+            renderInput={(params) => (
+              <TextField
+                {...params}
+                label="Filter"
+                helperText="Applies to every selected frame and survives rescans."
+                FormHelperTextProps={{ sx: { color: "text.secondary", fontSize: "12px" } }}
+              />
+            )}
+          />
+          <FormControlLabel
+            control={
+              <Checkbox
+                checked={resets.has("filter")}
+                onChange={() => toggleReset("filter")}
+                inputProps={{ "aria-label": "Use each file's own filter" }}
+              />
+            }
+            label="Use each file's own filter"
+          />
 
           <Typography variant="caption" color="text.secondary">
             A correction is marked as yours, so re-scans and re-runs leave it alone.

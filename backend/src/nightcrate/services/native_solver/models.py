@@ -78,6 +78,7 @@ class TanWCS:
     cd: FloatArray
     width: int
     height: int
+    reference_pixel: tuple[float, float] | None = None
 
     def __post_init__(self) -> None:
         if np.asarray(self.cd).shape != (2, 2):
@@ -85,6 +86,8 @@ class TanWCS:
 
     @property
     def crpix(self) -> tuple[float, float]:
+        if self.reference_pixel is not None:
+            return self.reference_pixel
         return ((self.width + 1.0) / 2.0, (self.height + 1.0) / 2.0)
 
     @property

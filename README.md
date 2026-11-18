@@ -41,8 +41,6 @@ forecasts and survey imagery are fetched from external services when needed.
   screen, it pans and zooms, from the whole sky in to your own picture
   drawn in place at its plate-solved size and rotation, and names the
   brighter stars (the IAU names, more of them as you zoom in).
-  - The plate-solve result estimates the focal length from the solved scale
-    and the pixel size of each rig's camera, beside the rig's own value.
   - **Thumbnails:** frame each picture as you want it shown, separately for
     small, medium and large views. Every frame is 4:3 and may extend onto a
     black mat, so a tall image can have black at its sides.
@@ -110,10 +108,16 @@ forecasts and survey imagery are fetched from external services when needed.
   SIMBAD, Wikipedia, Google search and Google Images.
 - **Image analysis:** FITS, XISF (including PixInsight 1.9.6's compressed,
   checksummed files and the plate solutions it stores), PixInsight projects,
-  PNG/JPEG/TIFF and archive entries; auto/manual stretch, histogram, pixel inspection, FITS header editing,
-  aberration inspection, built-in plate solving (Gaia DR3 stars, offline after a
-  one-time download), with ASTAP optional, and catalog-object overlays. Either
-  solver searches near the header position first and then the whole sky.
+  PNG/JPEG/TIFF, camera raw files (CR2, CR3, NEF, NRW, ARW, RAF including
+  X-Trans, ORF, RW2, PEF, DNG) and archive entries.
+  - **Colour-camera subs** show in colour. Their statistics, histogram and
+    pixel inspector report each colour's recorded values, and star
+    measurements never use interpolated pixels.
+  - Auto/manual stretch, histogram and pixel inspection; a metadata tab for
+    every format, with FITS header editing; aberration inspection.
+  - Built-in plate solving (Gaia DR3 stars, offline after a one-time
+    download), with ASTAP optional, and catalog-object overlays. Either solver
+    searches near the header position first and then the whole sky.
 - **Guiding:** standalone PHD2 log analysis with time-series and dispersion plots,
   section/selection statistics, calibration geometry and range export.
 - **Equipment:** editable component catalog, personal rigs and smart-scope
@@ -151,9 +155,11 @@ Installers are available for macOS on Apple Silicon, 64-bit Windows and 64-bit
 Linux.
 
 Equipment is assigned through declared rigs and folder tags; automatic FITS
-equipment inference and integration goals were removed. Derived sessions update
-on request, and when a folder's rig changes. Mixing manual and derived records for the same captures can currently
-inflate totals.
+equipment inference and integration goals were removed. Automatic sessions follow
+a project's files: scans, corrections, and rig and location changes rebuild them.
+A project with only hand-entered sessions builds them on request, so the same
+night isn't listed twice. Mixing manual and derived records for the same
+captures can currently inflate totals.
 
 See [the active plan](PLAN.md) for remaining work and the
 [documentation index](docs/README.md) for code locations and technical references.
@@ -162,7 +168,7 @@ See [the active plan](PLAN.md) for remaining work and the
 
 Download NightCrate from the [latest GitHub release](https://github.com/fbaptiste/nightcrate/releases/latest).
 
-### macOS (Apple Silicon only)
+### macOS (Apple Silicon, macOS 14 or later)
 
 Download the `.dmg` and drag NightCrate to Applications. The first launch shows
 a warning because NightCrate is not signed by Apple. Open System Settings →
@@ -197,7 +203,9 @@ and opening Admin's Catalogs section also contact GitHub, even when automatic
 checks are off.
 
 A new version is installed only when you click "Install and restart".
-NightCrate backs up the workspace before upgrading it. On Windows, if the
+If it needs a newer system than yours (macOS 14 from v0.55.0), the notice
+says so instead of offering the install. NightCrate backs up the workspace
+before upgrading it. On Windows, if the
 installer itself fails after it starts, download the installer from the release
 page and run it.
 
@@ -231,6 +239,9 @@ Prerequisites: Python 3.14, [uv](https://docs.astral.sh/uv/), Node 22.12+.
 [ASTAP](https://www.hnsky.org/astap.htm) is an optional alternative plate solver
 and uses its separately installed star database. Intel Macs also need Xcode
 Command Line Tools for source-built dependencies (`xcode-select --install`).
+Camera raw files need `rawpy` and `exiv2`, which publish no Intel Mac builds
+(`rawpy`) and need macOS 14 (`exiv2`). Elsewhere NightCrate runs with raw files
+turned off; colour FITS and XISF subs still work.
 
 ```bash
 make install    # install backend/frontend dependencies from the lockfiles
@@ -326,6 +337,12 @@ Libraries and data sources used by NightCrate:
 | [bottleneck](https://github.com/pydata/bottleneck) | BSD 2-Clause | Copyright (c) 2010-2019, Keith Goodman |
 | [sep](https://github.com/kbarbary/sep) | LGPL-3.0-or-later | Copyright (c) 2014, Kyle Barbary |
 | [py7zr](https://github.com/miurahr/py7zr) | LGPL-2.1+ | Copyright (c) 2019-2025, Hiroshi Miura |
+| [rawpy](https://github.com/letmaik/rawpy) | MIT | Copyright (c) 2014 Maik Riechert |
+| [LibRaw](https://www.libraw.org/) (bundled with rawpy, without the GPL demosaic packs) | LGPL-2.1 (chosen of LGPL-2.1 or CDDL-1.0) | Copyright (C) 2008-2024 LibRaw LLC |
+| [python-exiv2](https://github.com/jim-easterbrook/python-exiv2) | GPL-3.0-or-later | Copyright (C) 2021-2026 Jim Easterbrook |
+| [Exiv2](https://exiv2.org/) (bundled with python-exiv2) | GPL-2.0-or-later | Copyright (C) 2004-2024 Exiv2 authors |
+| [JasPer](https://jasper-software.github.io/jasper/), [libjpeg-turbo](https://libjpeg-turbo.org/), [Little CMS](https://www.littlecms.com/) (bundled with rawpy) | JasPer-2.0; BSD-3-Clause, IJG and Zlib; MIT | Their authors; the installed app's notices carry each full licence |
+| [inih and INIReader](https://github.com/benhoyt/inih), [Brotli](https://github.com/google/brotli), [GNU libintl](https://www.gnu.org/software/gettext/) (bundled with python-exiv2) | BSD-3-Clause; MIT; LGPL-2.1-or-later | Their authors; the installed app's notices carry each full licence |
 | [mlx](https://github.com/ml-explore/mlx) | MIT | Copyright (c) 2023-2026, Apple Inc. |
 | [timezonefinder](https://github.com/jannikmi/timezonefinder) | MIT | Copyright (c) 2016-2026, Jannik Michelfeit |
 | [tzdata](https://github.com/python/tzdata) | Apache 2.0 (IANA time zone data: public domain) | Copyright (c) 2020, Paul Ganssle (Google); Copyright (c) 2026, Stan Ulbrych |

@@ -1,7 +1,7 @@
 {
   "name": "frontend",
   "private": true,
-  "version": "0.54.1",
+  "version": "0.55.0",
   "license": "GPL-3.0-or-later",
   "type": "module",
   "scripts": {
@@ -12,6 +12,11 @@
     "check:paths": "node scripts/check-paths.mjs",
     "check:grid-columns": "node scripts/check-grid-columns.mjs",
     "check:ingest-completion": "node scripts/check-ingest-completion.mjs",
+    "check:rig-provenance": "node scripts/check-rig-provenance.mjs",
+    "check:session-build-prompt": "node scripts/check-session-build-prompt.mjs",
+    "check:catalog-markers": "node scripts/check-catalog-markers.mjs",
+    "check:analyzer-colour": "node scripts/check-analyzer-colour.mjs",
+    "check:plate-solve": "node scripts/check-plate-solve.mjs",
     "check:mine-group": "node scripts/check-mine-group.mjs",
     "check:home-framing": "node scripts/check-home-framing.mjs",
     "lint": "eslint .",

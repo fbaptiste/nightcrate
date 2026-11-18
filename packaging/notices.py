@@ -32,7 +32,7 @@ ROOT = Path(__file__).resolve().parents[1]
 POLICY_PATH = Path(__file__).with_name("licence_policy.toml")
 LICENCE_TEXT_DIR = Path(__file__).with_name("licence-texts")
 NATIVE_SUFFIXES = (".dylib", ".dll", ".pyd", ".so")
-SOURCE_LICENCES = {"LGPL-2.1-or-later", "LGPL-3.0-or-later"}
+SOURCE_LICENCES = {"LGPL-2.1-only", "LGPL-2.1-or-later", "LGPL-3.0-or-later"}
 GCC_RUNTIME_PREFIXES = ("libgcc_s", "libgfortran", "libquadmath")
 MSVC_RUNTIME_PREFIXES = ("vcruntime140", "msvcp140")
 MSVC_SYSTEM_LIBRARY_NOTICE = (
@@ -177,6 +177,55 @@ def evaluate_licence(
             f"{package}: licence expression {expression!r} is outside the policy"
         )
     return selected
+
+
+def bundled_native_component(
+    package: str,
+    filename: str,
+    policy: dict[str, Any] | None = None,
+) -> dict[str, str] | None:
+    """Return the reviewed component behind a wheel-owned native file.
+
+    Packages with declarations fail closed: each native filename must match
+    exactly one rule. Packages without declarations retain ordinary Python
+    distribution ownership.
+    """
+    policy = policy or load_policy()
+    rules = [
+        rule
+        for rule in policy.get("bundled_native", [])
+        if _canonical(rule["package"]) == _canonical(package)
+    ]
+    if not rules:
+        return None
+    matches = []
+    for rule in rules:
+        try:
+            matched = re.fullmatch(rule["files"], filename, flags=re.IGNORECASE)
+        except re.error as exc:
+            raise NoticeError(
+                f"{package}: invalid bundled-native pattern {rule['files']!r}: {exc}"
+            ) from exc
+        if matched:
+            matches.append(rule)
+    if not matches:
+        raise NoticeError(
+            f"{package}: native file {filename} has no bundled-library policy"
+        )
+    if len(matches) != 1:
+        components = ", ".join(rule["component"] for rule in matches)
+        raise NoticeError(
+            f"{package}: native file {filename} has ambiguous bundled-library policies "
+            f"({components})"
+        )
+    rule = matches[0]
+    selected = evaluate_licence(rule["component"], rule["licence"], policy)
+    return {
+        "name": rule["component"],
+        "licence": rule["licence"],
+        "selected_licence": selected,
+        "source_url": rule["source_url"],
+    }
 
 
 def _is_standard_mpl_text(text: str) -> bool:
@@ -1416,6 +1465,10 @@ def inventory(
             )
         except NoticeError as exc:
             raise NoticeError(f"{relative}: {exc}") from exc
+        if owner["kind"] == "python":
+            component = bundled_native_component(owner["name"], path.name, policy)
+            if component is not None:
+                owner = {**owner, "bundled_component": component}
         owners.append(owner)
         natives.append(
             {
@@ -1697,6 +1750,13 @@ def _notices_text(
         )
         if owner.get("notice"):
             lines.append(f"  Notice: {owner['notice']}")
+        component = owner.get("bundled_component")
+        if component:
+            lines.append(
+                f"  Bundled component: {component['name']} "
+                f"({component['licence']}, accepted as {component['selected_licence']})"
+            )
+            lines.append(f"  Component source: {component['source_url']}")
         if owner.get("source_url"):
             lines.append(f"  Source: {owner['source_url']}")
         for licence_file in owner.get("licence_files", []):

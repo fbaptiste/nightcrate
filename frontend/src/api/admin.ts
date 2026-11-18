@@ -40,6 +40,7 @@ export interface HealthResponse {
   version: string;
   db_configured: boolean;
   install_kind: "installed" | "source";
+  raw_files: string;
   workspace_problem: WorkspaceProblem | null;
 }
 

@@ -5,12 +5,13 @@ ways to get one:
 
 * **Manual** (``source='manual'``) — the user enters it. This is the only path for
   a project whose subs aren't cataloged (or aren't available at all).
-* **Derived** (``source='auto'``) — ``POST /sessions/derive`` rebuilds one row per
+* **Derived** (``source='auto'``) — scans and related catalog mutations maintain
+  one row per
   (observing night, rig, filter, exposure, gain, binning) from the project's
   cataloged light frames. The rig is what splits a simultaneous dual-rig night
-  into two sessions rather than colliding them into one. The first build is
-  explicit and user-initiated; a later folder rig change refreshes existing auto
-  rows. Derived rows are read-only, because the next derive replaces them.
+  into two sessions rather than colliding them into one. ``POST /sessions/derive``
+  remains an explicit repair action. Derived rows are read-only, because the next
+  derive replaces them.
 
 Per-filter integration is computed here from the sessions (exposure x sub count),
 along with a sub count per filter and exposure (v0.41.8). Per-filter goals were
@@ -37,7 +38,7 @@ from nightcrate.api.project_session_models import (
 )
 from nightcrate.db.session import get_db
 from nightcrate.services.gallery import imaging_runs, valid_session_date
-from nightcrate.services.ingest_sessions import project_geo_timezone
+from nightcrate.services.ingest_sessions import assign_rigs_and_sessions, project_geo_timezone
 from nightcrate.services.rig_setups import set_batch_setup
 from nightcrate.services.session_derivation import derive_sessions
 from nightcrate.services.session_derivation_models import DerivationSummary
@@ -55,6 +56,7 @@ _SESSION_COLUMNS = (
     "line_name",
     "exposure_seconds",
     "gain",
+    "iso",
     "num_subs",
     "binning",
     "session_date",
@@ -151,8 +153,8 @@ async def create_session(project_id: int, body: SessionCreate) -> SessionRespons
             cursor = await conn.execute(
                 """INSERT INTO project_session
                    (project_id, rig_id, rig_setup_id, filter_id, line_name, exposure_seconds,
-                    gain, num_subs, binning, session_date, notes)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    gain, iso, num_subs, binning, session_date, notes)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     project_id,
                     body.rig_id,
@@ -161,6 +163,7 @@ async def create_session(project_id: int, body: SessionCreate) -> SessionRespons
                     body.line_name,
                     body.exposure_seconds,
                     body.gain,
+                    body.iso,
                     body.num_subs,
                     body.binning,
                     body.session_date,
@@ -180,16 +183,22 @@ async def create_session(project_id: int, body: SessionCreate) -> SessionRespons
 async def derive_project_sessions(project_id: int) -> DerivationSummary:
     """Rebuild the project's derived sessions from its cataloged light frames.
 
-    Replaces every ``source='auto'`` row; ``source='manual'`` rows are untouched.
-    This endpoint is the explicit first-build path; ingest never creates rows.
+    Repairs frame assignments first, replaces every ``source='auto'`` row and
+    leaves ``source='manual'`` rows untouched.
     """
     async with get_db() as conn:
         await conn.execute("PRAGMA foreign_keys = ON")
-        await get_or_404(conn, "project", project_id, "Project")
-        tz_name = await project_geo_timezone(conn, project_id)
-        summary = await derive_sessions(conn, project_id, tz_name=tz_name)
-        await conn.commit()
-        return summary
+        await conn.execute("BEGIN IMMEDIATE")
+        try:
+            await get_or_404(conn, "project", project_id, "Project")
+            tz_name = await project_geo_timezone(conn, project_id)
+            await assign_rigs_and_sessions(conn, project_id, tz_name)
+            summary = await derive_sessions(conn, project_id, tz_name=tz_name)
+            await conn.commit()
+            return summary
+        except BaseException:
+            await conn.rollback()
+            raise
 
 
 @router.patch("/{project_id}/sessions/{session_id}")

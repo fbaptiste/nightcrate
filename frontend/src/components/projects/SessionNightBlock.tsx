@@ -21,6 +21,7 @@ import {
   summarizeSessionFilters,
 } from "./filterColors";
 import { setupLabel } from "./setupLabel";
+import { sessionValueColumns } from "./sessionValueColumns";
 
 function compareSessions(
   a: ProjectSession,
@@ -358,6 +359,7 @@ function RigSessionRows({
   const setupBasis = derived.length > 0 ? derived : group.sessions;
   const headingSetup = commonSetup(setupBasis);
   const rows = [...group.sessions].sort((a, b) => compareSessions(a, b, filtersById));
+  const valueColumns = sessionValueColumns(rows);
 
   return (
     <Box>
@@ -390,7 +392,9 @@ function RigSessionRows({
             <TableRow>
               <TableCell sx={{ width: "26%" }}>Filter</TableCell>
               <TableCell align="right">Exposure</TableCell>
-              <TableCell align="right">Gain</TableCell>
+              {valueColumns.map((column) => (
+                <TableCell key={column} align="right">{column === "iso" ? "ISO" : "Gain"}</TableCell>
+              ))}
               <TableCell align="right">Subs</TableCell>
               <TableCell>Bin</TableCell>
               <TableCell align="right">Time</TableCell>
@@ -423,7 +427,9 @@ function RigSessionRows({
                     </Box>
                   </TableCell>
                   <TableCell align="right">{session.exposure_seconds} s</TableCell>
-                  <TableCell align="right">{session.gain ?? "—"}</TableCell>
+                  {valueColumns.map((column) => (
+                    <TableCell key={column} align="right">{session[column] ?? "—"}</TableCell>
+                  ))}
                   <TableCell align="right">{session.num_subs}</TableCell>
                   <TableCell>
                     {session.binning != null ? `${session.binning}×${session.binning}` : "—"}

@@ -6,6 +6,7 @@ import asyncio
 import logging
 import shutil
 import tempfile
+from collections.abc import Callable
 from pathlib import Path
 from typing import Literal
 
@@ -33,13 +34,19 @@ from nightcrate.api.project_models import (
 from nightcrate.core.app_config import get_projects_root
 from nightcrate.db.session import get_db, workspace_key
 from nightcrate.services import archive_io, pixel_loader, pxiproject_io, xisf_io
+from nightcrate.services.ingest_sessions import assign_rigs_and_sessions, project_geo_timezone
+from nightcrate.services.path_resolver import ALL_EXTENSIONS
 from nightcrate.services.project_images import (
     VARIANT_SIZES,
     CropFrameError,
+    crop_candidates,
     crop_path,
     generate_cropped_thumbnail,
     generate_rendered_images,
+    refresh_in_background,
+    rendition_candidates,
 )
+from nightcrate.services.session_derivation import refresh_auto_sessions
 
 logger = logging.getLogger(__name__)
 
@@ -47,7 +54,7 @@ router = APIRouter(prefix="/api/projects", tags=["Projects"])
 
 _VALID_STATUSES = {"active", "ready_to_process", "paused", "complete", "abandoned"}
 _VALID_SORTS = {"name", "created_at", "updated_at"}
-_IMAGE_SUFFIXES = {".fits", ".fit", ".fts", ".xisf", ".png", ".jpg", ".jpeg", ".tif", ".tiff"}
+_IMAGE_SUFFIXES = ALL_EXTENSIONS
 _VALID_VARIANTS = set(VARIANT_SIZES.keys())
 _VALID_THUMB_SIZES = {"small", "medium", "large"}
 _THUMB_FALLBACK = {"small": "thumb_sm", "medium": "thumb_md", "large": "thumb_lg"}
@@ -73,8 +80,45 @@ def _image_dir(base: Path, image_id: int) -> Path:
 
 def _find_rendered(project_id: int, image_id: int, variant: str) -> Path | None:
     """Find a rendered variant on disk."""
-    path = _image_dir(_permanent_dir(project_id), image_id) / f"{variant}.jpg"
-    return path if path.is_file() else None
+    return next(
+        (
+            path
+            for path in rendition_candidates(
+                _image_dir(_permanent_dir(project_id), image_id), variant
+            )
+            if path.is_file()
+        ),
+        None,
+    )
+
+
+async def _serve_older_and_refresh(
+    path: Path | None,
+    candidates: list[Path],
+    refresh_target: Path,
+    refresh: tuple[Callable[..., None], tuple[object, ...]] | None,
+) -> Response | None:
+    """Read an older generation safely, then enqueue its replacement."""
+    if path is None or path == candidates[0]:
+        return None
+    try:
+        body = await asyncio.to_thread(path.read_bytes)
+    except FileNotFoundError:
+        path = next((candidate for candidate in candidates if candidate.is_file()), None)
+        if path is None:
+            return None
+        try:
+            body = await asyncio.to_thread(path.read_bytes)
+        except FileNotFoundError:
+            return None
+    if path != candidates[0] and refresh is not None:
+        operation, args = refresh
+        refresh_in_background(refresh_target, operation, *args)
+    return Response(
+        content=body,
+        media_type="image/jpeg",
+        headers={"Cache-Control": "no-store"},
+    )
 
 
 # ── row helpers ────────────────────────────────────────────────────────────
@@ -197,9 +241,8 @@ def _delete_crop_files(project_id: int, crops: list[tuple[int, str]]) -> None:
     """Best-effort cleanup after the corresponding database change commits."""
     project_folder = _permanent_dir(project_id)
     for row_id, size in crops:
-        current = crop_path(project_folder, size, row_id)
         legacy = project_folder / f"thumb_crop_{size}.jpg"
-        for path in (current, legacy):
+        for path in (*crop_candidates(project_folder, size, row_id), legacy):
             try:
                 path.unlink(missing_ok=True)
             except OSError:
@@ -418,7 +461,7 @@ async def update_project(project_id: int, body: ProjectUpdate) -> ProjectRespons
     fields = body.model_dump(exclude_unset=True)
 
     async with get_db() as conn:
-        await get_or_404(conn, "project", project_id, "Project")
+        project = await get_or_404(conn, "project", project_id, "Project")
 
         sets: list[str] = []
         params: list[str | None] = []
@@ -454,6 +497,10 @@ async def update_project(project_id: int, body: ProjectUpdate) -> ProjectRespons
                 f"UPDATE project SET {', '.join(sets)} WHERE id = ?",  # nosec B608 - column names internal
                 params,
             )
+            if "location_id" in fields and fields["location_id"] != project["location_id"]:
+                tz_name = await project_geo_timezone(conn, project_id)
+                await assign_rigs_and_sessions(conn, project_id, tz_name)
+                await refresh_auto_sessions(conn, project_id, tz_name=tz_name)
             await conn.commit()
 
         return await _fetch_project_with_images(conn, project_id)
@@ -513,6 +560,9 @@ async def set_project_rigs(project_id: int, body: ProjectRigsSet) -> ProjectResp
                 "INSERT INTO project_rig (project_id, rig_id) VALUES (?, ?)",
                 (project_id, rig_id),
             )
+        await refresh_auto_sessions(
+            conn, project_id, tz_name=await project_geo_timezone(conn, project_id)
+        )
         await conn.commit()
         return await _fetch_project_with_images(conn, project_id)
 
@@ -971,9 +1021,45 @@ async def get_rendered_image(project_id: int, image_id: int, variant: str) -> Re
             detail=f"Invalid variant: {variant}. Must be one of {sorted(_VALID_VARIANTS)}",
         )
 
+    output_dir = _image_dir(_permanent_dir(project_id), image_id)
+    candidates = rendition_candidates(output_dir, variant)
+    current = candidates[0]
     path = _find_rendered(project_id, image_id, variant)
+    if path is not None and path != current:
+        async with get_db() as conn:
+            cursor = await conn.execute(
+                "SELECT file_path FROM project_image WHERE id = ? AND project_id = ?",
+                (image_id, project_id),
+            )
+            row = await cursor.fetchone()
+        refresh = (
+            (generate_rendered_images, (row["file_path"], output_dir)) if row is not None else None
+        )
+        response = await _serve_older_and_refresh(path, candidates, output_dir, refresh)
+        if response is not None:
+            return response
+        path = _find_rendered(project_id, image_id, variant)
     if path is None:
-        return Response(status_code=204, headers={"Cache-Control": "no-store"})
+        async with get_db() as conn:
+            cursor = await conn.execute(
+                "SELECT file_path FROM project_image WHERE id = ? AND project_id = ?",
+                (image_id, project_id),
+            )
+            row = await cursor.fetchone()
+        if row is None:
+            return Response(status_code=204, headers={"Cache-Control": "no-store"})
+        try:
+            await asyncio.to_thread(
+                generate_rendered_images,
+                row["file_path"],
+                output_dir,
+            )
+        except Exception:
+            logger.warning("On-demand rendition failed for %s", row["file_path"], exc_info=True)
+            return Response(status_code=204, headers={"Cache-Control": "no-store"})
+        path = _find_rendered(project_id, image_id, variant)
+        if path is None:
+            return Response(status_code=204, headers={"Cache-Control": "no-store"})
 
     return FileResponse(
         path,
@@ -995,13 +1081,65 @@ async def get_thumbnail(
 
     async with get_db() as conn:
         cursor = await conn.execute(
-            "SELECT id FROM project_thumbnail WHERE project_id = ? AND size = ?",
+            "SELECT pt.*, COALESCE(src.file_path, main.file_path) AS file_path "
+            "FROM project_thumbnail pt "
+            "LEFT JOIN project_image src ON src.id = pt.source_image_id "
+            "LEFT JOIN project_image main ON main.project_id = pt.project_id AND main.is_main = 1 "
+            "WHERE pt.project_id = ? AND pt.size = ?",
             (project_id, size),
         )
         crop_row = await cursor.fetchone()
         if crop_row is not None:
-            cropped = crop_path(_permanent_dir(project_id), size, crop_row["id"])
-            if cropped.is_file():
+            project_folder = _permanent_dir(project_id)
+            candidates = crop_candidates(project_folder, size, crop_row["id"])
+            current_crop = candidates[0]
+            cropped = next(
+                (path for path in candidates if path.is_file()),
+                None,
+            )
+            if cropped is not None and cropped != current_crop:
+                refresh = (
+                    (
+                        generate_cropped_thumbnail,
+                        (
+                            crop_row["file_path"],
+                            crop_row["crop_x"],
+                            crop_row["crop_y"],
+                            crop_row["crop_w"],
+                            crop_row["crop_h"],
+                            current_crop,
+                            size,
+                        ),
+                    )
+                    if crop_row["file_path"]
+                    else None
+                )
+                response = await _serve_older_and_refresh(
+                    cropped, candidates, current_crop, refresh
+                )
+                if response is not None:
+                    return response
+                cropped = next((path for path in candidates if path.is_file()), None)
+            if cropped is None and crop_row["file_path"]:
+                try:
+                    await asyncio.to_thread(
+                        generate_cropped_thumbnail,
+                        crop_row["file_path"],
+                        crop_row["crop_x"],
+                        crop_row["crop_y"],
+                        crop_row["crop_w"],
+                        crop_row["crop_h"],
+                        current_crop,
+                        size,
+                    )
+                except Exception:
+                    logger.warning(
+                        "On-demand project crop failed for %s",
+                        crop_row["file_path"],
+                        exc_info=True,
+                    )
+                cropped = current_crop if current_crop.is_file() else None
+            if cropped is not None and cropped.is_file():
                 return FileResponse(
                     cropped,
                     media_type="image/jpeg",
@@ -1018,9 +1156,49 @@ async def get_thumbnail(
         return Response(status_code=204, headers={"Cache-Control": "no-store"})
 
     fallback_variant = _THUMB_FALLBACK.get(size, "thumb_sm")
+    output_dir = _image_dir(_permanent_dir(project_id), row["id"])
+    candidates = rendition_candidates(output_dir, fallback_variant)
+    current = candidates[0]
     path = _find_rendered(project_id, row["id"], fallback_variant)
+    if path is not None and path != current:
+        async with get_db() as conn:
+            cursor = await conn.execute(
+                "SELECT file_path FROM project_image WHERE id = ? AND project_id = ?",
+                (row["id"], project_id),
+            )
+            image_row = await cursor.fetchone()
+        refresh = (
+            (generate_rendered_images, (image_row["file_path"], output_dir))
+            if image_row is not None
+            else None
+        )
+        response = await _serve_older_and_refresh(path, candidates, output_dir, refresh)
+        if response is not None:
+            return response
+        path = _find_rendered(project_id, row["id"], fallback_variant)
     if path is None:
-        return Response(status_code=204, headers={"Cache-Control": "no-store"})
+        async with get_db() as conn:
+            cursor = await conn.execute(
+                "SELECT file_path FROM project_image WHERE id = ? AND project_id = ?",
+                (row["id"], project_id),
+            )
+            image_row = await cursor.fetchone()
+        if image_row is not None:
+            try:
+                await asyncio.to_thread(
+                    generate_rendered_images,
+                    image_row["file_path"],
+                    output_dir,
+                )
+            except Exception:
+                logger.warning(
+                    "On-demand project thumbnail failed for %s",
+                    image_row["file_path"],
+                    exc_info=True,
+                )
+        path = _find_rendered(project_id, row["id"], fallback_variant)
+        if path is None:
+            return Response(status_code=204, headers={"Cache-Control": "no-store"})
 
     return FileResponse(
         path,

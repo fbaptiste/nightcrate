@@ -132,9 +132,10 @@ def _setup(monkeypatch, *, ready: set[str], count: int = 20, mock_image: bool = 
         monkeypatch.setattr(subject.pixel_loader, "resolve", lambda _path: (object(), "fits", 0))
         monkeypatch.setattr(
             subject.pixel_loader,
-            "load_normalized_mono",
+            "load_image",
             lambda _path, _hdu: np.zeros((1600, 2400), dtype=np.float32),
         )
+        monkeypatch.setattr(subject.pixel_loader, "grey_of", lambda data: (data, 1))
         monkeypatch.setattr(plate_solve, "read_header_cards", lambda *_args: [])
     monkeypatch.setattr(subject, "extract_near", lambda *_args, **_kwargs: detections)
     monkeypatch.setattr(
@@ -183,7 +184,7 @@ def test_image_read_sites_raise_domain_error(monkeypatch, site):
     else:
         monkeypatch.setattr(
             subject.pixel_loader,
-            "load_normalized_mono",
+            "load_image",
             lambda *_args: (_ for _ in ()).throw(OSError("pixels failed")),
         )
 
@@ -459,7 +460,7 @@ def test_cancel_during_pixel_load_stops_before_search(monkeypatch):
         cancel.set()
         return np.zeros((1600, 2400), dtype=np.float32)
 
-    monkeypatch.setattr(subject.pixel_loader, "load_normalized_mono", load)
+    monkeypatch.setattr(subject.pixel_loader, "load_image", load)
     monkeypatch.setattr(
         subject,
         "search_index",
@@ -521,7 +522,7 @@ def test_deadline_during_header_read_stops_before_pixel_load(monkeypatch):
     monkeypatch.setattr(plate_solve, "read_header_cards", read_header)
     monkeypatch.setattr(
         subject.pixel_loader,
-        "load_normalized_mono",
+        "load_image",
         lambda *_args: (_ for _ in ()).throw(AssertionError("pixels loaded")),
     )
 

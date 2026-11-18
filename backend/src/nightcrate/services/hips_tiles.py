@@ -26,7 +26,7 @@ from astropy_healpix import lonlat_to_healpix
 from numpy.typing import NDArray
 from PIL import Image
 
-from nightcrate.core.tasks import settle
+from nightcrate.core.tasks import drain_task_map, settle
 from nightcrate.services import http_client
 
 logger = logging.getLogger("nightcrate.hips_tiles")
@@ -325,12 +325,15 @@ def _clock() -> float:
     return time.monotonic()
 
 
-def reset_state() -> None:
+async def drain_background_fetches() -> None:
+    """Cancel and await the tile fetches present when draining starts."""
+    await drain_task_map(_in_flight)
+
+
+async def reset_state() -> None:
     """Reset module state between tests without touching any disk cache."""
     global _tile_cache_bytes, _tile_fetch_semaphore, _render_semaphore
-    for task in _in_flight.values():
-        task.cancel()
-    _in_flight.clear()
+    await drain_background_fetches()
     _tile_cache.clear()
     _tile_cache_bytes = 0
     _source_health.clear()

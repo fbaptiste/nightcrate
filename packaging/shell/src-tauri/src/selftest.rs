@@ -73,11 +73,15 @@ impl SelfTest {
             Phase::Shell => Some(
                 r#"(async()=>{try{
                   const health=await (await fetch('/api/health')).json();
+                  const rawResponse=await fetch('/api/admin/raw-check',{method:'POST'});
+                  if(!rawResponse.ok)throw new Error(`raw check failed ${rawResponse.status}: ${await rawResponse.text()}`);
+                  const rawCheck=await rawResponse.json();
+                  if(rawCheck.raw_files!=='available')throw new Error(rawCheck.raw_files||'raw files unavailable');
                   const until=Date.now()+60000;
                   while(Date.now()<until&&!document.body.innerText.includes('v'+health.version)){await new Promise(r=>setTimeout(r,100));}
                   const shell=document.body.innerText.includes('v'+health.version);
                   const assetScript=performance.getEntriesByType('resource').some(entry=>entry.initiatorType==='script'&&new URL(entry.name).pathname.startsWith('/assets/'));
-                  await window.__TAURI__.core.invoke('selftest_report',{report:{phase:'shell',ok:shell&&assetScript,shell,assetScript,tauri:!!window.__TAURI__,version:health.version}});
+                  await window.__TAURI__.core.invoke('selftest_report',{report:{phase:'shell',ok:shell&&assetScript,shell,assetScript,rawFiles:rawCheck.raw_files,tauri:!!window.__TAURI__,version:health.version}});
                 }catch(error){await window.__TAURI__.core.invoke('selftest_report',{report:{phase:'shell',ok:false,error:String(error)}});}})();"#
                     .to_owned(),
             ),

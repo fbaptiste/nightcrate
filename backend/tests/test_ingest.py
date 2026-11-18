@@ -115,22 +115,22 @@ class TestClassifyFrame:
         ],
     )
     def test_light_dark_flat_bias(self, imagetyp, expected):
-        route, frame_type = classify_frame({}, {"IMAGETYP": imagetyp})
+        route, frame_type, _basis = classify_frame({}, {"IMAGETYP": imagetyp})
         assert route == CATEGORY_SUB
         assert frame_type == expected
 
     def test_flat_dark(self):
-        route, frame_type = classify_frame({}, {"IMAGETYP": "FlatDark"})
+        route, frame_type, _basis = classify_frame({}, {"IMAGETYP": "FlatDark"})
         assert route == CATEGORY_SUB
         assert frame_type == "dark_flat"
 
     def test_unknown_imagetyp(self):
-        route, frame_type = classify_frame({}, {"IMAGETYP": "Whatever"})
+        route, frame_type, _basis = classify_frame({}, {"IMAGETYP": "Whatever"})
         assert route == CATEGORY_SUB
         assert frame_type == "unknown"
 
     def test_missing_imagetyp(self):
-        route, frame_type = classify_frame({}, {})
+        route, frame_type, _basis = classify_frame({}, {})
         assert route == CATEGORY_SUB
         assert frame_type == "unknown"
 
@@ -149,7 +149,7 @@ class TestClassifyFrame:
     }
 
     def test_on_sky_header_without_imagetyp_is_a_light(self):
-        route, frame_type = classify_frame(
+        route, frame_type, _basis = classify_frame(
             self._DWARF_LIGHT_META,
             {"BAYERPAT": "RGGB"},
             filename="HD 200178_60s60_Duo-Band_20260901-204952011_38C.fits",
@@ -159,7 +159,7 @@ class TestClassifyFrame:
 
     def test_on_sky_evidence_outranks_a_misleading_filename(self):
         """A light of "Dark Horse Nebula" must not read as a dark."""
-        route, frame_type = classify_frame(
+        route, frame_type, _basis = classify_frame(
             self._DWARF_LIGHT_META | {"object_name": "Dark Horse Nebula"},
             {},
             filename="Dark Horse Nebula_60s_20260901-204952_38C.fits",
@@ -168,7 +168,7 @@ class TestClassifyFrame:
         assert frame_type == "light"
 
     def test_coordinates_alone_are_on_sky_evidence(self):
-        route, frame_type = classify_frame(
+        route, frame_type, _basis = classify_frame(
             {"exposure_time": 60.0, "ra": 315.1261, "dec": 43.56413},
             {},
             filename="20260901-204952011_38C.fits",
@@ -189,13 +189,13 @@ class TestClassifyFrame:
         ],
     )
     def test_filename_token_when_header_is_silent(self, filename, expected):
-        route, frame_type = classify_frame({}, {"BAYERPAT": "RGGB"}, filename=filename)
+        route, frame_type, _basis = classify_frame({}, {"BAYERPAT": "RGGB"}, filename=filename)
         assert route == CATEGORY_SUB
         assert frame_type == expected
 
     def test_no_exposure_is_not_a_light(self):
         """Pointing keywords without a real exposure are not enough."""
-        route, frame_type = classify_frame(
+        route, frame_type, _basis = classify_frame(
             {"object_name": "HD 200178", "ra": 315.1261, "dec": 43.56413},
             {},
             filename="something.fits",
@@ -203,32 +203,34 @@ class TestClassifyFrame:
         assert frame_type == "unknown"
 
     def test_zero_exposure_is_not_a_light(self):
-        route, frame_type = classify_frame(
+        route, frame_type, _basis = classify_frame(
             self._DWARF_LIGHT_META | {"exposure_time": 0.0}, {}, filename="x.fits"
         )
         assert frame_type == "unknown"
 
     def test_unrecognized_filename_stays_unknown(self):
         """Never guessed at — the catalog surfaces it for correction instead."""
-        route, frame_type = classify_frame({}, {}, filename="IMG_4021.fits")
+        route, frame_type, _basis = classify_frame({}, {}, filename="IMG_4021.fits")
         assert route == CATEGORY_SUB
         assert frame_type == "unknown"
 
     def test_filename_is_never_consulted_when_imagetyp_exists(self):
         """A header type always wins, even against a contradicting filename."""
-        route, frame_type = classify_frame(
+        route, frame_type, _basis = classify_frame(
             {}, {"IMAGETYP": "DARK"}, filename="light_something.fits"
         )
         assert frame_type == "dark"
 
     def test_token_must_lead_the_filename(self):
         """A type word buried mid-name is not a classification signal."""
-        route, frame_type = classify_frame({}, {}, filename="NGC7000_shot_through_flat_clouds.fits")
+        route, frame_type, _basis = classify_frame(
+            {}, {}, filename="NGC7000_shot_through_flat_clouds.fits"
+        )
         assert frame_type == "unknown"
 
     def test_stack_by_ncombine(self):
         assert is_stack({}, {"IMAGETYP": "Light", "NCOMBINE": "25"}) is True
-        route, _ = classify_frame({}, {"IMAGETYP": "Light", "NCOMBINE": "25"})
+        route, _, _basis = classify_frame({}, {"IMAGETYP": "Light", "NCOMBINE": "25"})
         assert route == CATEGORY_PROCESSED
 
     def test_stack_by_stackcnt(self):
@@ -236,7 +238,7 @@ class TestClassifyFrame:
 
     def test_stack_by_master_imagetyp(self):
         assert is_stack({}, {"IMAGETYP": "Master Flat"}) is True
-        route, frame_type = classify_frame({}, {"IMAGETYP": "Master Flat"})
+        route, frame_type, _basis = classify_frame({}, {"IMAGETYP": "Master Flat"})
         assert route == CATEGORY_PROCESSED
 
     def test_single_frame_not_stack(self):
@@ -499,6 +501,28 @@ async def _make_project(client: AsyncClient, name: str = "Ingest Test") -> int:
 
 
 class TestFolderBinding:
+    async def test_add_folder_refreshes_auto_sessions_once(self, client, tmp_path, monkeypatch):
+        from nightcrate.api import ingest as ingest_api
+
+        folder_path = tmp_path / "add-refresh"
+        folder_path.mkdir()
+        pid = await _make_project(client, "Add refresh")
+        original_refresh = ingest_api.refresh_auto_sessions
+        calls = 0
+
+        async def counted_refresh(*args, **kwargs):
+            nonlocal calls
+            calls += 1
+            return await original_refresh(*args, **kwargs)
+
+        monkeypatch.setattr(ingest_api, "refresh_auto_sessions", counted_refresh)
+        response = await client.post(
+            f"/api/projects/{pid}/folders", json={"path": str(folder_path)}
+        )
+
+        assert response.status_code == 201, response.text
+        assert calls == 1
+
     async def test_add_first_folder_is_primary(self, client):
         pid = await _make_project(client, "FolderProj")
         resp = await client.post(f"/api/projects/{pid}/folders", json={"path": "/data/a"})
@@ -618,7 +642,7 @@ class TestFolderBinding:
                 ).fetchone()
                 assert count["n"] == 0
 
-    async def test_rig_change_does_not_create_first_auto_batch(self, client, tmp_path):
+    async def test_rig_change_refreshes_first_scan_auto_batch(self, client, tmp_path):
         folder_path = tmp_path / "rig-change-no-auto"
         folder_path.mkdir()
         _write_fits(folder_path / "light.fits", imagetyp="LIGHT", filt="Ha")
@@ -641,7 +665,10 @@ class TestFolderBinding:
         )
 
         assert changed.status_code == 200, changed.text
-        assert (await client.get(f"/api/projects/{pid}/sessions")).json() == []
+        sessions = (await client.get(f"/api/projects/{pid}/sessions")).json()
+        assert len(sessions) == 1
+        assert sessions[0]["source"] == "auto"
+        assert sessions[0]["rig_id"] == rig_b
 
     async def test_untagged_frames_use_only_listed_rig_for_removal_guard(self, client, tmp_path):
         folder_path = tmp_path / "single-rig-fallback"
@@ -760,8 +787,10 @@ class TestIngestEndToEnd:
         _write_fits(bad, imagetyp="LIGHT")
         original = ingest_api._persist_parsed
 
-        async def fail_after_persist(conn, project_id, run_id, result, counters):
-            await original(conn, project_id, run_id, result, counters)
+        async def fail_after_persist(
+            conn, project_id, run_id, result, counters, geo_tz, bound_folder
+        ):
+            await original(conn, project_id, run_id, result, counters, geo_tz, bound_folder)
             if result["path"] == str(bad):
                 raise RuntimeError("injected after persistence")
 
@@ -1168,7 +1197,15 @@ class TestIngestEndToEnd:
         bad = folder / "bad.fits"
         bad.write_bytes(b"bad FITS")
         pid = await _make_project(client, "Post-pass failure")
-        await _bind_folder(client, pid, folder)
+        async with get_db() as conn:
+            equipment = await make_equipment(conn)
+            rig_id = await make_rig(conn, equipment, "Repair rig")
+            await conn.commit()
+        bound = await client.post(
+            f"/api/projects/{pid}/folders", json={"path": str(folder), "rig_id": rig_id}
+        )
+        assert bound.status_code == 201, bound.text
+        original_assign = ingest_api.assign_rigs_and_sessions
 
         async def fail_post_pass(*_args, **_kwargs):
             raise RuntimeError("injected post-pass failure")
@@ -1180,7 +1217,24 @@ class TestIngestEndToEnd:
         assert run["errors_count"] == 2
         frames = (await client.get(f"/api/projects/{pid}/catalog/frames")).json()
         assert [row["path"] for row in frames["rows"]] == [str(good)]
+        async with get_db() as conn:
+            before_repair = await (
+                await conn.execute("SELECT rig_id FROM sub_frame WHERE project_id = ?", (pid,))
+            ).fetchone()
+        assert before_repair["rig_id"] is None
         assert [row["path"] for row in (await _uncataloged(client, pid))["files"]] == [str(bad)]
+
+        monkeypatch.setattr(ingest_api, "assign_rigs_and_sessions", original_assign)
+        rebuilt = await client.post(f"/api/projects/{pid}/sessions/derive")
+        assert rebuilt.status_code == 200, rebuilt.text
+        async with get_db() as conn:
+            after_repair = await (
+                await conn.execute("SELECT rig_id FROM sub_frame WHERE project_id = ?", (pid,))
+            ).fetchone()
+        assert after_repair["rig_id"] == rig_id
+        sessions = (await client.get(f"/api/projects/{pid}/sessions")).json()
+        assert len(sessions) == 1
+        assert sessions[0]["rig_id"] == rig_id
 
     async def test_uncataloged_list_contract_order_timezone_and_404(self, client):
         from nightcrate.db.session import get_db
@@ -1394,6 +1448,8 @@ class TestIngestEndToEnd:
             "rows"
         ]
         assert {f["filter_name"] for f in frames} == {"Oiii"}
+        batches = (await client.get(f"/api/projects/{pid}/sessions")).json()
+        assert [(row["filter_label"], row["num_subs"]) for row in batches] == [("Oiii", 1)]
 
     async def test_remove_folder_keeps_subs_with_other_location(self, client, tmp_path):
         # Same file under two folders dedupes to one sub with two file_locations.
@@ -1584,6 +1640,64 @@ class TestThumbnailEndpoint:
         r2 = await client.get(f"/api/projects/{pid}/catalog/frames/{frame_id}/thumbnail")
         assert r2.status_code == 200
         assert r2.content[:3] == b"\xff\xd8\xff"
+
+    async def test_thumbnail_regeneration_removes_only_older_generations(
+        self, client, imaging_folder
+    ):
+        from nightcrate.api.ingest import _thumb_cache_dir
+        from nightcrate.services.catalog_thumbnail import DEFAULT_MAX_PX, RENDER_VERSION
+
+        pid = await _make_project(client, "Thumbnail generations")
+        await client.post(f"/api/projects/{pid}/folders", json={"path": str(imaging_folder)})
+        await client.post(f"/api/projects/{pid}/ingest")
+        frame = (await client.get(f"/api/projects/{pid}/catalog/frames")).json()["rows"][0]
+        async with get_db() as conn:
+            row = await (
+                await conn.execute(
+                    "SELECT content_hash FROM sub_frame WHERE id = ?", (frame["id"],)
+                )
+            ).fetchone()
+        stem = f"{row['content_hash']}_{DEFAULT_MAX_PX}"
+        cache_dir = _thumb_cache_dir()
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        old_unversioned = cache_dir / f"{stem}.jpg"
+        old_versioned = cache_dir / f"{stem}_v1.jpg"
+        current = cache_dir / f"{stem}_v{RENDER_VERSION}.jpg"
+        unrelated = cache_dir / "unrelated_96_v1.jpg"
+        old_unversioned.write_bytes(b"old")
+        old_versioned.write_bytes(b"old")
+        unrelated.write_bytes(b"keep")
+        current.unlink(missing_ok=True)
+
+        response = await client.get(f"/api/projects/{pid}/catalog/frames/{frame['id']}/thumbnail")
+        assert response.status_code == 200
+        assert response.content == b"old"
+        from nightcrate.api.ingest import drain_background_thumbnail_refreshes
+
+        await drain_background_thumbnail_refreshes()
+        assert current.is_file()
+        assert not old_unversioned.exists()
+        assert not old_versioned.exists()
+        assert unrelated.read_bytes() == b"keep"
+
+    def test_thumbnail_generation_cleanup_logs_and_ignores_delete_failure(
+        self, tmp_path, monkeypatch, caplog
+    ):
+        from nightcrate.api.ingest import _delete_older_thumbnail_generations
+
+        old = tmp_path / "digest_96.jpg"
+        old.write_bytes(b"old")
+        real_unlink = Path.unlink
+
+        def unlink(path, *args, **kwargs):
+            if path == old:
+                raise PermissionError("cache is read-only")
+            return real_unlink(path, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "unlink", unlink)
+        _delete_older_thumbnail_generations(tmp_path, "digest", 96)
+        assert old.is_file()
+        assert "could not remove obsolete thumbnail digest_96.jpg" in caplog.text
 
     async def test_thumbnail_unknown_frame_404(self, client, imaging_folder):
         pid = await _make_project(client, "ThumbMiss")

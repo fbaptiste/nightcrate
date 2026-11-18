@@ -93,6 +93,7 @@ export interface ProjectRigSetups {
   rig_name: string;
   declared: boolean;
   in_use: boolean;
+  provenance: "files" | "manual_sessions" | "auto_sessions" | null;
   setups: ProjectSetup[];
   setup_options: ProjectSetupOption[];
   base_parts: RigPartsInput;

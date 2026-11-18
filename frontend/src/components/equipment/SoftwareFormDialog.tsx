@@ -149,7 +149,6 @@ export default function SoftwareFormDialog({
         queryClient.invalidateQueries({ queryKey: ["project-catalog"] }),
         queryClient.invalidateQueries({ queryKey: ["project-sessions"] }),
         queryClient.invalidateQueries({ queryKey: ["project-integration"] }),
-        queryClient.invalidateQueries({ queryKey: ["project-solve"] }),
         queryClient.invalidateQueries({ queryKey: ["equipment-usage"] }),
         invalidateProjectInfo(queryClient),
       ]);

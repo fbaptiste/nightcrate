@@ -15,6 +15,8 @@ from nightcrate.api.horizon_models import HorizonCreate
 from nightcrate.db.session import get_db
 from nightcrate.services.coordinate_format import format_latitude, format_longitude
 from nightcrate.services.http_client import get as http_get
+from nightcrate.services.ingest_sessions import assign_rigs_and_sessions, project_geo_timezone
+from nightcrate.services.session_derivation import refresh_auto_sessions
 
 logger = logging.getLogger(__name__)
 
@@ -481,6 +483,10 @@ async def update_location(location_id: int, body: LocationUpdate):
             field in updates and updates[field] != existing_row[field]
             for field in ("latitude", "longitude", "elevation_m")
         )
+        session_inputs_changed = any(
+            field in updates and updates[field] != existing_row[field]
+            for field in ("latitude", "longitude", "timezone", "geo_timezone")
+        )
 
         if updates:
             set_clause = ", ".join(f"{k} = ?" for k in updates)
@@ -499,6 +505,16 @@ async def update_location(location_id: int, body: LocationUpdate):
 
         if updates.get("is_default") == 1:
             await _ensure_single_default(conn, location_id)
+
+        if session_inputs_changed:
+            cursor = await conn.execute(
+                "SELECT id FROM project WHERE location_id = ?", (location_id,)
+            )
+            for project in await cursor.fetchall():
+                project_id = project["id"]
+                tz_name = await project_geo_timezone(conn, project_id)
+                await assign_rigs_and_sessions(conn, project_id, tz_name)
+                await refresh_auto_sessions(conn, project_id, tz_name=tz_name)
 
         await conn.commit()
 

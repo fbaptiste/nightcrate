@@ -8,7 +8,7 @@ from typing import Literal
 
 from nightcrate.core.app_config import get_projects_root
 from nightcrate.services.gallery import GalleryCrop
-from nightcrate.services.project_images import crop_path
+from nightcrate.services.project_images import crop_candidates
 
 _BATCH_SIZE = 500
 
@@ -46,7 +46,10 @@ async def load_project_crops(
                 continue
             project_id = int(row["project_id"])
             size = row["size"]
-            if not crop_path(projects_root / str(project_id), size, int(row["id"])).is_file():
+            if not any(
+                path.is_file()
+                for path in crop_candidates(projects_root / str(project_id), size, int(row["id"]))
+            ):
                 continue
             result[project_id][size] = GalleryCrop(id=int(row["id"]), image_id=int(image_id))
     return dict(result)

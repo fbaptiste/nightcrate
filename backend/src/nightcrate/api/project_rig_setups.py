@@ -122,6 +122,7 @@ async def _response(conn, item: ProjectRigSetups) -> ProjectRigSetupsOut:
         rig_name=item.rig_name,
         declared=item.declared,
         in_use=item.in_use,
+        provenance=item.provenance,
         setups=[
             ProjectSetupOut(
                 rig_setup_id=setup.rig_setup_id,

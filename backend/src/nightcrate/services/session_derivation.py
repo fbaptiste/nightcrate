@@ -7,10 +7,10 @@ gain and sub count per row). The rig comes from the frame, which inherited it
 from its source folder's user-declared tag, so it only splits a group when two
 rigs really did shoot the same filter on the same night.
 
-The first build is always requested from the Sessions tab; ingest never creates
-these rows. Once ``source='auto'`` rows exist, changing a source folder's rig also
-runs the pass so those batches follow their frames. Every pass replaces automatic
-rows while leaving ``source='manual'`` rows untouched.
+The first scan builds these rows automatically. Later mutations keep rebuilding
+them while any ``source='auto'`` row exists. A project with only hand-entered
+sessions stays manual until the user explicitly requests a rebuild. Every pass
+replaces automatic rows while leaving ``source='manual'`` rows untouched.
 
 Pure service: takes an open connection and **never commits** — the caller owns
 the transaction, same contract as ``ingest_sessions``.
@@ -50,6 +50,7 @@ def group_key(
     binning_y: int | None,
     rig_id: int | None = None,
     rig_setup_id: int | None = None,
+    iso: int | None = None,
 ) -> tuple:
     """The hashable grain of one derived session.
 
@@ -69,6 +70,7 @@ def group_key(
         filter_key(filter_hint),
         round(float(exposure_seconds or 0.0), 3),
         coerce_gain(gain),
+        iso,
         (binning_x, binning_y),
         rig_setup_id,
     )
@@ -115,7 +117,8 @@ async def derive_sessions(
     default_rig_id = await _project_single_rig(conn, project_id)
     setup_rigs = await frame_setup_rig_ids(conn, project_id)
     cursor = await conn.execute(
-        "SELECT id, date_obs_utc, filter_name_hint, exposure_seconds, gain, binning_x, binning_y, "
+        "SELECT id, date_obs_utc, filter_name_hint, exposure_seconds, gain, iso, "
+        "binning_x, binning_y, "
         "rig_id FROM sub_frame WHERE project_id = ? AND frame_type = 'light'",
         (project_id,),
     )
@@ -154,6 +157,7 @@ async def derive_sessions(
             row["binning_y"],
             rig_id,
             rig_setup_id,
+            row["iso"],
         )
         existing = groups.get(key)
         if existing is not None:
@@ -168,6 +172,7 @@ async def derive_sessions(
             filter_label=hint,
             exposure_seconds=exposure,
             gain=coerce_gain(row["gain"]),
+            iso=row["iso"],
             binning=coerce_binning(row["binning_x"], row["binning_y"]),
             num_subs=1,
         )
@@ -185,8 +190,8 @@ async def derive_sessions(
         await conn.execute(
             "INSERT INTO project_session "
             "(project_id, rig_id, rig_setup_id, line_name, filter_label, "
-            "exposure_seconds, gain, num_subs, binning, session_date, source) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'auto')",
+            "exposure_seconds, gain, iso, num_subs, binning, session_date, source) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'auto')",
             (
                 project_id,
                 session.rig_id,
@@ -195,6 +200,7 @@ async def derive_sessions(
                 session.filter_label,
                 session.exposure_seconds,
                 session.gain,
+                session.iso,
                 session.num_subs,
                 session.binning,
                 session.night,
@@ -221,6 +227,30 @@ async def derive_sessions(
     return summary
 
 
+async def refresh_auto_sessions(
+    conn: aiosqlite.Connection, project_id: int, *, tz_name: str | None
+) -> DerivationSummary | None:
+    """Refresh automatic sessions when the project uses automatic derivation.
+
+    A project with no sessions is new and opts in on its first scan. Once it has
+    only hand-entered sessions, ordinary catalog mutations must not create a
+    second, automatic representation. Caller owns the transaction.
+    """
+    cursor = await conn.execute(
+        "SELECT "
+        "SUM(CASE WHEN source = 'auto' THEN 1 ELSE 0 END) AS auto_count, "
+        "SUM(CASE WHEN source = 'manual' THEN 1 ELSE 0 END) AS manual_count "
+        "FROM project_session WHERE project_id = ?",
+        (project_id,),
+    )
+    row = await cursor.fetchone()
+    auto_count = row["auto_count"] or 0
+    manual_count = row["manual_count"] or 0
+    if auto_count > 0 or manual_count == 0:
+        return await derive_sessions(conn, project_id, tz_name=tz_name)
+    return None
+
+
 async def _project_single_rig(conn: aiosqlite.Connection, project_id: int) -> int | None:
     """The project's rig when it has exactly one — the only case where attributing
     a rig to a derived session is a fact rather than a guess."""
@@ -233,13 +263,14 @@ async def _project_single_rig(conn: aiosqlite.Connection, project_id: int) -> in
 
 def _sort_key(key: tuple) -> tuple:
     """Total order over group keys, tolerating the NULLs any component may hold."""
-    night, rig_id, filt, exposure, gain, binning, rig_setup_id = key
+    night, rig_id, filt, exposure, gain, iso, binning, rig_setup_id = key
     return (
         night,
         -1 if rig_id is None else rig_id,
         filt or "",
         exposure,
         -1 if gain is None else gain,
+        -1 if iso is None else iso,
         (-1 if binning[0] is None else binning[0], -1 if binning[1] is None else binning[1]),
         -1 if rig_setup_id is None else rig_setup_id,
     )

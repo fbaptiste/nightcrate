@@ -8,20 +8,23 @@ from typing import BinaryIO
 from fastapi import HTTPException
 
 from nightcrate.services import archive_io, standard_io
+from nightcrate.services.raw_io import RAW_EXTENSIONS
 
 FITS_EXTENSIONS = {".fits", ".fit", ".fts"}
 XISF_EXTENSIONS = {".xisf"}
 STANDARD_EXTENSIONS = {".png", ".jpg", ".jpeg", ".tif", ".tiff"}
-ALL_EXTENSIONS = FITS_EXTENSIONS | XISF_EXTENSIONS | STANDARD_EXTENSIONS
+ALL_EXTENSIONS = FITS_EXTENSIONS | XISF_EXTENSIONS | STANDARD_EXTENSIONS | RAW_EXTENSIONS
 
 
 def file_type(p: Path) -> str:
-    """Return 'fits', 'xisf', 'float_tiff', or 'standard' based on extension + content."""
+    """Return the image reader selected by extension and TIFF content."""
     ext = p.suffix.lower()
     if ext in FITS_EXTENSIONS:
         return "fits"
     if ext in XISF_EXTENSIONS:
         return "xisf"
+    if ext in RAW_EXTENSIONS:
+        return "raw"
     if ext in STANDARD_EXTENSIONS:
         if ext in (".tif", ".tiff") and standard_io.is_float_tiff(p):
             return "float_tiff"
@@ -39,6 +42,8 @@ def file_type_from_ext(entry_name: str) -> str:
         return "fits"
     if suffix in XISF_EXTENSIONS:
         return "xisf"
+    if suffix in RAW_EXTENSIONS:
+        return "raw"
     if suffix in STANDARD_EXTENSIONS:
         if suffix in {".tif", ".tiff"}:
             return "tiff_unknown"

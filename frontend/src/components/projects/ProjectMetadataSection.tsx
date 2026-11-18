@@ -31,7 +31,10 @@ export default function ProjectMetadataSection({
   const locationMut = useMutation({
     mutationFn: (locationId: number | null) =>
       updateProject(project.id, { location_id: locationId }),
-    onSuccess: onUpdated,
+    onSuccess: (updated) => {
+      onUpdated(updated);
+      onChanged();
+    },
   });
 
   const locationOptions = useMemo(() => {

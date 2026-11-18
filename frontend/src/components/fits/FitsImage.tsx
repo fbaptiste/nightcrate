@@ -1,7 +1,9 @@
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from "react";
 import Box from "@mui/material/Box";
 import CircularProgress from "@mui/material/CircularProgress";
-import { imageUrl, type StretchParams } from "@/api/images";
+import { imageUrl, type PatternName, type StretchParams } from "@/api/images";
+
+/* eslint-disable react-hooks/refs -- this imperative zoom surface deliberately keeps live image geometry in refs */
 
 export interface PixelInfo {
   x: number;
@@ -18,6 +20,7 @@ interface Props {
   hdu: number;
   linked: StretchParams;
   perChannel?: [StretchParams, StretchParams, StretchParams];
+  pattern?: PatternName;
   /** Stable activity label for request tracking (set once on file open, doesn't change on tab switch). */
   activity?: string;
   onZoomChange?: (zoom: number) => void;
@@ -46,8 +49,8 @@ const IS_TOUCH_DEVICE = typeof navigator !== "undefined" && navigator.maxTouchPo
 
 
 export const FitsImage = forwardRef<FitsImageHandle, Props>(
-  function FitsImage({ path, hdu, linked, perChannel, activity, onZoomChange, onPixelHover, pixelPatchRadius = 50, onImageSettled }, ref) {
-    const src = imageUrl(path, hdu, linked, perChannel, activity);
+  function FitsImage({ path, hdu, linked, perChannel, pattern, activity, onZoomChange, onPixelHover, pixelPatchRadius = 50, onImageSettled }, ref) {
+    const src = imageUrl(path, hdu, linked, perChannel, activity, pattern);
     const containerRef = useRef<HTMLDivElement | null>(null);
     const imgRef = useRef<HTMLImageElement | null>(null);
 
@@ -462,7 +465,6 @@ export const FitsImage = forwardRef<FitsImageHandle, Props>(
         container.removeEventListener("gesturechange", preventGesture);
         container.removeEventListener("gestureend", preventGesture);
       };
-      // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
     // ── Pixel sampling (client-side via offscreen canvas) ──────────────────
@@ -605,7 +607,7 @@ export const FitsImage = forwardRef<FitsImageHandle, Props>(
             height: halfImgH * 2 || undefined,
             transform: `translate(${offset.x - halfImgW}px, ${offset.y - halfImgH}px) scale(${ez})`,
             transformOrigin: "center center",
-            imageRendering: ez >= 2 ? "pixelated" : "auto",
+            imageRendering: ez >= 1 ? "pixelated" : "auto",
             // Pre-allocate the GPU layer at the wrapper's native size so the
             // first pinch doesn't trigger an incremental re-rasterize cascade.
             willChange: "transform",

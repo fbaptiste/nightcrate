@@ -1,11 +1,14 @@
 """Shared test fixtures."""
 
+import asyncio
 import importlib.resources
 import logging
 import os
 import shutil
 import socket
 import sqlite3
+import threading
+import time
 import zoneinfo
 from contextlib import closing
 from pathlib import Path
@@ -248,6 +251,60 @@ def _test_db(tmp_path: Path, monkeypatch, _template_db):
     monkeypatch.setattr("nightcrate.db.session._workspace_problem", None)
     monkeypatch.setattr("nightcrate.core.app_config.APP_DIR", tmp_path)
     monkeypatch.setattr("nightcrate.core.app_config.CONFIG_PATH", tmp_path / "config.json")
+
+
+def _new_aiosqlite_workers(
+    baseline: set[threading.Thread],
+) -> set[threading.Thread]:
+    """Return live aiosqlite workers created after ``baseline``."""
+    from aiosqlite.core import _connection_worker_thread
+
+    return {
+        thread
+        for thread in threading.enumerate()
+        if thread not in baseline and getattr(thread, "_target", None) is _connection_worker_thread
+    }
+
+
+def _assert_no_aiosqlite_workers(baseline: set[threading.Thread]) -> None:
+    workers = _new_aiosqlite_workers(baseline)
+    assert not workers, "aiosqlite worker threads outlived the test: " + ", ".join(
+        thread.name for thread in workers
+    )
+
+
+@pytest.fixture
+def aiosqlite_worker_guard():
+    """Expose the teardown guard for its deterministic negative test."""
+    baseline = set(threading.enumerate())
+    return lambda: _assert_no_aiosqlite_workers(baseline)
+
+
+@pytest.fixture(autouse=True)
+async def _drain_background_fetches(_test_db, monkeypatch):
+    """Keep background work and its SQLite threads inside each test loop."""
+    del _test_db, monkeypatch
+    from nightcrate.api import ingest, updates
+    from nightcrate.services import hips_tiles, project_images, sky_tile_cache, thumbnails
+
+    baseline = set(threading.enumerate())
+    sky_tile_cache.reset_failure_backoff()
+    thumbnails.reset_failure_backoff()
+    yield
+
+    await project_images.drain_background_refreshes()
+    await ingest.drain_background_thumbnail_refreshes()
+    await sky_tile_cache.drain_background_fetches()
+    await thumbnails.drain_background_fetches()
+    await hips_tiles.drain_background_fetches()
+    await updates.drain_background_fetches()
+    sky_tile_cache.reset_failure_backoff()
+    thumbnails.reset_failure_backoff()
+
+    deadline = time.monotonic() + 0.5
+    while _new_aiosqlite_workers(baseline) and time.monotonic() < deadline:
+        await asyncio.sleep(0.01)
+    _assert_no_aiosqlite_workers(baseline)
 
 
 def pytest_collection_modifyitems(config, items):

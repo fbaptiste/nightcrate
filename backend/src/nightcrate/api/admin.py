@@ -32,7 +32,7 @@ from nightcrate.db.workspace_upgrade import (
     initialize_workspace,
 )
 from nightcrate.seed_loader import load_all
-from nightcrate.services import catalog_progress
+from nightcrate.services import catalog_progress, raw_support
 
 router = APIRouter(prefix="/api/admin", tags=["Administration"])
 logger = logging.getLogger("nightcrate.api.admin")
@@ -227,6 +227,13 @@ async def admin_info() -> dict:
             else None
         ),
     }
+
+
+@router.post("/raw-check")
+async def raw_check() -> dict[str, str]:
+    """Exercise installed camera-raw libraries without touching user files."""
+    reason = await asyncio.to_thread(raw_support.self_check)
+    return {"raw_files": reason or "available"}
 
 
 @router.get("/status")

@@ -1,7 +1,9 @@
 """Unified image API endpoints — dispatches by file type (FITS, XISF, PNG/JPEG/TIFF)."""
 
 import asyncio
+import io
 import logging
+import math
 import threading
 import time
 from dataclasses import asdict
@@ -19,8 +21,17 @@ from nightcrate.services import (
     fits_io,
     image_preview,
     pxiproject_io,
+    raw_io,
+    raw_support,
     standard_io,
     xisf_io,
+)
+from nightcrate.services.cfa import (
+    CfaPattern,
+    PatternInfo,
+    parse_bayer,
+    pattern_from_fits,
+    pattern_from_xisf,
 )
 from nightcrate.services.fits_header_map import (
     FITS_KEYWORD_ALIASES,
@@ -33,14 +44,19 @@ from nightcrate.services.imaging import (
     LUM_R,
     ImageStats,
     StretchParams,
-    compute_image_stats,
-    is_color_image,
+    compute_channel_stats,
     render_image_png,
     resolve_auto_stretch,
 )
 from nightcrate.services.path_resolver import (
     FITS_EXTENSIONS,
     resolve_path,
+)
+from nightcrate.services.pixel_loader import (
+    LoadedImage,
+    display_of,
+    load_resolved,
+    samples_of,
 )
 
 logger = logging.getLogger(__name__)
@@ -55,7 +71,7 @@ router = APIRouter(prefix="/api/images", tags=["Image Analyzer"])
 _CACHE_MAX_ENTRIES = 5
 _CACHE_TTL_SECONDS = 120
 
-_cache: dict[tuple, tuple[np.ndarray, float]] = {}
+_cache: dict[tuple, tuple[LoadedImage, float]] = {}
 _stats_cache: dict[tuple, tuple[ImageStats, float]] = {}
 _key_locks: dict[tuple, threading.Lock] = {}
 _cache_lock = threading.Lock()
@@ -98,58 +114,201 @@ def _cached_compute(key: tuple, store: dict, compute_fn):
     return val
 
 
-def _get_cached_image_data(
+PatternName = Literal["RGGB", "GRBG", "GBRG", "BGGR"]
+
+
+def _pattern(value: PatternName | None) -> CfaPattern | None:
+    return parse_bayer(value) if value is not None else None
+
+
+def _get_cached_image(
     p: Path | BinaryIO,
     ft: str,
     idx: int,
     hdu: int,
     cache_key: tuple | None = None,
-) -> np.ndarray:
-    """Load image data with TTL cache and per-key locking.
+    pattern: PatternName | None = None,
+) -> LoadedImage:
+    """Load a :class:`LoadedImage` with TTL cache and per-key locking.
 
     cache_key is used for archive entries (BytesIO) so concurrent requests
     share cached data instead of loading independently.
     """
     if isinstance(p, Path):
-        key = (str(p), p.stat().st_mtime, idx, hdu)
+        key = (str(p), p.stat().st_mtime, idx, hdu, pattern)
     elif cache_key is not None:
-        key = (*cache_key, hdu)
+        key = (*cache_key, hdu, pattern)
     else:
-        return _load_image_data(p, ft, idx, hdu)
-    return _cached_compute(key, _cache, lambda: _load_image_data(p, ft, idx, hdu))
+        return load_resolved(
+            p,
+            ft,
+            idx,
+            hdu,
+            pattern_override=_pattern(pattern),
+            reject_recorded_pattern=True,
+        )
+    return _cached_compute(
+        key,
+        _cache,
+        lambda: load_resolved(
+            p,
+            ft,
+            idx,
+            hdu,
+            pattern_override=_pattern(pattern),
+            reject_recorded_pattern=True,
+        ),
+    )
 
 
 def _get_or_compute_stats(
-    data: np.ndarray,
+    image: LoadedImage,
     p: Path | BinaryIO,
     idx: int,
     hdu: int,
     cache_key: tuple | None = None,
+    pattern: PatternName | None = None,
 ) -> ImageStats:
     """Return stats from cache or compute once with per-key locking."""
     if isinstance(p, Path):
-        key = (str(p), p.stat().st_mtime, idx, hdu)
+        key = (str(p), p.stat().st_mtime, idx, hdu, pattern)
     elif cache_key is not None:
-        key = (*cache_key, hdu)
+        key = (*cache_key, hdu, pattern)
     else:
-        return compute_image_stats(data)
-    return _cached_compute(key, _stats_cache, lambda: compute_image_stats(data))
+        return compute_channel_stats(samples_of(image), image)
+    return _cached_compute(
+        key,
+        _stats_cache,
+        lambda: compute_channel_stats(samples_of(image), image),
+    )
 
 
 STRUCTURAL_KEYWORDS = fits_io.STRUCTURAL_KEYWORDS
 
 
-def _load_image_data(p: Path | BinaryIO, ft: str, idx: int, hdu: int):
-    """Load normalized image data for any supported file type."""
+def _colour_info_values(kind: str, info: PatternInfo | None) -> dict:
+    return {
+        "kind": kind,
+        "pattern": "".join(info.pattern.rows) if info is not None else None,
+        "source": info.source if info is not None else None,
+        "detail": info.detail if info is not None else None,
+        "assumptions": list(info.assumptions) if info is not None else [],
+    }
+
+
+def _colour_info(image: LoadedImage) -> dict:
+    return _colour_info_values(image.kind, image.pattern)
+
+
+_IMAGE_READ_ERRORS = (ValueError, OSError, raw_support.RawUnavailable)
+
+
+def _image_http_error(exc: ValueError | OSError | raw_support.RawUnavailable) -> HTTPException:
+    status = 400 if str(exc) == "A colour pattern is already recorded for this image" else 422
+    return HTTPException(status_code=status, detail=str(exc))
+
+
+def _cards_map(cards: list[dict]) -> dict[str, str]:
+    return {card["key"]: card["value"] for card in cards if card.get("key")}
+
+
+def _header_colour(cards: list[dict], *, kind_hint: str | None = None) -> dict:
+    header = _cards_map(cards)
+    height = int(header.get("NAXIS2", 0) or 0)
+    axes = int(header.get("NAXIS", 0) or 0)
+    axis1 = int(header.get("NAXIS1", 0) or 0)
+    axis3 = int(header.get("NAXIS3", 0) or 0)
+    kind = kind_hint or ("colour" if axes == 3 and 3 in {axis1, axis3} else "mono")
+    pattern = pattern_from_fits(header, height) if kind == "mono" and height > 0 else None
+    if pattern is not None:
+        kind = "mosaic"
+    return _colour_info_values(kind, pattern)
+
+
+def _source_factory(source: Path | BinaryIO):
+    if isinstance(source, Path):
+        return lambda: source
+    source.seek(0)
+    payload = source.read()
+    return lambda: io.BytesIO(payload)
+
+
+def _list_extensions(path: str) -> list[dict]:
+    """List image metadata without decoding or populating the pixel cache."""
+    p, ft, idx, _cache_key = resolve_path(path)
+    fresh_source = _source_factory(p)
+    stretch = ft in ("fits", "xisf", "float_tiff", "pxiproject", "raw")
+    if ft == "raw":
+        layout = raw_io.read_raw_layout(fresh_source())
+        width, height = layout.visible[2:]
+        exts = [
+            {
+                "index": 0,
+                "name": Path(path.rsplit("::", 1)[-1]).name,
+                "type": f"Camera raw ({width}x{height})",
+                "has_image": True,
+                "colour": _colour_info_values(
+                    "mosaic" if layout.pattern is not None else "mono", layout.pattern
+                ),
+            }
+        ]
+    elif ft == "pxiproject":
+        exts = pxiproject_io.list_extensions(p, idx)
+        cards = pxiproject_io.read_header(p, idx)
+        exts[0]["colour"] = _header_colour(cards)
+    elif ft == "fits":
+        exts = fits_io.list_extensions(fresh_source())
+        for ext in exts:
+            ext["colour"] = (
+                _header_colour(fits_io.read_header(fresh_source(), ext["index"]))
+                if ext.get("has_image")
+                else None
+            )
+    elif ft == "xisf":
+        exts = xisf_io.list_extensions(fresh_source())
+        for ext in exts:
+            pattern = pattern_from_xisf(xisf_io.cfa_attributes(fresh_source(), ext["index"]))
+            kind = (
+                "mosaic"
+                if pattern is not None
+                else ("colour" if " RGB " in f" {ext['type']} " else "mono")
+            )
+            if pattern is None:
+                cards = xisf_io.read_header(fresh_source(), ext["index"])
+                colour = _header_colour(cards, kind_hint=kind)
+            else:
+                colour = _colour_info_values(kind, pattern)
+            ext["colour"] = colour
+    else:
+        exts = standard_io.list_extensions(fresh_source())
+        for ext in exts:
+            mode = str(ext["type"]).split(" ", 1)[0].upper()
+            if mode in {"1", "L", "I", "F", "I;16"}:
+                kind = "mono"
+            elif ft == "float_tiff":
+                cards = _cards_map(standard_io.read_header(fresh_source()))
+                kind = "colour" if int(cards.get("SamplesPerPixel", 1)) >= 3 else "mono"
+            else:
+                kind = "colour"
+            ext["colour"] = _colour_info_values(kind, None)
+    for ext in exts:
+        ext["supports_stretch"] = stretch
+        if not ext.get("has_image"):
+            ext["colour"] = None
+    return exts
+
+
+def _read_header(path: str, hdu: int) -> list[dict]:
+    p, ft, idx, _cache_key = resolve_path(path)
+    if ft == "raw":
+        return raw_io.read_header(p)
     if ft == "pxiproject":
-        return pxiproject_io.load_image_data(p, idx)
+        return pxiproject_io.read_header(p, idx)
     if ft == "fits":
-        return fits_io.load_image_data(p, hdu)
-    if ft == "float_tiff":
-        return standard_io.load_image_data(p)
-    if ft == "standard":
-        return standard_io.load_image_as_array(p)
-    return xisf_io.load_image_data(p, hdu)
+        return fits_io.read_header(p, hdu)
+    if ft == "xisf":
+        return xisf_io.read_header(p, hdu)
+    return standard_io.read_header(p)
 
 
 @router.get("/extensions")
@@ -157,22 +316,15 @@ async def get_extensions(
     path: str = Query(..., description="Absolute path to image file"),
 ) -> list[dict]:
     """List extensions/layers in the file, with stretch capability flag."""
-    p, ft, idx, _ck = resolve_path(path)
-    stretch = ft in ("fits", "xisf", "float_tiff", "pxiproject")
     try:
-        if ft == "pxiproject":
-            exts = pxiproject_io.list_extensions(p, idx)
-        elif ft == "fits":
-            exts = fits_io.list_extensions(p)
-        elif ft == "xisf":
-            exts = xisf_io.list_extensions(p)
-        else:
-            exts = standard_io.list_extensions(p)
-        for ext in exts:
-            ext["supports_stretch"] = stretch
-        return exts
+        return await asyncio.to_thread(_list_extensions, path)
+    except HTTPException:
+        raise
+    except _IMAGE_READ_ERRORS as exc:
+        raise _image_http_error(exc) from exc
     except Exception as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
+        logger.exception("extension listing failed for %s", path)
+        raise HTTPException(status_code=500, detail="Internal processing error") from exc
 
 
 @router.get("/header")
@@ -181,19 +333,14 @@ async def get_header(
     hdu: int = Query(0, description="Extension index"),
 ) -> list[dict]:
     """Return metadata cards for the specified extension."""
-    p, ft, idx, _ck = resolve_path(path)
     try:
-        if ft == "pxiproject":
-            return pxiproject_io.read_header(p, idx)
-        if ft == "fits":
-            return fits_io.read_header(p, hdu)
-        if ft == "xisf":
-            return xisf_io.read_header(p, hdu)
-        return standard_io.read_header(p)
-    except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
+        return await asyncio.to_thread(_read_header, path, hdu)
+    except HTTPException:
+        raise
+    except _IMAGE_READ_ERRORS as exc:
+        raise _image_http_error(exc) from exc
     except Exception as exc:
-        logger.exception("read_header failed for %s (ft=%s, hdu=%s)", path, ft, hdu)
+        logger.exception("read_header failed for %s (hdu=%s)", path, hdu)
         raise HTTPException(status_code=500, detail="Internal processing error") from exc
 
 
@@ -252,16 +399,46 @@ async def get_metadata(
     # Before the header read: FITS header reads close a passed buffer.
     file_size_bytes = _file_size_bytes(p, ft, idx)
     try:
+        if ft == "raw":
+            metadata = await asyncio.to_thread(raw_io.read_raw_metadata, p)
+            canonical = {
+                "captured_local": (
+                    metadata.captured_local.isoformat() if metadata.captured_local else None
+                ),
+                "utc_offset_minutes": (
+                    int(metadata.utc_offset.total_seconds() // 60)
+                    if metadata.utc_offset is not None
+                    else None
+                ),
+                "time_source": metadata.time_source,
+                "exposure_time": metadata.exposure_s,
+                "iso": metadata.iso,
+                "make": metadata.make,
+                "model": metadata.model,
+                "body_serial": metadata.body_serial,
+                "lens": metadata.lens,
+                "lens_serial": metadata.lens_serial,
+                "focal_length_mm": metadata.focal_length_mm,
+                "orientation": metadata.orientation,
+                "camera_temp": metadata.camera_temp_c,
+                "sensor_temp": metadata.sensor_temp_c,
+                "compression": metadata.compression,
+            }
+            return {
+                "canonical": canonical,
+                "unrecognized_keywords": [],
+                "file_size_bytes": file_size_bytes,
+            }
         if ft == "pxiproject":
-            cards = pxiproject_io.read_header(p, idx)
+            cards = await asyncio.to_thread(pxiproject_io.read_header, p, idx)
         elif ft == "fits":
-            cards = fits_io.read_header(p, hdu)
+            cards = await asyncio.to_thread(fits_io.read_header, p, hdu)
         elif ft == "xisf":
-            cards = xisf_io.read_header(p, hdu)
+            cards = await asyncio.to_thread(xisf_io.read_header, p, hdu)
         else:
-            cards = standard_io.read_header(p)
-    except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
+            cards = await asyncio.to_thread(standard_io.read_header, p)
+    except _IMAGE_READ_ERRORS as exc:
+        raise _image_http_error(exc) from exc
     except Exception as exc:
         logger.exception("fits_keywords failed for %s (ft=%s, hdu=%s)", p, ft, hdu)
         raise HTTPException(status_code=500, detail="Internal processing error") from exc
@@ -322,17 +499,23 @@ def _file_size_bytes(p: Path | BinaryIO, ft: str, idx: int) -> int | None:
 
 
 def _compute_stats(
-    p: Path | BinaryIO, ft: str, idx: int, hdu: int, cache_key: tuple | None = None
+    p: Path | BinaryIO,
+    ft: str,
+    idx: int,
+    hdu: int,
+    cache_key: tuple | None = None,
+    pattern: PatternName | None = None,
 ) -> dict:
     """Load image and compute stats (runs in thread pool). Uses stats cache."""
-    data = _get_cached_image_data(p, ft, idx, hdu, cache_key=cache_key)
-    return asdict(_get_or_compute_stats(data, p, idx, hdu, cache_key=cache_key))
+    image = _get_cached_image(p, ft, idx, hdu, cache_key=cache_key, pattern=pattern)
+    return asdict(_get_or_compute_stats(image, p, idx, hdu, cache_key=cache_key, pattern=pattern))
 
 
 @router.get("/stats")
 async def get_stats(
     path: str = Query(..., description="Absolute path to image file"),
     hdu: int = Query(0, description="Extension index"),
+    pattern: PatternName | None = Query(None, description="View-only Bayer pattern"),
 ) -> dict:
     """Return per-channel statistics and auto-computed stretch defaults.
 
@@ -344,9 +527,9 @@ async def get_stats(
             status_code=404, detail="Stats not available for standard image formats"
         )
     try:
-        return await asyncio.to_thread(_compute_stats, p, ft, idx, hdu, ck)
-    except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
+        return await asyncio.to_thread(_compute_stats, p, ft, idx, hdu, ck, pattern)
+    except _IMAGE_READ_ERRORS as exc:
+        raise _image_http_error(exc) from exc
     except Exception as exc:
         logger.exception("stats failed for %s (ft=%s, hdu=%s)", p, ft, hdu)
         raise HTTPException(status_code=500, detail="Internal processing error") from exc
@@ -356,8 +539,8 @@ def _compute_quality(
     p: Path | BinaryIO, ft: str, idx: int, hdu: int, cache_key: tuple | None = None
 ) -> dict:
     """Load image (cached) and measure star + level quality (runs in a thread)."""
-    data = _get_cached_image_data(p, ft, idx, hdu, cache_key=cache_key)
-    return analyze_array(data, True)
+    image = _get_cached_image(p, ft, idx, hdu, cache_key=cache_key)
+    return analyze_array(image, True)
 
 
 # Star detection loads the frame at full resolution and peaks around 3x its size
@@ -391,8 +574,8 @@ async def get_quality(
     try:
         async with _QUALITY_SEM:
             return await asyncio.to_thread(_compute_quality, p, ft, idx, hdu, ck)
-    except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except _IMAGE_READ_ERRORS as exc:
+        raise _image_http_error(exc) from exc
     except Exception as exc:
         logger.exception("quality failed for %s (ft=%s, hdu=%s)", p, ft, hdu)
         raise HTTPException(status_code=500, detail="Internal processing error") from exc
@@ -406,11 +589,13 @@ def _read_pixel(
     x: int,
     y: int,
     cache_key: tuple | None = None,
+    pattern: PatternName | None = None,
 ) -> dict:
     """Load image and read a single pixel (runs in thread pool)."""
-    data = _get_cached_image_data(p, ft, idx, hdu, cache_key=cache_key)
-    color = is_color_image(data)
-    h, w = (data.shape[1], data.shape[2]) if color else (data.shape[0], data.shape[1])
+    image = _get_cached_image(p, ft, idx, hdu, cache_key=cache_key, pattern=pattern)
+    data = image.recorded
+    color = image.kind == "colour"
+    h, w = image.height, image.width
 
     if x < 0 or x >= w or y < 0 or y >= h:
         raise HTTPException(
@@ -420,9 +605,31 @@ def _read_pixel(
     if color:
         r, g, b = float(data[0, y, x]), float(data[1, y, x]), float(data[2, y, x])
         k = LUM_R * r + LUM_G * g + LUM_B * b
-        return {"x": x, "y": y, "color": True, "R": r, "G": g, "B": b, "K": k}
+        return {
+            "x": x,
+            "y": y,
+            "color": True,
+            "R": r,
+            "G": g,
+            "B": b,
+            "K": k,
+            "units": image.units,
+            "site_colour": None,
+        }
     val = float(data[y, x])
-    return {"x": x, "y": y, "color": False, "K": val}
+    site_colour = (
+        image.pattern.pattern.colour_at(y, x)
+        if image.kind == "mosaic" and image.pattern is not None
+        else None
+    )
+    return {
+        "x": x,
+        "y": y,
+        "color": False,
+        "K": val,
+        "units": image.units,
+        "site_colour": site_colour,
+    }
 
 
 @router.get("/pixel")
@@ -431,15 +638,16 @@ async def get_pixel(
     hdu: int = Query(0, description="Extension index"),
     x: int = Query(..., description="X coordinate (column)"),
     y: int = Query(..., description="Y coordinate (row)"),
+    pattern: PatternName | None = Query(None, description="View-only Bayer pattern"),
 ) -> dict:
     """Return raw pixel values at the given (x, y) coordinate."""
     p, ft, idx, ck = resolve_path(path)
     try:
-        return await asyncio.to_thread(_read_pixel, p, ft, idx, hdu, x, y, ck)
+        return await asyncio.to_thread(_read_pixel, p, ft, idx, hdu, x, y, ck, pattern)
     except HTTPException:
         raise
-    except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except _IMAGE_READ_ERRORS as exc:
+        raise _image_http_error(exc) from exc
     except Exception as exc:
         logger.exception("pixel read failed for %s (x=%s, y=%s, hdu=%s)", p, x, y, hdu)
         raise HTTPException(status_code=500, detail="Internal processing error") from exc
@@ -448,37 +656,38 @@ async def get_pixel(
 _HISTOGRAM_MAX_PIXELS = 2_000_000
 
 
-def _compute_histogram(data: np.ndarray, bins: int = 256) -> dict:
-    """Compute histogram from loaded image data.
+def _histogram_stride(pixel_count: int) -> int:
+    """Return a flat stride whose sample count does not exceed the histogram budget."""
+    return max(1, math.ceil(max(0, pixel_count) / _HISTOGRAM_MAX_PIXELS))
+
+
+def _compute_histogram(image: LoadedImage, bins: int = 256) -> dict:
+    """Compute a histogram from real channel sites in normalized bin space.
 
     For large images, subsamples to ~2M pixels per channel for performance.
     A 256-bin histogram is statistically identical at this sample size.
     """
-    color = is_color_image(data)
     bin_edges = np.linspace(0.0, 1.0, bins + 1)
-
-    # Subsample large images for histogram performance
-    h, w = (data.shape[1], data.shape[2]) if color else (data.shape[0], data.shape[1])
-    pixel_count = h * w
-    stride = max(1, int(np.sqrt(pixel_count / _HISTOGRAM_MAX_PIXELS)))
+    samples = samples_of(image)
+    normalised = {name: image.display_normalise(values) for name, values in samples.items()}
+    color = len(normalised) == 3
+    pixel_count = max((values.size for values in normalised.values()), default=0)
+    stride = _histogram_stride(pixel_count)
 
     channels = []
-    if color:
-        for i, name in enumerate(["R", "G", "B"]):
-            plane = data[i, ::stride, ::stride] if stride > 1 else data[i]
-            counts, _ = np.histogram(plane, bins=bin_edges)
-            channels.append({"name": name, "bins": counts.tolist()})
-        # Luminance from subsampled channels
-        r = data[0, ::stride, ::stride] if stride > 1 else data[0]
-        g = data[1, ::stride, ::stride] if stride > 1 else data[1]
-        b = data[2, ::stride, ::stride] if stride > 1 else data[2]
+    for name, values in normalised.items():
+        plane = values.ravel()[::stride]
+        counts, _ = np.histogram(plane, bins=bin_edges)
+        channels.append({"name": name, "bins": counts.tolist()})
+
+    if image.kind == "colour":
+        r = normalised["R"].ravel()[::stride]
+        g = normalised["G"].ravel()[::stride]
+        b = normalised["B"].ravel()[::stride]
         lum = LUM_R * r + LUM_G * g + LUM_B * b
         lum_counts, _ = np.histogram(lum, bins=bin_edges)
         luminosity = lum_counts.tolist()
     else:
-        plane = data[::stride, ::stride] if stride > 1 else data
-        counts, _ = np.histogram(plane, bins=bin_edges)
-        channels.append({"name": "L", "bins": counts.tolist()})
         luminosity = None
 
     return {
@@ -486,6 +695,8 @@ def _compute_histogram(data: np.ndarray, bins: int = 256) -> dict:
         "channels": channels,
         "luminosity": luminosity,
         "bin_edges": bin_edges.tolist(),
+        "units": image.units,
+        "full_scale": image.full_scale,
     }
 
 
@@ -496,10 +707,11 @@ def _load_and_histogram(
     hdu: int,
     bins: int,
     cache_key: tuple | None = None,
+    pattern: PatternName | None = None,
 ) -> dict:
     """Load image and compute histogram (runs in thread pool)."""
-    data = _get_cached_image_data(p, ft, idx, hdu, cache_key=cache_key)
-    return _compute_histogram(data, bins)
+    image = _get_cached_image(p, ft, idx, hdu, cache_key=cache_key, pattern=pattern)
+    return _compute_histogram(image, bins)
 
 
 @router.get("/histogram")
@@ -507,13 +719,14 @@ async def get_histogram(
     path: str = Query(..., description="Absolute path to image file"),
     hdu: int = Query(0, description="Extension index"),
     bins: int = Query(256, description="Number of histogram bins"),
+    pattern: PatternName | None = Query(None, description="View-only Bayer pattern"),
 ) -> dict:
     """Return per-channel histogram data for the image."""
     p, ft, idx, ck = resolve_path(path)
     try:
-        return await asyncio.to_thread(_load_and_histogram, p, ft, idx, hdu, bins, ck)
-    except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
+        return await asyncio.to_thread(_load_and_histogram, p, ft, idx, hdu, bins, ck, pattern)
+    except _IMAGE_READ_ERRORS as exc:
+        raise _image_http_error(exc) from exc
     except Exception as exc:
         logger.exception("histogram failed for %s (ft=%s, hdu=%s, bins=%s)", p, ft, hdu, bins)
         raise HTTPException(status_code=500, detail="Internal processing error") from exc
@@ -526,13 +739,14 @@ def _compute_stats_and_histogram(
     hdu: int,
     bins: int,
     cache_key: tuple | None = None,
+    pattern: PatternName | None = None,
 ) -> dict:
     """Load image once, compute both stats and histogram (runs in thread pool)."""
-    data = _get_cached_image_data(p, ft, idx, hdu, cache_key=cache_key)
-    stats = _get_or_compute_stats(data, p, idx, hdu, cache_key=cache_key)
+    image = _get_cached_image(p, ft, idx, hdu, cache_key=cache_key, pattern=pattern)
+    stats = _get_or_compute_stats(image, p, idx, hdu, cache_key=cache_key, pattern=pattern)
     return {
         "stats": asdict(stats),
-        "histogram": _compute_histogram(data, bins),
+        "histogram": _compute_histogram(image, bins),
     }
 
 
@@ -541,6 +755,7 @@ async def get_stats_and_histogram(
     path: str = Query(..., description="Absolute path to image file"),
     hdu: int = Query(0, description="Extension index"),
     bins: int = Query(256, description="Number of histogram bins"),
+    pattern: PatternName | None = Query(None, description="View-only Bayer pattern"),
 ) -> dict:
     """Return stats and histogram in a single response (one data load)."""
     p, ft, idx, ck = resolve_path(path)
@@ -550,9 +765,11 @@ async def get_stats_and_histogram(
             detail="Stats/histogram not available for standard image formats",
         )
     try:
-        return await asyncio.to_thread(_compute_stats_and_histogram, p, ft, idx, hdu, bins, ck)
-    except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
+        return await asyncio.to_thread(
+            _compute_stats_and_histogram, p, ft, idx, hdu, bins, ck, pattern
+        )
+    except _IMAGE_READ_ERRORS as exc:
+        raise _image_http_error(exc) from exc
     except Exception as exc:
         logger.exception("stats+histogram failed for %s (ft=%s, hdu=%s)", p, ft, hdu)
         raise HTTPException(status_code=500, detail="Internal processing error") from exc
@@ -566,6 +783,7 @@ def _render_image(
     linked: StretchParams,
     per_channel: list[StretchParams] | None,
     cache_key: tuple | None = None,
+    pattern: PatternName | None = None,
 ) -> bytes:
     """Load image and render to PNG (runs in thread pool).
 
@@ -573,11 +791,12 @@ def _render_image(
     """
     if ft == "standard":
         return standard_io.load_image_bytes(p)
-    data = _get_cached_image_data(p, ft, idx, hdu, cache_key=cache_key)
+    image = _get_cached_image(p, ft, idx, hdu, cache_key=cache_key, pattern=pattern)
+    data = display_of(image)
     # For auto-stretch, compute stats (with per-key locking to avoid
     # redundant computation with concurrent stats-histogram request)
     if linked and linked.stretch == "auto":
-        stats = _get_or_compute_stats(data, p, idx, hdu, cache_key=cache_key)
+        stats = _get_or_compute_stats(image, p, idx, hdu, cache_key=cache_key, pattern=pattern)
         linked, per_channel, _ = resolve_auto_stretch(data, stats=stats)
         return render_image_png(data, linked=linked, per_channel=per_channel)
     return render_image_png(data, linked=linked, per_channel=per_channel)
@@ -600,6 +819,7 @@ async def get_image(
     b_shadow: float | None = Query(None),
     b_midtone: float | None = Query(None),
     b_highlight: float | None = Query(None),
+    pattern: PatternName | None = Query(None, description="View-only Bayer pattern"),
 ) -> Response:
     """Return the image as a PNG. Stretch is applied for scientific formats."""
     p, ft, idx, ck = resolve_path(path)
@@ -635,10 +855,12 @@ async def get_image(
         ]
 
     try:
-        png_bytes = await asyncio.to_thread(_render_image, p, ft, idx, hdu, linked, per_channel, ck)
+        png_bytes = await asyncio.to_thread(
+            _render_image, p, ft, idx, hdu, linked, per_channel, ck, pattern
+        )
         return Response(content=png_bytes, media_type="image/png")
-    except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except _IMAGE_READ_ERRORS as exc:
+        raise _image_http_error(exc) from exc
     except Exception as exc:
         logger.exception("image render failed for %s (ft=%s, hdu=%s)", p, ft, hdu)
         raise HTTPException(status_code=500, detail="Internal processing error") from exc

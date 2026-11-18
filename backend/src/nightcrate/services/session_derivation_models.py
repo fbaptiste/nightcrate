@@ -15,6 +15,7 @@ class DerivedSession(BaseModel):
     filter_label: str | None
     exposure_seconds: float
     gain: int | None
+    iso: int | None
     binning: int | None
     num_subs: int
 

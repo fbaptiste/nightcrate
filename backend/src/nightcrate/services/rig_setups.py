@@ -118,6 +118,7 @@ class ProjectRigSetups:
     rig_name: str
     declared: bool
     in_use: bool
+    provenance: str | None
     setups: tuple[ProjectSetup, ...]
     setup_options: tuple[ProjectSetupOption, ...]
     base_parts: RigParts
@@ -261,6 +262,7 @@ async def rig_usage(conn: aiosqlite.Connection, rig_id: int) -> RigUsage:
         (rig_id,),
     )
     batch_rows = await cursor.fetchall()
+
     cursor = await conn.execute(
         "SELECT project_id, start_utc FROM session "
         "WHERE rig_id = ? AND project_id IS NOT NULL AND start_utc IS NOT NULL "
@@ -534,19 +536,32 @@ async def project_setups(conn: aiosqlite.Connection, project_id: int) -> list[Pr
         (row["sub_frame_id"], row["rig_id"]): row["rig_setup_id"] for row in await cursor.fetchall()
     }
     cursor = await conn.execute(
-        "SELECT rig_id, rig_setup_id, session_date FROM project_session "
+        "SELECT rig_id, rig_setup_id, session_date, source FROM project_session "
         "WHERE project_id = ? AND rig_id IS NOT NULL",
         (project_id,),
     )
     batch_rows = await cursor.fetchall()
 
     cursor = await conn.execute(
+        "SELECT rig_id FROM project_source_folder "
+        "WHERE project_id = ? AND rig_id IS NOT NULL "
+        "UNION SELECT rig_id FROM sub_frame WHERE project_id = ? AND rig_id IS NOT NULL",
+        (project_id, project_id),
+    )
+    file_rig_ids = {row["rig_id"] for row in await cursor.fetchall()}
+    file_rig_ids.update(rig_id for rig_id in setup_rigs.values() if rig_id is not None)
+    manual_rig_ids = {row["rig_id"] for row in batch_rows if row["source"] == "manual"}
+    auto_rig_ids = {row["rig_id"] for row in batch_rows if row["source"] == "auto"}
+
+    cursor = await conn.execute(
         """
         SELECT rig_id FROM sub_frame WHERE project_id = ? AND rig_id IS NOT NULL
         UNION SELECT rig_id FROM session WHERE project_id = ? AND rig_id IS NOT NULL
         UNION SELECT rig_id FROM project_session WHERE project_id = ? AND rig_id IS NOT NULL
+        UNION SELECT rig_id FROM project_source_folder
+              WHERE project_id = ? AND rig_id IS NOT NULL
         """,
-        (project_id, project_id, project_id),
+        (project_id, project_id, project_id, project_id),
     )
     in_use_ids = {row["rig_id"] for row in await cursor.fetchall()}
     in_use_ids.update(rig_id for rig_id in setup_rigs.values() if rig_id is not None)
@@ -554,6 +569,7 @@ async def project_setups(conn: aiosqlite.Connection, project_id: int) -> list[Pr
     rig_ids = set(declared_ids)
     rig_ids.update(rig_id for rig_id in setup_rigs.values() if rig_id is not None)
     rig_ids.update(row["rig_id"] for row in batch_rows)
+    rig_ids.update(file_rig_ids)
     if not rig_ids:
         return []
 
@@ -639,6 +655,15 @@ async def project_setups(conn: aiosqlite.Connection, project_id: int) -> list[Pr
                 rig_name=rig["name"],
                 declared=rig_id in declared_ids,
                 in_use=rig_id in in_use_ids,
+                provenance=(
+                    "files"
+                    if rig_id in file_rig_ids
+                    else "manual_sessions"
+                    if rig_id in manual_rig_ids
+                    else "auto_sessions"
+                    if rig_id in auto_rig_ids
+                    else None
+                ),
                 setups=tuple(setup_items),
                 setup_options=setup_options,
                 base_parts=base,

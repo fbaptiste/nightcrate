@@ -1,4 +1,4 @@
--- NightCrate version: 0.54.1
+-- NightCrate version: 0.55.0
 -- NightCrate Database Schema
 -- SQLite DDL for the full current schema. Originally authored at v0.8.0;
 -- extended through v0.15.0 (rig builder, My Equipment flag, location seeing,
@@ -1811,7 +1811,8 @@ CREATE TABLE project_rig_change_software (
 -- A capture batch: N identical light subs of one filter. Either hand-entered
 -- (source = 'manual') or rebuilt from the project's cataloged light frames by
 -- the v0.41.1 derive pass (source = 'auto', one row per observing night ×
--- filter × exposure × gain × binning). Derived rows are read-only over the API.
+-- filter × exposure × gain × ISO × binning; ISO since v0.55.0). Derived rows
+-- are read-only over the API.
 CREATE TABLE project_session (
     id               INTEGER PRIMARY KEY AUTOINCREMENT,
     project_id       INTEGER NOT NULL REFERENCES project(id) ON DELETE CASCADE,
@@ -1838,6 +1839,8 @@ CREATE TABLE project_session (
     updated_at       TEXT    NOT NULL DEFAULT (datetime('now')),
     -- Migration 0069: setup snapshot used by this capture batch.
     rig_setup_id     INTEGER REFERENCES rig_setup(id) ON DELETE SET NULL,
+    -- Migration 0075: ISO for DSLR/mirrorless batches (gain stays NULL).
+    iso              INTEGER CHECK (iso IS NULL OR iso > 0),
     CHECK (filter_id IS NOT NULL OR line_name IS NOT NULL)
 );
 CREATE INDEX idx_project_session_project ON project_session(project_id);
@@ -2023,7 +2026,8 @@ CREATE TABLE sub_frame (
     -- identification was removed. Sessions key on this rig and calibration
     -- matching scopes on it, so a dual-rig night never conflates.
 
-    -- Capture settings (from FITS header). Bias frames legitimately have ~0
+    -- Capture settings (from the FITS/XISF header, or a raw file's EXIF, whose
+    -- ISO goes in iso below and leaves gain NULL). Bias frames legitimately have ~0
     -- exposure, so the constraint is >= 0 (the spec's >0 was light-centric).
     exposure_seconds         REAL    NOT NULL DEFAULT 0 CHECK (exposure_seconds >= 0),
     gain                     REAL,
@@ -2036,8 +2040,10 @@ CREATE TABLE sub_frame (
     image_width              INTEGER,
     image_height             INTEGER,
 
-    -- Timing (§6). date_obs_utc is required; the pipeline falls back to file
-    -- mtime when a header lacks DATE-OBS so ingest never fails on it.
+    -- Timing (§6). date_obs_utc is required, so ingest never fails on it. Since
+    -- v0.55.0 date_obs_source (below) records where it came from: the header,
+    -- a raw file's EXIF offset or maker note, an estimated time zone, or, as
+    -- the last resort, the file's modification time.
     date_obs_utc             TEXT    NOT NULL,
     obs_mjd                  REAL,
 
@@ -2050,9 +2056,10 @@ CREATE TABLE sub_frame (
 
     -- Quality metrics, filled by the v0.41.3 analyze pass (services/frame_quality.py).
     -- hfr is a median over detected stars, in PIXELS (only comparable within a
-    -- rig). The two *_adu columns are 16-bit-equivalent: true ADU for integer
-    -- sources, normalized-times-65535 for PixInsight float data. Lights get all
-    -- five; every other frame type gets the two *_adu columns only.
+    -- rig; colour mosaics are measured on merged per-colour blocks). Since
+    -- v0.55.0 the two *_adu columns are in the file's recorded units, named by
+    -- quality_units below ('adu' or 'float'). Lights get all five; every other
+    -- frame type gets the two *_adu columns only.
     hfr                      REAL,
     star_count               INTEGER,
     median_adu               REAL,
@@ -2077,13 +2084,33 @@ CREATE TABLE sub_frame (
     -- is the FILTER header (normalized to a display short-form by
     -- services/fits_header_map.py:FILTER_NAME_ALIASES) and, since v0.41.1, the
     -- ONLY filter fact a cataloged frame carries — it drives the catalog filter
-    -- pills and the session-derivation grouping.
+    -- pills and the session-derivation grouping. A user's correction is kept
+    -- across re-scans by filter_name_source = 'user' (v0.55.0).
     object_hint              TEXT,
     filter_name_hint         TEXT,
     fits_header_json         TEXT,
 
     created_at               TEXT    NOT NULL DEFAULT (datetime('now')),
     updated_at               TEXT    NOT NULL DEFAULT (datetime('now')),
+
+    -- Colour subs and camera raw files (migration 0075, v0.55.0). ALTER-added:
+    -- the live schema text lists them after the UNIQUE constraint, but a
+    -- CREATE TABLE must put columns first, so this reference does.
+    iso                      INTEGER CHECK (iso IS NULL OR iso > 0),  -- raw frames; gain stays NULL
+    camera_temp_c            REAL,     -- a camera-body reading from raw maker notes, never the sensor's
+    filter_name_source       TEXT    NOT NULL DEFAULT 'auto'
+                                 CHECK (filter_name_source IN ('auto', 'user')),
+    date_obs_source          TEXT    NOT NULL DEFAULT 'header'  -- 0076 relabels legacy file-time frames
+                                 CHECK (date_obs_source IN (
+                                     'header', 'exif_offset', 'maker_note', 'estimated_project_zone',
+                                     'estimated_computer_zone', 'file_time')),
+    frame_type_basis         TEXT
+                                 CHECK (frame_type_basis IS NULL OR frame_type_basis IN (
+                                     'header', 'sky', 'file_name', 'folder_name')),
+    file_metadata_json       TEXT,     -- raw-file metadata kept for re-parsing (FITS/XISF use fits_header_json)
+    quality_method           INTEGER,  -- 2 = v0.55.0 measurement; NULL = before it
+    quality_units            TEXT
+                                 CHECK (quality_units IS NULL OR quality_units IN ('adu', 'float')),
 
     UNIQUE (project_id, content_hash)  -- migration 0040: per-project identity
 );
@@ -2342,10 +2369,12 @@ LEFT JOIN project_rig_change prc
 -- same rig — the rig being the source folder's user-declared tag, so one rig's
 -- calibration never calibrates another's lights. These are views, not tables.
 --
--- Matching is on the capture settings the FITS header gives us plus the effective
--- camera. Flats also require the effective telescope configuration.
+-- Matching is on the capture settings the file gives us (gain, or ISO for raw
+-- frames since migration 0075) plus the effective camera. Flats also require
+-- the effective telescope configuration.
 
--- Darks: same exposure, gain and binning, set temperature within ±1.0 °C. Never
+-- Darks: same exposure, gain, ISO and binning, set temperature within ±1.0 °C,
+-- except for raw lights, whose uncooled cameras have no set point. Never
 -- matched on filter — calibration darks are filterless by definition.
 CREATE VIEW matching_darks AS
 SELECT l.id AS light_id, d.id AS dark_id
@@ -2356,19 +2385,21 @@ JOIN sub_frame d
     AND d.project_id = l.project_id
     AND d.rig_id IS l.rig_id
     AND d.gain IS l.gain
+    AND d.iso IS l.iso
     AND d.exposure_seconds = l.exposure_seconds
     AND d.binning_x IS l.binning_x
     AND d.binning_y IS l.binning_y
     AND (
-        (d.set_temp_c IS NULL AND l.set_temp_c IS NULL)
+        l.file_metadata_json IS NOT NULL
+        OR (d.set_temp_c IS NULL AND l.set_temp_c IS NULL)
         OR ABS(d.set_temp_c - l.set_temp_c) <= 1.0
     )
 JOIN sub_frame_equipment de
     ON de.sub_frame_id = d.id AND de.camera_id IS le.camera_id
 WHERE l.frame_type = 'light' AND l.accepted = 1;
 
--- Flats: same gain, binning and FILTER header. Not matched on exposure — a flat's
--- exposure is set by the panel, not the target.
+-- Flats: same gain, ISO, binning and FILTER header. Not matched on exposure — a
+-- flat's exposure is set by the panel, not the target.
 CREATE VIEW matching_flats AS
 SELECT l.id AS light_id, f.id AS flat_id
 FROM sub_frame l
@@ -2378,6 +2409,7 @@ JOIN sub_frame f
     AND f.project_id = l.project_id
     AND f.rig_id IS l.rig_id
     AND f.gain IS l.gain
+    AND f.iso IS l.iso
     AND f.filter_name_hint IS l.filter_name_hint
     AND f.binning_x IS l.binning_x
     AND f.binning_y IS l.binning_y
@@ -2387,7 +2419,7 @@ JOIN sub_frame_equipment fe
     AND fe.telescope_configuration_id IS le.telescope_configuration_id
 WHERE l.frame_type = 'light' AND l.accepted = 1;
 
--- Bias: same gain and binning only (zero-length exposure, no filter).
+-- Bias: same gain, ISO and binning only (zero-length exposure, no filter).
 CREATE VIEW matching_bias AS
 SELECT l.id AS light_id, b.id AS bias_id
 FROM sub_frame l
@@ -2397,6 +2429,7 @@ JOIN sub_frame b
     AND b.project_id = l.project_id
     AND b.rig_id IS l.rig_id
     AND b.gain IS l.gain
+    AND b.iso IS l.iso
     AND b.binning_x IS l.binning_x
     AND b.binning_y IS l.binning_y
 JOIN sub_frame_equipment be

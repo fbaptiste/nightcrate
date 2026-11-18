@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import threading
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 import numpy as np
 
@@ -17,15 +17,16 @@ from nightcrate.services.plate_solve_models import (
     SolveAttempt,
     SolveStep,
 )
+from nightcrate.services.raw_support import RawUnavailable
 from nightcrate.services.star_catalog import handles
 from nightcrate.services.star_catalog.ranges import built_layers, built_ranges, range_for_field
 from nightcrate.services.star_catalog.store import SIRIL_SOURCE, installed
 
-from .extract import _has_bayer_header, extract_for_index, extract_near
+from .extract import extract_for_index, extract_near
 from .hints import SolveHints, hints_for
 from .index_search import search_index
 from .messages import MESSAGES
-from .models import DetectedStars, SolveOutcome, SolveReporter
+from .models import DetectedStars, SolveOutcome, SolveReporter, TanWCS
 from .near_catalog import search_near_catalog
 
 _OVERALL_SECONDS = 60.0
@@ -38,6 +39,30 @@ _BLIND_UNKNOWN_SECONDS = 30.0
 class _Attempt:
     outcome: SolveOutcome
     path: str
+
+
+def _sensor_wcs(wcs: TanWCS, block_size: int, width: int, height: int) -> TanWCS:
+    """Restore a WCS fitted on block pixels to the sensor-pixel grid."""
+    if block_size == 1 and wcs.width == width and wcs.height == height:
+        return wcs
+    crpix = tuple(block_size * value + (1 - block_size) / 2 for value in wcs.crpix)
+    return replace(
+        wcs,
+        cd=np.asarray(wcs.cd, dtype=np.float64) / block_size,
+        width=width,
+        height=height,
+        reference_pixel=crpix,
+    )
+
+
+def _sensor_outcome(outcome: SolveOutcome, block_size: int, width: int, height: int) -> None:
+    if outcome.wcs is not None:
+        outcome.wcs = _sensor_wcs(outcome.wcs, block_size, width, height)
+    outcome.ambiguous_wcs = [
+        _sensor_wcs(wcs, block_size, width, height) for wcs in outcome.ambiguous_wcs
+    ]
+    if outcome.rms_px is not None:
+        outcome.rms_px *= block_size
 
 
 class _RecordingReporter:
@@ -187,7 +212,13 @@ def solve_image(
             return call()
         except FileNotFoundError:
             raise
-        except (OSError, ValueError, xisf_io.XISFError, pxiproject_io.PxiProjectError) as exc:
+        except (
+            OSError,
+            ValueError,
+            RawUnavailable,
+            xisf_io.XISFError,
+            pxiproject_io.PxiProjectError,
+        ) as exc:
             raise ImageReadError(str(exc)) from exc
 
     source, file_type, image_index = read_image(lambda: pixel_loader.resolve(image_path))
@@ -200,11 +231,14 @@ def solve_image(
     if time.perf_counter() >= overall_deadline:
         events.finish("overall_timeout")
         return done(_unsolved("time_limit"))
-    data = read_image(lambda: pixel_loader.load_normalized_mono(image_path, hdu))
+    image = read_image(lambda: pixel_loader.load_image(image_path, hdu))
+    data, block_size = read_image(lambda: pixel_loader.grey_of(image))
     height, width = np.asarray(data).shape
+    sensor_height = int(getattr(image, "height", height * block_size))
+    sensor_width = int(getattr(image, "width", width * block_size))
     hints = hints_for(
         cards,
-        image_height=height,
+        image_height=sensor_height,
         ra_hint=ra_hint,
         dec_hint=dec_hint,
         scale_hint_arcsec=scale_hint_arcsec,
@@ -213,6 +247,7 @@ def solve_image(
         ignore_scale=ignore_scale,
     )
     events.set_sources(hints)
+    working_scale = hints.scale_arcsec * block_size if hints.scale_arcsec is not None else None
     ready_ranges = built_ranges()
     layer_names = built_layers()
     position = (
@@ -223,7 +258,7 @@ def solve_image(
     field_deg = None
     known_range = None
     if hints.scale_arcsec is not None:
-        field_deg = hints.scale_arcsec * max(width, height) / 3600.0
+        field_deg = hints.scale_arcsec * max(sensor_width, sensor_height) / 3600.0
         known_range = range_for_field(field_deg)
     missing_range = (
         known_range if known_range is not None and known_range.id not in ready_ranges else None
@@ -284,7 +319,6 @@ def solve_image(
         advance("load", terminal=True)
         return done(_unsolved("no_ranges"))
 
-    bayer = _has_bayer_header(cards)
     extraction_cache: dict[
         tuple[str, float | None], tuple[DetectedStars, DetectedStars | None]
     ] = {}
@@ -306,14 +340,14 @@ def solve_image(
             if profile == "near":
                 detections = extract_near(
                     data,
-                    bayer_mosaic=bayer,
+                    bayer_mosaic=False,
                     pixel_scale_arcsec=scale,
                 )
                 value = (detections, None)
             else:
                 detections, quads = extract_for_index(
                     data,
-                    bayer_mosaic=bayer,
+                    bayer_mosaic=False,
                     pixel_scale_arcsec=scale,
                 )
                 value = (detections, quads)
@@ -408,7 +442,7 @@ def solve_image(
         nonlocal searches_ran, timed_out
         step: SolveStep = "near_catalog"
         possible_minimums.append(10)
-        extracted = extract("near", hints.scale_arcsec)
+        extracted = extract("near", working_scale)
         if extraction_stop is not None:
             return None
         if extracted is None:
@@ -425,7 +459,7 @@ def solve_image(
             catalog,
             ra=float(hints.ra_deg),
             dec=float(hints.dec_deg),
-            pixel_scale_arcsec=hints.scale_arcsec,
+            pixel_scale_arcsec=working_scale,
             deadline=min(overall_deadline, time.perf_counter() + _NEAR_SECONDS),
             cancel=cancel,
         )
@@ -447,6 +481,7 @@ def solve_image(
         if search_attempt is None:
             return None
         outcome = search_attempt.outcome
+        _sensor_outcome(outcome, block_size, sensor_width, sensor_height)
         if outcome.solved:
             return done(_solved(outcome, search_attempt.path, time.perf_counter() - started))
         if outcome.status == "ambiguous":
@@ -467,7 +502,7 @@ def solve_image(
             result = finish(
                 run_index(
                     step="near_index",
-                    scale=hints.scale_arcsec,
+                    scale=working_scale,
                     near=position,
                     seconds=_NEAR_SECONDS,
                     names=layer_names,
@@ -475,7 +510,7 @@ def solve_image(
                 )
             )
         else:
-            extract("near", hints.scale_arcsec)
+            extract("near", working_scale)
             if extraction_stop is not None:
                 return extraction_stop
             skip("near_index", _missing_range_detail(missing_range) or "field range is not built")
@@ -510,7 +545,7 @@ def solve_image(
             result = finish(
                 run_index(
                     step="blind_known_scale",
-                    scale=hints.scale_arcsec,
+                    scale=working_scale,
                     near=None,
                     seconds=_BLIND_KNOWN_SECONDS,
                     names=layer_names,
@@ -520,7 +555,7 @@ def solve_image(
             if result is not None:
                 return result
         elif hints.scale_arcsec is not None:
-            extract("index", hints.scale_arcsec)
+            extract("index", working_scale)
             if extraction_stop is not None:
                 return extraction_stop
             skip("blind_known_scale", "No field ranges are built")

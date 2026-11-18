@@ -17,11 +17,13 @@ No DB, no I/O here — this is the decision layer the scanner and ingest API cal
 from __future__ import annotations
 
 import re
-from typing import Any
+from collections.abc import Sequence
+from typing import Any, Literal
 
 from nightcrate.services.fits_header_map import normalize_frame_type
 from nightcrate.services.path_resolver import (
     FITS_EXTENSIONS,
+    RAW_EXTENSIONS,
     STANDARD_EXTENSIONS,
     XISF_EXTENSIONS,
 )
@@ -41,7 +43,9 @@ CATEGORY_OTHER = "other"
 FRAME_TYPES = ("light", "dark", "flat", "bias", "dark_flat", "unknown")
 
 # Header-only formats we parse + classify by IMAGETYP / stack signals.
-_HEADER_EXTENSIONS = FITS_EXTENSIONS | XISF_EXTENSIONS
+_HEADER_EXTENSIONS = FITS_EXTENSIONS | XISF_EXTENSIONS | RAW_EXTENSIONS
+
+FrameTypeBasis = Literal["header", "sky", "file_name", "folder_name"]
 
 # Dark-flat spellings (calibration for flats; matched as flats, never as darks-on-
 # filter). normalize_frame_type doesn't cover these, so handle them explicitly.
@@ -139,8 +143,9 @@ def classify_frame(
     raw_header: dict[str, Any],
     *,
     filename: str | None = None,
-) -> tuple[str, str | None]:
-    """Refine a header-bearing image into (route, frame_type).
+    folder_names: Sequence[str] = (),
+) -> tuple[str, str | None, FrameTypeBasis | None]:
+    """Refine a header-bearing image into (route, frame_type, basis).
 
     ``route`` is ``CATEGORY_SUB`` or ``CATEGORY_PROCESSED``. ``frame_type`` is one
     of FRAME_TYPES for subs (``unknown`` when nothing identifies it); for processed
@@ -154,10 +159,19 @@ def classify_frame(
     """
     frame_type = _frame_type_from_header(raw_header, meta)
     if is_stack(meta, raw_header):
-        return CATEGORY_PROCESSED, frame_type
-    if frame_type is None:
-        frame_type = _frame_type_without_imagetyp(meta, filename)
-    return CATEGORY_SUB, frame_type or "unknown"
+        return CATEGORY_PROCESSED, frame_type, "header" if frame_type is not None else None
+    if frame_type is not None:
+        return CATEGORY_SUB, frame_type, "header"
+    if _has_on_sky_evidence(meta):
+        return CATEGORY_SUB, "light", "sky"
+    frame_type = _frame_type_from_filename(filename)
+    if frame_type is not None:
+        return CATEGORY_SUB, frame_type, "file_name"
+    for folder_name in folder_names:
+        frame_type = _frame_type_from_folder(folder_name)
+        if frame_type is not None:
+            return CATEGORY_SUB, frame_type, "folder_name"
+    return CATEGORY_SUB, "unknown", None
 
 
 # Frame-type tokens capture software puts at the head of a filename. Only read
@@ -174,12 +188,14 @@ _FILENAME_TYPE_TOKENS = {
     "offset": "bias",
     "darkflat": "dark_flat",
     "flatdark": "dark_flat",
+    "darkflats": "dark_flat",
+    "flatdarks": "dark_flat",
 }
 
 _TOKEN_SPLIT_RE = re.compile(r"[^a-z0-9]+")
 
 
-def _frame_type_without_imagetyp(meta: dict[str, Any], filename: str | None) -> str | None:
+def _frame_type_from_filename(filename: str | None) -> str | None:
     """Best-effort frame type for files whose header yields no frame type.
 
     Reached when IMAGETYP is absent, blank, or carries a value that normalises
@@ -199,8 +215,6 @@ def _frame_type_without_imagetyp(meta: dict[str, Any], filename: str | None) -> 
     Nebula" is not read as a dark. Anything unmatched stays ``unknown`` rather
     than being guessed at, and the catalog surfaces it for correction.
     """
-    if _has_on_sky_evidence(meta):
-        return "light"
     if not filename:
         return None
     stem = filename.rsplit(".", 1)[0].lower()
@@ -212,6 +226,34 @@ def _frame_type_without_imagetyp(meta: dict[str, Any], filename: str | None) -> 
         if pair:
             return pair
     return _FILENAME_TYPE_TOKENS.get(tokens[0])
+
+
+_FOLDER_NUMBER_RE = re.compile(
+    r"(?<![a-z])[-+]?\d+(?:\.\d+)?(?:ms|sec|s|°?c)?(?![a-z])", re.IGNORECASE
+)
+
+
+def _frame_type_from_folder(folder_name: str) -> str | None:
+    """Return a type only when every semantic word is a frame-type keyword."""
+    cleaned = _FOLDER_NUMBER_RE.sub(" ", folder_name.lower())
+    tokens = [token for token in re.split(r"[^a-z]+", cleaned) if token]
+    if not tokens:
+        return None
+    mapped: list[str] = []
+    index = 0
+    while index < len(tokens):
+        if index + 1 < len(tokens):
+            pair = _FILENAME_TYPE_TOKENS.get(tokens[index] + tokens[index + 1])
+            if pair is not None:
+                mapped.append(pair)
+                index += 2
+                continue
+        value = _FILENAME_TYPE_TOKENS.get(tokens[index])
+        if value is None:
+            return None
+        mapped.append(value)
+        index += 1
+    return mapped[0] if all(value == mapped[0] for value in mapped) else None
 
 
 def _has_on_sky_evidence(meta: dict[str, Any]) -> bool:

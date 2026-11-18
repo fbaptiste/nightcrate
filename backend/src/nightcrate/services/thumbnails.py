@@ -38,6 +38,7 @@ from typing import Literal
 import aiosqlite
 from astropy.wcs import WCS
 
+from nightcrate.core.tasks import cancellation_safe_connection, drain_task_map
 from nightcrate.services import hips_tiles, image_cache
 
 logger = logging.getLogger("nightcrate.thumbnails")
@@ -323,6 +324,11 @@ class ThumbnailKey:
 # enqueuing duplicates.
 _in_flight: dict[ThumbnailKey, asyncio.Task] = {}
 _failure_backoff: dict[ThumbnailKey, float] = {}
+
+
+async def drain_background_fetches() -> None:
+    """Cancel and await the fetches present when draining starts."""
+    await drain_task_map(_in_flight)
 
 
 def _clock() -> float:
@@ -729,7 +735,7 @@ async def _background_wrapper(
     request's connection context is already closed, so we open our own.
     """
     try:
-        async with conn_factory() as conn:
+        async with cancellation_safe_connection(conn_factory) as conn:
             conn.row_factory = aiosqlite.Row
             await _fetch_and_store(
                 conn,
@@ -742,7 +748,8 @@ async def _background_wrapper(
     except Exception:  # noqa: BLE001 — background task mustn't crash the server
         logger.exception("[thumbnails] background fetch crashed for dso=%s", key.dso_id)
     finally:
-        _in_flight.pop(key, None)
+        if _in_flight.get(key) is asyncio.current_task():
+            _in_flight.pop(key, None)
 
 
 # ── Public API ───────────────────────────────────────────────────────────────

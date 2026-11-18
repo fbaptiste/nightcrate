@@ -3,7 +3,8 @@
 import logging
 import tomllib
 from pathlib import Path
-from unittest.mock import patch
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -50,6 +51,7 @@ async def test_health_returns_expected_fields(client):
     assert isinstance(data["version"], str)
     assert "db_configured" in data
     assert isinstance(data["db_configured"], bool)
+    assert data["raw_files"] == "available"
 
 
 @pytest.mark.anyio
@@ -137,6 +139,73 @@ async def test_lifespan_unconfigured_db():
     # Without a configured DB, lifespan should skip DB operations
     async with lifespan(test_app):
         pass  # lifespan entered and exited cleanly
+
+
+@pytest.mark.anyio
+async def test_lifespan_drains_fetches_before_children_and_lock_release(monkeypatch):
+    from fastapi import FastAPI
+
+    from nightcrate import main
+
+    order: list[str] = []
+
+    def record(name):
+        async def action():
+            order.append(name)
+
+        return action
+
+    monkeypatch.setattr(main.runtime, "production", False)
+    monkeypatch.setattr(
+        main,
+        "acquire_instance_lock",
+        lambda *args: SimpleNamespace(release=lambda: order.append("lock")),
+    )
+    monkeypatch.setattr(
+        main.star_catalog_fetch, "shutdown", AsyncMock(side_effect=record("catalog"))
+    )
+    monkeypatch.setattr(
+        main.plate_solve_service, "shutdown", AsyncMock(side_effect=record("solver"))
+    )
+    monkeypatch.setattr(
+        main.sky_tile_cache,
+        "drain_background_fetches",
+        AsyncMock(side_effect=record("sky")),
+    )
+    monkeypatch.setattr(
+        main.thumbnails,
+        "drain_background_fetches",
+        AsyncMock(side_effect=record("thumbnails")),
+    )
+    monkeypatch.setattr(
+        main.hips_tiles,
+        "drain_background_fetches",
+        AsyncMock(side_effect=record("hips")),
+    )
+    monkeypatch.setattr(
+        main.updates,
+        "drain_background_fetches",
+        AsyncMock(side_effect=record("updates")),
+    )
+    monkeypatch.setattr(
+        main.child_processes,
+        "terminate_all",
+        lambda: order.append("children"),
+    )
+
+    async with main.lifespan(FastAPI()):
+        pass
+
+    assert order == [
+        "catalog",
+        "solver",
+        "sky",
+        "thumbnails",
+        "hips",
+        "updates",
+        "children",
+        "lock",
+    ]
 
 
 @pytest.mark.anyio

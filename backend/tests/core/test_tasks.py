@@ -5,7 +5,7 @@ import threading
 
 import pytest
 
-from nightcrate.core.tasks import settle
+from nightcrate.core.tasks import cancellation_safe_connection, drain_task_map, settle
 
 
 @pytest.mark.asyncio
@@ -126,3 +126,58 @@ async def test_settle_normal_cancellation_has_no_loop_report():
         owner.cancel()
         await asyncio.wait_for(asyncio.gather(owner, return_exceptions=True), timeout=1)
         loop.set_exception_handler(previous_handler)
+
+
+@pytest.mark.asyncio
+async def test_drain_task_map_cancels_pending_and_preserves_replacement():
+    release = asyncio.Event()
+    replacement = asyncio.create_task(asyncio.sleep(0))
+    tasks = {}
+
+    async def replace_when_cancelled():
+        try:
+            await release.wait()
+        finally:
+            tasks["pending"] = replacement
+
+    pending = asyncio.create_task(replace_when_cancelled())
+    tasks["pending"] = pending
+    await asyncio.sleep(0)
+    await drain_task_map(tasks)
+
+    assert pending.cancelled()
+    assert tasks == {"pending": replacement}
+    await replacement
+
+
+@pytest.mark.asyncio
+async def test_drain_task_map_does_not_cancel_running_work():
+    release = asyncio.Event()
+    task = asyncio.create_task(release.wait())
+    tasks = {"work": task}
+    drain = asyncio.create_task(drain_task_map(tasks, cancel_pending=True, running={task}))
+    await asyncio.sleep(0)
+    assert not task.cancelled()
+    release.set()
+    await drain
+    assert tasks == {}
+
+
+@pytest.mark.asyncio
+async def test_cancellation_safe_connection_closes_after_body_failure():
+    events = []
+
+    class Manager:
+        async def __aenter__(self):
+            events.append("open")
+            return "connection"
+
+        async def __aexit__(self, *_args):
+            events.append("close")
+
+    with pytest.raises(RuntimeError, match="body failed"):
+        async with cancellation_safe_connection(Manager) as connection:
+            assert connection == "connection"
+            raise RuntimeError("body failed")
+
+    assert events == ["open", "close"]

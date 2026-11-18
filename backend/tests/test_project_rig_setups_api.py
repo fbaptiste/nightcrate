@@ -333,6 +333,35 @@ async def test_setups_include_undeclared_rigs_and_retired_declared_rig(client):
     assert project["rigs"] == [{"id": declared, "name": "Retired", "active": False}]
 
 
+@pytest.mark.parametrize(
+    ("expected_provenance", "session_source"),
+    [("files", None), ("manual_sessions", "manual"), ("auto_sessions", "auto")],
+)
+async def test_setups_serialize_undeclared_rig_provenance(
+    client, expected_provenance: str, session_source: str | None
+):
+    async with get_db() as conn:
+        equipment = await make_equipment(conn)
+        rig_id = await make_rig(conn, equipment, f"{expected_provenance} rig")
+        project_id = await make_project(conn, f"{expected_provenance} project")
+        if session_source is None:
+            await make_frame(conn, project_id, expected_provenance, rig_id=rig_id)
+        else:
+            await conn.execute(
+                "INSERT INTO project_session "
+                "(project_id, source, session_date, rig_id, filter_id, "
+                "exposure_seconds, num_subs) "
+                "VALUES (?, ?, '2026-11-02', ?, ?, 60, 1)",
+                (project_id, session_source, rig_id, equipment.filter_l),
+            )
+        await conn.commit()
+
+    response = await client.get(f"/api/projects/{project_id}/rig-setups")
+
+    assert response.status_code == 200, response.text
+    assert response.json()[0]["provenance"] == expected_provenance
+
+
 async def test_project_rigs_include_retired(client):
     _equipment, rig_id, project_id = await _project_rig()
     async with get_db() as conn:

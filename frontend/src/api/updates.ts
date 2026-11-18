@@ -11,6 +11,7 @@ export interface UpdateNotice {
   notes: string[];
   release_url: string | null;
   installable: boolean;
+  install_blocked: string | null;
   latest_tag: string | null;
   installed_tag: string | null;
   downloaded_at: string | null;
