@@ -204,6 +204,60 @@ class TestSessionsCRUD:
         assert resp.json()["filter_id"] == fid
         assert resp.json()["filter_name"] is not None
 
+    async def test_create_update_and_clear_iso(self, client: AsyncClient):
+        pid = await _make_project(client)
+        created = await client.post(
+            f"/api/projects/{pid}/sessions",
+            json={
+                "line_name": "Ha",
+                "exposure_seconds": 180,
+                "num_subs": 10,
+                "iso": 800,
+            },
+        )
+        assert created.status_code == 201
+        assert created.json()["iso"] == 800
+        session_id = created.json()["id"]
+
+        updated = await client.patch(
+            f"/api/projects/{pid}/sessions/{session_id}", json={"iso": 1600}
+        )
+        assert updated.status_code == 200
+        assert updated.json()["iso"] == 1600
+
+        cleared = await client.patch(
+            f"/api/projects/{pid}/sessions/{session_id}", json={"iso": None}
+        )
+        assert cleared.status_code == 200
+        assert cleared.json()["iso"] is None
+
+    @pytest.mark.parametrize("iso", [0, -1])
+    async def test_nonpositive_iso_rejected_on_create_and_update(
+        self, client: AsyncClient, iso: int
+    ):
+        pid = await _make_project(client)
+        invalid_create = await client.post(
+            f"/api/projects/{pid}/sessions",
+            json={
+                "line_name": "Ha",
+                "exposure_seconds": 180,
+                "num_subs": 10,
+                "iso": iso,
+            },
+        )
+        assert invalid_create.status_code == 422
+
+        session_id = (
+            await client.post(
+                f"/api/projects/{pid}/sessions",
+                json={"line_name": "Ha", "exposure_seconds": 180, "num_subs": 10},
+            )
+        ).json()["id"]
+        invalid_update = await client.patch(
+            f"/api/projects/{pid}/sessions/{session_id}", json={"iso": iso}
+        )
+        assert invalid_update.status_code == 422
+
     async def test_create_requires_filter_or_line(self, client: AsyncClient):
         pid = await _make_project(client)
         resp = await client.post(

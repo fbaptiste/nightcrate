@@ -10,6 +10,7 @@ from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
+from httpx import ASGITransport, AsyncClient
 
 from nightcrate.api.planner import _sort_items
 from nightcrate.api.planner_models import PlannerTargetItem
@@ -1533,9 +1534,7 @@ async def test_dsos_in_region_caps_limit(client: TestClient, seed_dsos_in_region
     assert response.status_code == 422
 
 
-async def test_thumbnail_rig_framed_with_valid_fov_returns_202_placeholder(
-    client: TestClient, seed_db, monkeypatch
-):
+async def test_thumbnail_rig_framed_with_valid_fov_returns_202_placeholder(seed_db, monkeypatch):
     # Mock out the upstream fetcher so we don't touch the network; 202
     # path fires immediately and the fetch runs in the background.
     async def _fake_render(*args, **kwargs):
@@ -1545,14 +1544,15 @@ async def test_thumbnail_rig_framed_with_valid_fov_returns_202_placeholder(
     async with get_db() as conn:
         cursor = await conn.execute("SELECT id FROM dso WHERE primary_designation = 'M 42'")
         m42 = (await cursor.fetchone())["id"]
-    response = client.get(
-        f"/api/planner/thumbnails/{m42}",
-        params={
-            "variant": "rig_framed",
-            "fov_major_deg": 0.37,
-            "fov_minor_deg": 0.28,
-        },
-    )
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.get(
+            f"/api/planner/thumbnails/{m42}",
+            params={
+                "variant": "rig_framed",
+                "fov_major_deg": 0.37,
+                "fov_minor_deg": 0.28,
+            },
+        )
     # Placeholder (202) on miss, or a hit (200) if the fetch completed
     # during the short test window.
     assert response.status_code in {200, 202}
@@ -1643,7 +1643,7 @@ async def test_sky_tile_rejects_unknown_tier(client: TestClient):
     assert response.status_code == 422
 
 
-async def test_sky_tile_miss_returns_placeholder(client: TestClient, monkeypatch):
+async def test_sky_tile_miss_returns_placeholder(monkeypatch):
     """A cold cache returns the 1×1 PNG placeholder with status 202."""
 
     async def _fake_render(*args, **kwargs):
@@ -1656,21 +1656,22 @@ async def test_sky_tile_miss_returns_placeholder(client: TestClient, monkeypatch
         return hips_tiles.RenderedImage(b"\xff\xd8" + b"x" * 2048, frozenset({"cds"}))
 
     monkeypatch.setattr(hips_tiles, "render", _fake_render)
-    response = client.get(
-        "/api/planner/sky-tile",
-        params={
-            "nside": 8,
-            "ipix": 100,
-            "tier": "narrow",
-            "cell_i": 0,
-            "cell_j": 0,
-        },
-    )
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.get(
+            "/api/planner/sky-tile",
+            params={
+                "nside": 8,
+                "ipix": 100,
+                "tier": "narrow",
+                "cell_i": 0,
+                "cell_j": 0,
+            },
+        )
     assert response.status_code == 202
     assert response.headers.get("cache-control", "").startswith("no-store")
 
 
-async def test_sky_tile_hit_returns_jpeg(client: TestClient, monkeypatch):
+async def test_sky_tile_hit_returns_jpeg(monkeypatch):
     """A successful CDS response renders as a 200 with image/jpeg."""
     fake_body = b"\xff\xd8" + b"x" * 2048
 
@@ -1679,17 +1680,18 @@ async def test_sky_tile_hit_returns_jpeg(client: TestClient, monkeypatch):
 
     monkeypatch.setattr(hips_tiles, "render", _fake_render)
     # wait_ms=2000 lets the long-poll finish the fetch in one round trip.
-    response = client.get(
-        "/api/planner/sky-tile",
-        params={
-            "nside": 8,
-            "ipix": 100,
-            "tier": "narrow",
-            "cell_i": 0,
-            "cell_j": 0,
-            "wait_ms": 2000,
-        },
-    )
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.get(
+            "/api/planner/sky-tile",
+            params={
+                "nside": 8,
+                "ipix": 100,
+                "tier": "narrow",
+                "cell_i": 0,
+                "cell_j": 0,
+                "wait_ms": 2000,
+            },
+        )
     assert response.status_code == 200
     assert response.headers.get("content-type") == "image/jpeg"
     assert response.content == fake_body

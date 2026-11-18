@@ -34,11 +34,12 @@ from nightcrate.services.imaging import (
     STF_TARGET_BG,
     _mtf_scalar,
 )
-from nightcrate.services.pixel_loader import load_normalized as _load_normalized
+from nightcrate.services.pixel_loader import load_image, superpixels_of
 
 logger = logging.getLogger("nightcrate.catalog_thumbnail")
 
 DEFAULT_MAX_PX = 96
+RENDER_VERSION = 2
 # Decimate so the longest axis is ~this many source pixels before the stretch —
 # enough detail for a small thumbnail at a fraction of the cost.
 _DECIMATE_TARGET_FACTOR = 3
@@ -46,6 +47,22 @@ _DECIMATE_TARGET_FACTOR = 3
 
 def _decimate_step(long_axis: int, max_px: int) -> int:
     return max(1, long_axis // (max_px * _DECIMATE_TARGET_FACTOR))
+
+
+def _area_reduce(data: np.ndarray, max_px: int) -> np.ndarray:
+    """Reduce spatial axes by block means, retaining partial edge blocks."""
+    height, width = data.shape[-2:]
+    step = _decimate_step(max(height, width), max_px)
+    if step <= 1:
+        return np.ascontiguousarray(data)
+    y_starts = np.arange(0, height, step)
+    x_starts = np.arange(0, width, step)
+    y_counts = np.minimum(step, height - y_starts)
+    x_counts = np.minimum(step, width - x_starts)
+    reduced = np.add.reduceat(data.astype(np.float32), y_starts, axis=-2)
+    reduced = np.add.reduceat(reduced, x_starts, axis=-1)
+    divisor = y_counts[:, None] * x_counts[None, :]
+    return np.ascontiguousarray(reduced / divisor)
 
 
 def _stf_params(plane01: np.ndarray) -> tuple[float, float]:
@@ -127,14 +144,12 @@ def render_array_jpeg(
 ) -> bytes:
     """Render a normalized mono or planar-RGB array as a JPEG."""
     if data.ndim == 2:
-        step = _decimate_step(max(data.shape), max_px)
-        small = np.ascontiguousarray(data[::step, ::step])
+        small = _area_reduce(data, max_px)
     elif data.ndim == 3 and data.shape[0] == 3:
-        _, h, w = data.shape
-        step = _decimate_step(max(h, w), max_px)
-        small = np.ascontiguousarray(data[:, ::step, ::step])
+        small = _area_reduce(data, max_px)
     else:
         raise ValueError(f"unsupported thumbnail array shape: {data.shape}")
+    small = np.nan_to_num(small, nan=0.0, posinf=1.0, neginf=0.0)
 
     apply_stf = stretch == "stf" or (stretch == "auto" and _auto_uses_stf(small))
     if small.ndim == 2:
@@ -167,4 +182,4 @@ def render_thumbnail_bytes(path: str, max_px: int = DEFAULT_MAX_PX) -> bytes:
     Raises on unreadable / unsupported sources — the caller maps that to a 404 and
     simply shows no thumbnail (a missing preview is never fatal).
     """
-    return render_array_jpeg(_load_normalized(path), max_px)
+    return render_array_jpeg(superpixels_of(load_image(path)), max_px)

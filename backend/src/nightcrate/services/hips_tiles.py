@@ -325,12 +325,23 @@ def _clock() -> float:
     return time.monotonic()
 
 
-def reset_state() -> None:
+async def drain_background_fetches() -> None:
+    """Cancel and await the tile fetches present when draining starts."""
+    snapshot = tuple(_in_flight.items())
+    pending = tuple(task for _, task in snapshot if not task.done())
+    for task in pending:
+        task.cancel()
+    if pending:
+        await asyncio.gather(*pending, return_exceptions=True)
+    for key, task in snapshot:
+        if _in_flight.get(key) is task:
+            _in_flight.pop(key, None)
+
+
+async def reset_state() -> None:
     """Reset module state between tests without touching any disk cache."""
     global _tile_cache_bytes, _tile_fetch_semaphore, _render_semaphore
-    for task in _in_flight.values():
-        task.cancel()
-    _in_flight.clear()
+    await drain_background_fetches()
     _tile_cache.clear()
     _tile_cache_bytes = 0
     _source_health.clear()

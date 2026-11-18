@@ -236,11 +236,14 @@ def _parse_xml_header(source: Path | BinaryIO) -> tuple[Element, int]:
     return root, 16 + header_len
 
 
-def load_image_data(source: Path | BinaryIO, hdu: int = 0) -> np.ndarray:
-    """Load image data as float64 array normalized to [0, 1].
+def load_image_samples(
+    source: Path | BinaryIO, hdu: int = 0
+) -> tuple[np.ndarray, tuple[float, float] | None]:
+    """Load recorded samples and their optional declared bounds.
 
-    Returns shape (H, W) for Gray or (3, H, W) for RGB.
-    The hdu parameter selects among multiple Image elements (0-indexed).
+    Returns shape (H, W) for Gray or (3, H, W) for RGB without normalising
+    the recorded values.  The existing :func:`load_image_data` wrapper keeps
+    the established display behaviour for older callers.
     """
     root, _ = _parse_xml_header(source)
 
@@ -326,6 +329,12 @@ def load_image_data(source: Path | BinaryIO, hdu: int = 0) -> np.ndarray:
             raise XISFError(INVALID_GEOMETRY_MESSAGE.format(geometry=geom_str))
         arr = arr[:3]
 
+    return reshape_color(arr), bounds
+
+
+def load_image_data(source: Path | BinaryIO, hdu: int = 0) -> np.ndarray:
+    """Load image data as float64 array normalized to [0, 1]."""
+    arr, bounds = load_image_samples(source, hdu)
     bounded_integer = bounds is not None and np.issubdtype(arr.dtype, np.integer)
     bounded_float = bounds is not None and bounds != (0.0, 1.0)
     if bounded_integer or bounded_float:
@@ -337,6 +346,29 @@ def load_image_data(source: Path | BinaryIO, hdu: int = 0) -> np.ndarray:
         normalized = normalize_to_01(arr)
 
     return reshape_color(normalized)
+
+
+def cfa_attributes(source: Path | BinaryIO, index: int = 0) -> dict[str, str] | None:
+    """Return one image's XISF ``ColorFilterArray`` attributes, if present."""
+    root, _ = _parse_xml_header(source)
+    images = _images(root)
+    if index < 0 or index >= len(images):
+        raise XISFError(IMAGE_INDEX_MESSAGE.format(index=index, count=len(images)))
+    elements = _children(images[index], "ColorFilterArray")
+    return dict(elements[0].attrib) if elements else None
+
+
+def image_storage_metadata(source: Path | BinaryIO, index: int = 0) -> dict[str, str | None]:
+    """Return the storage attributes needed to version persisted measurements."""
+    root, _ = _parse_xml_header(source)
+    images = _images(root)
+    if index < 0 or index >= len(images):
+        raise XISFError(IMAGE_INDEX_MESSAGE.format(index=index, count=len(images)))
+    image = images[index]
+    return {
+        "sample_format": image.get("sampleFormat") or None,
+        "bounds": image.get("bounds"),
+    }
 
 
 def verify_image(source: Path | BinaryIO, hdu: int = 0) -> None:

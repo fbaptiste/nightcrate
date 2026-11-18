@@ -85,7 +85,9 @@ export interface CatalogFrame {
   object_hint: string | null;
   exposure_seconds: number | null;
   gain: number | null;
+  iso: number | null;
   set_temp_c: number | null;
+  camera_temp_c: number | null;
   binning: string | null;
   image_width: number | null;
   image_height: number | null;
@@ -98,6 +100,9 @@ export interface CatalogFrame {
   rig_name: string | null;
   // Classification (v0.41.1) — hand-correctable, guarded by a source flag.
   frame_type_source: "auto" | "user" | null;
+  frame_type_basis: string | null;
+  filter_name_source: "auto" | "user" | null;
+  date_obs_source: string | null;
   // Quality metrics (v0.41.3). All null until the analyze pass has run.
   // hfr/star_count/snr_estimate stay null on calibration frames even after a
   // successful run — only lights carry stars. hfr is in PIXELS.
@@ -108,6 +113,7 @@ export interface CatalogFrame {
   snr_estimate: number | null;
   quality_status: QualityStatus | null;
   quality_analyzed_at: string | null;
+  quality_units: string | null;
   /** Derived on read from the tagged rig's optics (or a plate-solved scale). */
   pixel_scale_arcsec: number | null;
   /** hfr in arcseconds — the figure that is comparable across rigs. */
@@ -168,10 +174,11 @@ export const FRAME_TYPES = [
 ] as const;
 export type FrameTypeName = (typeof FRAME_TYPES)[number];
 
-export type CorrectableField = "frame_type";
+export type CorrectableField = "frame_type" | "filter";
 
 export interface FrameCorrection {
   frame_type?: FrameTypeName | null;
+  filter?: string | null;
   reset_to_auto?: CorrectableField[];
 }
 

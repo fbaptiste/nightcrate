@@ -79,6 +79,15 @@ async def _frames(project_id: int) -> list[dict]:
         return [dict(row) for row in await cursor.fetchall()]
 
 
+async def _auto_sessions(project_id: int) -> list[dict]:
+    async with get_db() as conn:
+        cursor = await conn.execute(
+            "SELECT * FROM project_session WHERE project_id = ? AND source = 'auto' ORDER BY id",
+            (project_id,),
+        )
+        return [dict(row) for row in await cursor.fetchall()]
+
+
 async def _completed_rigged_scan(
     client: AsyncClient, tmp_path: Path, monkeypatch, name: str
 ) -> tuple[int, int, Path]:
@@ -439,6 +448,57 @@ async def test_failure_during_grouping_restores_frame_rigs_and_records_error(
 
 
 @pytest.mark.anyio
+async def test_cancellation_during_derivation_rolls_back_sessions_with_run(
+    client: AsyncClient, tmp_path: Path, monkeypatch
+):
+    project_id, _rig_id, _folder = await _completed_rigged_scan(
+        client, tmp_path, monkeypatch, "cancel-derivation"
+    )
+    before = await _auto_sessions(project_id)
+
+    async def cancel_after_deleting(conn, target_project_id: int, *, tz_name):
+        del tz_name
+        await conn.execute(
+            "DELETE FROM project_session WHERE project_id = ? AND source = 'auto'",
+            (target_project_id,),
+        )
+        raise asyncio.CancelledError
+
+    monkeypatch.setattr(ingest, "refresh_auto_sessions", cancel_after_deleting)
+    with pytest.raises(asyncio.CancelledError):
+        await client.post(f"/api/projects/{project_id}/ingest")
+
+    assert await _auto_sessions(project_id) == before
+    assert (await _latest_run(project_id))["status"] == "cancelled"
+
+
+@pytest.mark.anyio
+async def test_failure_during_derivation_rolls_back_sessions_with_run(
+    client: AsyncClient, tmp_path: Path, monkeypatch
+):
+    project_id, _rig_id, _folder = await _completed_rigged_scan(
+        client, tmp_path, monkeypatch, "failed-derivation"
+    )
+    before = await _auto_sessions(project_id)
+
+    async def fail_after_deleting(conn, target_project_id: int, *, tz_name):
+        del tz_name
+        await conn.execute(
+            "DELETE FROM project_session WHERE project_id = ? AND source = 'auto'",
+            (target_project_id,),
+        )
+        raise RuntimeError("derivation failed")
+
+    monkeypatch.setattr(ingest, "refresh_auto_sessions", fail_after_deleting)
+    response = await client.post(f"/api/projects/{project_id}/ingest")
+
+    assert response.status_code == 200, response.text
+    assert response.json()["status"] == "failed"
+    assert await _auto_sessions(project_id) == before
+    assert (await _latest_run(project_id))["status"] == "failed"
+
+
+@pytest.mark.anyio
 async def test_cancel_in_second_folder_preserves_first_folder_commit(
     client: AsyncClient, tmp_path: Path, monkeypatch
 ):
@@ -457,13 +517,13 @@ async def test_cancel_in_second_folder_preserves_first_folder_commit(
     original_persist = ingest._persist_parsed
     second_calls = 0
 
-    async def cancel_second_file(conn, project_id, run_id, result, counters):
+    async def cancel_second_file(conn, project_id, run_id, result, counters, geo_tz, bound_folder):
         nonlocal second_calls
         if Path(result["path"]).parent == second:
             second_calls += 1
             if second_calls == 2:
                 raise asyncio.CancelledError
-        await original_persist(conn, project_id, run_id, result, counters)
+        await original_persist(conn, project_id, run_id, result, counters, geo_tz, bound_folder)
 
     monkeypatch.setattr(ingest, "_persist_parsed", cancel_second_file)
 

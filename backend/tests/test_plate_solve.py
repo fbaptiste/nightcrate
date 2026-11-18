@@ -1428,9 +1428,10 @@ async def test_native_header_read_off_event_loop(monkeypatch):
     )
     monkeypatch.setattr(
         solve_image_module.pixel_loader,
-        "load_normalized_mono",
+        "load_image",
         lambda _path, _hdu: np.zeros((10, 10), dtype=np.float32),
     )
+    monkeypatch.setattr(solve_image_module.pixel_loader, "grey_of", lambda data: (data, 1))
     monkeypatch.setattr(solve_image_module, "extract_near", lambda *_args, **_kwargs: detections)
     monkeypatch.setattr(plate_solve, "read_header_cards", read_cards)
 

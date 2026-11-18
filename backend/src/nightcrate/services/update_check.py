@@ -87,6 +87,11 @@ async def fetch_latest_app() -> LatestApp | None:
         release_version = None
     if not isinstance(release_url, str):
         release_url = f"{REPOSITORY_URL}/releases/tag/v{version}"
+    min_os = {
+        key: entry["min_os"]
+        for key, entry in platforms.items()
+        if isinstance(key, str) and isinstance(entry, dict) and isinstance(entry.get("min_os"), str)
+    }
     return LatestApp(
         version=version,
         release_version=release_version,
@@ -94,4 +99,5 @@ async def fetch_latest_app() -> LatestApp | None:
         notes=parse_notes(str(release.get("body") or "")),
         release_url=release_url,
         platforms=list(platforms),
+        min_os=min_os,
     )

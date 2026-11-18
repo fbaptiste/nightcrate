@@ -10,9 +10,12 @@ import DialogActions from "@mui/material/DialogActions";
 import DialogContent from "@mui/material/DialogContent";
 import DialogTitle from "@mui/material/DialogTitle";
 import Divider from "@mui/material/Divider";
+import Alert from "@mui/material/Alert";
 import Snackbar from "@mui/material/Snackbar";
 import Typography from "@mui/material/Typography";
 import { fetchFilters } from "@/api/equipment";
+import { ApiError } from "@/api/client";
+import { fetchCatalogSummary } from "@/api/projectCatalog";
 import { fetchProject, fetchProjectRigSetups } from "@/api/projects";
 import { fetchRigs } from "@/api/rigs";
 import {
@@ -33,6 +36,7 @@ import { formatHoursMinutes } from "./IntegrationBars";
 import NightNoteDialog from "./NightNoteDialog";
 import SessionFormDialog from "./SessionFormDialog";
 import SessionNightBlock, { type SessionRigGroup } from "./SessionNightBlock";
+import { shouldOfferSessionBuild } from "./sessionBuildPrompt";
 import {
   compareFilters,
   notRecordedFilter,
@@ -96,6 +100,10 @@ export default function ProjectSessionsTab({ projectId, focusNight }: Props) {
   const { data: integration } = useQuery({
     queryKey: ["project-integration", projectId],
     queryFn: () => getIntegration(projectId),
+  });
+  const { data: catalogSummary } = useQuery({
+    queryKey: ["project-catalog-summary", projectId],
+    queryFn: () => fetchCatalogSummary(projectId),
   });
   const { data: allRigs = [] } = useQuery({
     queryKey: ["rigs", "all"],
@@ -190,6 +198,7 @@ export default function ProjectSessionsTab({ projectId, focusNight }: Props) {
     }
     return { derivedCount: derived, manualCount: sessions.length - derived, lastDerived: latest };
   }, [sessions]);
+  const showBuildPrompt = shouldOfferSessionBuild(catalogSummary?.lights ?? 0, derivedCount);
 
   const caption = derivedCount > 0 && integration
     ? `${derivedCount} batch${derivedCount === 1 ? "" : "es"} over ${integration?.night_count ?? 0} night${integration?.night_count === 1 ? "" : "s"}, built from the cataloged subs${lastDerived ? ` on ${formatShortDate(lastDerived)}` : ""}${manualCount > 0 ? `, ${manualCount} added by hand` : ""}`
@@ -239,7 +248,6 @@ export default function ProjectSessionsTab({ projectId, focusNight }: Props) {
     queryClient.invalidateQueries({ queryKey: ["project-catalog", projectId] });
     queryClient.invalidateQueries({ queryKey: ["project-sessions", projectId] });
     queryClient.invalidateQueries({ queryKey: ["project-integration", projectId] });
-    queryClient.invalidateQueries({ queryKey: ["project-solve", projectId] });
     void invalidateProjectInfo(queryClient, projectId);
     queryClient.invalidateQueries({ queryKey: ["equipment-usage"] });
     void invalidateProjectLinks(queryClient);
@@ -252,7 +260,14 @@ export default function ProjectSessionsTab({ projectId, focusNight }: Props) {
       refresh();
       setSnack("Session setup updated");
     },
-    onError: (error) => setSnack(String(error)),
+    onError: (error) => {
+      if (error instanceof ApiError && error.status === 404) {
+        refresh();
+        setSnack("The sessions were rebuilt. Choose the setup again.");
+        return;
+      }
+      setSnack(String(error));
+    },
   });
   const deleteMut = useMutation({
     mutationFn: (id: number) => deleteSession(projectId, id),
@@ -321,6 +336,25 @@ export default function ProjectSessionsTab({ projectId, focusNight }: Props) {
           </Button>
         </Box>
       </Box>
+
+      {showBuildPrompt && (
+        <Alert
+          severity="info"
+          sx={{ mt: 2 }}
+          action={
+            <Button
+              color="inherit"
+              size="small"
+              disabled={deriveMut.isPending}
+              onClick={() => deriveMut.mutate()}
+            >
+              Build from subs
+            </Button>
+          }
+        >
+          This project has cataloged light frames but no sessions built from them.
+        </Alert>
+      )}
 
       {integration && sessions.length > 0 && (
         <Box sx={{ display: "flex", alignItems: "center", gap: 2, flexWrap: "wrap", my: "14px", mb: "18px" }}>

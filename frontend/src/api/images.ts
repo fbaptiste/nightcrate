@@ -7,13 +7,27 @@ export interface ExtensionInfo {
   has_image: boolean;
   linear?: boolean;
   supports_stretch?: boolean;
+  colour?: ColourInfo | null;
+}
+
+export type PatternName = "RGGB" | "GRBG" | "GBRG" | "BGGR";
+
+export interface ColourInfo {
+  kind: "mono" | "mosaic" | "colour";
+  pattern: string | null;
+  source: string | null;
+  detail: string | null;
+  assumptions: string[];
 }
 
 export interface HeaderCard {
+  group?: string;
   key: string;
   value: string;
   comment: string;
-  description: string | null;
+  description?: string | null;
+  inferred?: { label: string; title: string };
+  readOnly?: boolean;
 }
 
 export interface StfParams {
@@ -25,6 +39,7 @@ export interface StfParams {
 export interface ChannelStats {
   min: number;
   max: number;
+  mean: number;
   median: number;
   mad: number;
   avg_dev: number;
@@ -34,6 +49,8 @@ export interface ChannelStats {
 
 export interface ImageStats {
   color: boolean;
+  units: string;
+  full_scale: number | null;
   channels: ChannelStats[];
   linked_stf: StfParams | null;
   background_delta: number[] | null;
@@ -136,10 +153,20 @@ export interface PixelData {
   G?: number;
   B?: number;
   K: number;
+  units: string;
+  site_colour: string | null;
 }
 
-export function fetchPixel(path: string, hdu: number, x: number, y: number): Promise<PixelData> {
-  return apiFetch<PixelData>(`/images/pixel?path=${encodeURIComponent(path)}&hdu=${hdu}&x=${x}&y=${y}`);
+export function fetchPixel(
+  path: string,
+  hdu: number,
+  x: number,
+  y: number,
+  pattern?: PatternName,
+): Promise<PixelData> {
+  const q = new URLSearchParams({ path, hdu: String(hdu), x: String(x), y: String(y) });
+  if (pattern) q.set("pattern", pattern);
+  return apiFetch<PixelData>(`/images/pixel?${q}`);
 }
 
 // ── Histogram ────────────────────────────────────────────────────────────────
@@ -154,6 +181,8 @@ export interface HistogramData {
   channels: HistogramChannel[];
   luminosity: number[] | null;
   bin_edges: number[];
+  units: string;
+  full_scale: number | null;
 }
 
 export function fetchHistogram(path: string, hdu: number): Promise<HistogramData> {
@@ -167,9 +196,11 @@ export interface StatsAndHistogram {
   histogram: HistogramData;
 }
 
-export function fetchStatsAndHistogram(path: string, hdu: number): Promise<StatsAndHistogram> {
+export function fetchStatsAndHistogram(path: string, hdu: number, pattern?: PatternName): Promise<StatsAndHistogram> {
+  const q = new URLSearchParams({ path, hdu: String(hdu) });
+  if (pattern) q.set("pattern", pattern);
   return apiFetch<StatsAndHistogram>(
-    `/images/stats-histogram?path=${encodeURIComponent(path)}&hdu=${hdu}`,
+    `/images/stats-histogram?${q}`,
   );
 }
 
@@ -189,6 +220,7 @@ export interface ImageQuality {
   median_adu: number | null;
   background_adu: number | null;
   status: "ok" | "no_stars";
+  quality_units: string;
 }
 
 /**
@@ -210,6 +242,7 @@ export function imageUrl(
   linked?: StretchParams,
   perChannel?: [StretchParams, StretchParams, StretchParams],
   activity?: string,
+  pattern?: PatternName,
 ): string {
   const q = new URLSearchParams({ path, hdu: String(hdu) });
 
@@ -238,6 +271,7 @@ export function imageUrl(
   }
 
   if (activity) q.set("_activity", activity);
+  if (pattern) q.set("pattern", pattern);
 
   return `/api/images/image?${q.toString()}`;
 }

@@ -16,6 +16,7 @@ export interface ProjectSession {
   line_name: string | null;
   exposure_seconds: number;
   gain: number | null;
+  iso: number | null;
   num_subs: number;
   binning: number | null;
   session_date: string | null;
@@ -33,6 +34,7 @@ export interface SessionCreate {
   line_name?: string | null;
   exposure_seconds: number;
   gain?: number | null;
+  iso?: number | null;
   num_subs: number;
   binning?: number | null;
   session_date?: string | null;

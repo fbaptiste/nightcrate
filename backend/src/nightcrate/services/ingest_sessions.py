@@ -166,6 +166,21 @@ async def assign_rigs_and_sessions(
             (folder["rig_id"], project_id, project_id, len(prefix), prefix),
         )
 
+    # Camera-raw files do not name an optical filter. For lights and flats shot
+    # on a rig with one fixed filter, that declared equipment fact is the
+    # automatic default. Recompute it on every pass so rig edits and folder
+    # rebindings cannot leave a stale name; user corrections remain authoritative.
+    await conn.execute(
+        "UPDATE sub_frame SET filter_name_hint = CASE "
+        "WHEN frame_type IN ('light', 'flat') THEN ("
+        "  SELECT f.model_name FROM rig r LEFT JOIN filter f ON f.id = r.single_filter_id "
+        "  WHERE r.id = sub_frame.rig_id"
+        ") ELSE NULL END "
+        "WHERE project_id = ? AND file_metadata_json IS NOT NULL "
+        "AND filter_name_source = 'auto'",
+        (project_id,),
+    )
+
     # Re-key sessions. The distinct (rig, night) set is tens of entries even for a
     # multi-year project, so group first and issue one ensure_session per group —
     # a per-frame loop here cost ~100x more on a 2400-frame project.

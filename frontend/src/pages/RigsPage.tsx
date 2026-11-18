@@ -72,7 +72,6 @@ export default function RigsPage() {
     queryClient.invalidateQueries({ queryKey: ["rigs"] });
     queryClient.invalidateQueries({ queryKey: ["rig-setups"] });
     queryClient.invalidateQueries({ queryKey: ["project-rig-setups"] });
-    queryClient.invalidateQueries({ queryKey: ["project-solve"] });
     queryClient.invalidateQueries({ queryKey: ["project-catalog"] });
     queryClient.invalidateQueries({ queryKey: ["catalog-frame"] });
     queryClient.invalidateQueries({ queryKey: ["project-sessions"] });

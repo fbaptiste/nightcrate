@@ -17,9 +17,11 @@ from nightcrate.db.session import get_db
 from nightcrate.main import app
 from nightcrate.services.frame_quality import (
     ADU_FULL_SCALE,
+    analyze_array,
     analyze_frame_file,
     wants_stars,
 )
+from nightcrate.services.pixel_loader import load_image
 
 from .catalog_helpers import (
     _frames as _rows,
@@ -187,6 +189,32 @@ class TestWorker:
         assert out["background_adu"] == pytest.approx(30000.0, abs=1.0)
         assert ADU_FULL_SCALE == 65535.0
 
+    def test_uint16_result_is_frozen(self, tmp_path: Path):
+        path = tmp_path / "frozen-flat.fits"
+        fits.PrimaryHDU(np.full((32, 32), 30000, dtype=np.uint16)).writeto(path)
+
+        image = load_image(str(path))
+        assert analyze_array(image, False) == {
+            "error": None,
+            "status": "ok",
+            "median_adu": 30000.0,
+            "background_adu": 29999.999,
+            "hfr": None,
+            "star_count": None,
+            "snr_estimate": None,
+            "quality_units": "adu",
+        }
+
+    def test_negative_float_background_stays_in_recorded_units(self, tmp_path: Path):
+        path = tmp_path / "negative-background.fits"
+        fits.PrimaryHDU(np.full((32, 32), -0.25, dtype=np.float32)).writeto(path)
+
+        out = analyze_frame_file(str(path), False)
+
+        assert out["median_adu"] == pytest.approx(-0.25)
+        assert out["background_adu"] == pytest.approx(-0.25, abs=1e-6)
+        assert out["quality_units"] == "float"
+
     def test_without_stars_skips_detection(self, tmp_path: Path):
         path = tmp_path / "dark.fits"
         _write_fits(path, imagetyp="DARK", filt=None, stars=10)
@@ -270,9 +298,20 @@ class TestAnalyzeEndpoints:
         for r in rows:
             assert r["quality_status"] == "ok"
             assert r["quality_analyzed_at"]
+            assert r["quality_units"] == "adu"
             assert r["hfr"] is not None
             assert r["star_count"] is not None
             assert r["median_adu"] is not None
+
+        async with get_db() as conn:
+            stored = await (
+                await conn.execute(
+                    "SELECT DISTINCT quality_method FROM sub_frame "
+                    "WHERE project_id = ? AND frame_type = 'light'",
+                    (pid,),
+                )
+            ).fetchall()
+        assert [row["quality_method"] for row in stored] == [2]
 
     async def test_calibration_frames_get_adu_only_and_leave_the_queue(
         self, client: AsyncClient, quality_folder: Path
@@ -526,9 +565,37 @@ class TestCatalogDelete:
         assert resp.status_code == 200, resp.text
         assert resp.json()["sub_frames"] == 2
         assert len(await _rows(client, pid, frame_type="light")) == 1
+        sessions = (await client.get(f"/api/projects/{pid}/sessions")).json()
+        assert len(sessions) == 1
+        assert sessions[0]["num_subs"] == 1
         # The summary must move too, not just the list.
         summary = (await client.get(f"/api/projects/{pid}/catalog/summary")).json()
         assert summary["lights"] == 1
+
+    async def test_deleting_last_file_location_drops_frame_and_refreshes_sessions(
+        self, client: AsyncClient, quality_folder: Path
+    ):
+        pid = await _make_project(client, "Delete last location")
+        await _ingest_folder(client, pid, quality_folder)
+        frame = (await _rows(client, pid, frame_type="light"))[0]
+        async with get_db() as conn:
+            file_id = (
+                await (
+                    await conn.execute(
+                        "SELECT id FROM file_location WHERE project_id = ? AND sub_frame_id = ?",
+                        (pid, frame["id"]),
+                    )
+                ).fetchone()
+            )["id"]
+
+        response = await client.post(
+            f"/api/projects/{pid}/catalog/delete", json={"file_ids": [file_id]}
+        )
+
+        assert response.status_code == 200, response.text
+        assert response.json()["files"] == 1
+        sessions = (await client.get(f"/api/projects/{pid}/sessions")).json()
+        assert sum(row["num_subs"] for row in sessions) == 2
 
     async def test_delete_is_scoped_to_the_project(self, client: AsyncClient, quality_folder: Path):
         """An id from another project must not be deletable by sending it here."""

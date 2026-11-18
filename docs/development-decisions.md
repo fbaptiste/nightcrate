@@ -131,6 +131,168 @@ Shared architecture, checks, and privacy rules live in [CLAUDE.md](../CLAUDE.md)
   image extension. The analyzer sidebar never scrolls horizontally: inner
   containers use `minWidth: 0` and `overflowX: hidden`.
 
+## Colour subs and camera raw files
+
+v0.55.0. The spec is
+`docs/superpowers/specs/2026-11-17-v0.55.0-colour-subs-and-camera-raw-design.md`.
+
+- **One loader, four forms.**
+  - `services/pixel_loader.load_image` returns a `LoadedImage` (mono,
+    colour or mosaic) with the **recorded** samples, their `units`
+    (`adu`/`float`), and a mosaic's `PatternInfo`.
+  - Callers decode once and ask for a form:
+    - `display_of`: interpolated colour, for display only;
+    - `samples_of`: each colour's real sites, for statistics;
+    - `grey_of`: merged blocks, for star measurements;
+    - `superpixels_of`: for thumbnails.
+  - Never measure interpolated pixels. Never recover recorded values by
+    multiplying normalised data: the normalisation also shifts signed
+    integers, rescales floats and applies XISF bounds.
+  - **Measurement uses the unclipped map.** `LoadedImage.normalise()` is
+    affine with no clipping, so `denormalise()` inverts it exactly.
+    `display_normalise()` clips to [0, 1] for display: the display form,
+    thumbnails, the stretch and the histogram.
+    - Measuring clipped data turned a calibrated float sub's negative sky
+      level into 0 (Codex's review, 2026-11-17).
+    - Mono 16-bit data never clips, so its results are unchanged.
+- **The pixel inspector** shows the file's recorded value first ("3,244 ADU,
+  under a green filter", from `GET /api/images/pixel`), then the position,
+  then "On screen": the displayed R, G, B, K, hex and named colour that
+  v0.54.1 showed. v0.55.0 first dropped those rows; Fred noticed and they
+  were restored (2026-11-18). While the next value loads, the last one
+  stays (`placeholderData`, via `pixelPlaceholderData`). The "Move over
+  the image" prompt shows only when no pixel is hovered, and a value never
+  carries over to another file.
+- **Where the pattern comes from** (`services/cfa.py`): raw files from
+  LibRaw (`raw_colors_visible`); FITS `BAYERPAT`, else `COLORTYP`; XISF
+  `ColorFilterArray`. Nothing is guessed from the equipment data: a
+  sensor's `bayer_pattern` has no defined row order. The analyzer offers a
+  view-only "Colour pattern" choice instead, which is never stored and never
+  measured.
+- **The FITS rule**, in stored-row (numpy) order:
+  - `TOP-DOWN`, or no `ROWORDER` (recorded as an assumption): `BAYERPAT`
+    applies directly, shifted by `XBAYROFF`/`YBAYROFF`;
+  - `BOTTOM-UP`: flipped, allowing for odd heights, exactly as Siril's
+    `adjust_Bayer_pattern_orientation` does. Siril's default for a missing
+    `ROWORDER` is `ROW_ORDER_HEADER_TOPDOWN`;
+  - SharpCap's historical offsets are ignored (its author: they were
+    relative to RGGB beside an already-correct `BAYERPAT`);
+  - **evidence (2026-11-17):** on star-free NGC 7822 nebula through a
+    Seestar duo-band filter, the red site is the brightest, as the rule
+    predicts. Producer header fixtures are in
+    `tests/test_cfa_producers.py`. All 18 CC0 raw samples convert with
+    correct colours against their cameras' embedded previews. Sky
+    background and the brightest 1 % (stars) mislead about red versus
+    blue; only star-free nebula signal is evidence.
+- **Merged grey is the mean of each block's per-colour means** (2×2 Bayer,
+  3×3 X-Trans). X-Trans blocks vary by phase (3R/5G/1B, 1R/5G/3B), so a
+  plain mean would stripe a uniform red scene.
+- **Measurements:**
+  - star sizes and positions are in sensor pixels; detection thresholds
+    are converted to working units before detection;
+  - the native solver and ASTAP's temporary images return a
+    full-resolution WCS;
+  - levels (median, background, the SNR's levels) come from all recorded
+    samples; stars come from merged grey.
+- **Colour rendering stretches each channel separately.** Raw data keeps
+  its per-channel black-level pedestal (Sony 512, for example); a linked
+  stretch tints dark areas magenta. The pedestal is never subtracted from
+  statistics: they report what the file recorded.
+- **Raw libraries.**
+  - `rawpy` (LibRaw, LGPL option; the official wheels exclude the GPL
+    demosaic packs, and a test asserts both flags are `False`).
+  - `exiv2` (python-exiv2) for metadata. `pyexiv2` was rejected: its Mac
+    wheel loads a Homebrew library from a fixed path.
+  - Only `raw_io` and `raw_support` touch them; `raw_support.problem()`
+    gives the plain reason "Raw files can't be read on this computer".
+  - Orientation is listed, never applied. Raw metadata is read-only.
+  - **The metadata view hides undecoded binary values** (Fred, 2026-11-18):
+    when Exiv2 can't interpret a value (its `print` equals `toString`),
+    byte data over 16 bytes and number lists over 64 values are left out
+    (`raw_io._cards`), such as the MakerNote block and Canon's `ColorData`.
+    Interpreted values stay whatever their storage, as do the decoded
+    maker-note tags (`Exif.Canon.*` and so on).
+  - Scans read only the metadata and layout (`raw_io.read_raw_layout`:
+    levels, visible area, and LibRaw's small `raw_pattern` shifted by the
+    visible margins). Pixels are decoded only for display, thumbnails and
+    analysis. A real-sample test checks the layout against the full
+    decode on all 18 files (`NIGHTCRATE_RAW_SAMPLES`).
+- **Capture time** (`api/ingest.py:_coerce_date_obs`), in order:
+  1. the header's `DATE-OBS` or `DATE-UTC`; XISF's `Observation:Time:Start`
+     maps to `DATE-OBS` (`header`);
+  2. EXIF `OffsetTimeOriginal` (`exif_offset`);
+  3. Canon `TimeInfo` or Nikon `WorldTime` (`maker_note`);
+  4. otherwise the project location's zone (`estimated_project_zone`), or
+     the computer's zone with daylight-saving rules for the capture date
+     (`estimated_computer_zone`);
+  5. otherwise the file's time (`file_time`).
+
+  Estimated sources show a pill in the frames table. Migration 0076
+  relabels frames cataloged before v0.55.0 that had no header date as
+  `file_time`.
+- **Frame type from names** (`ingest_classify.classify_frame`):
+  1. `IMAGETYP`;
+  2. on-sky evidence;
+  3. the file name's leading token;
+  4. folder names, nearest first.
+
+  Only folders below the bound folder count, plus the bound folder
+  itself. In an archive, an archive's own name counts only when its root
+  is the bound folder.
+  A folder counts only if every word left after removing numbers, units,
+  dates and separators is a keyword: "Darks 300s -10C" counts, "Dark Sky
+  Site" doesn't. `frame_type_basis` records which rule decided, separately
+  from correction ownership (`frame_type_source`).
+- **Filter corrections** survive rescans (`filter_name_source`). A raw light
+  or flat with no filter from the file takes the rig's single fixed filter,
+  re-derived each pass. Filters stay text, not links to equipment records
+  (removed in v0.41.1).
+- **ISO** is its own field. Raw frames group into sessions by ISO, and raw
+  darks match by ISO and exposure, without the ±1 °C cooled set-point
+  rule. Hand-entered sessions can record ISO too. Raw exposures come from
+  EXIF `ExposureTime` (an exact fraction); LibRaw's float is rounded to 6
+  significant digits only when EXIF has none, because darks match by exact
+  exposure.
+- **Old quality results** (migration 0075): kept only where the old and
+  new calculations agree, tagged `adu`: two-dimensional FITS without a
+  colour pattern, stored as unsigned 16-bit (`BITPIX = 16`,
+  `BZERO = 32768`, `BSCALE` absent or 1). Signed or scaled 16-bit FITS,
+  every other sample format, colour or higher-dimensional FITS, and every
+  XISF result are cleared. Analysis writes
+  `quality_method = 2` and `quality_units`. A rescan clears pre-0.55
+  results it finds on a mosaic. On Fred's workspace all 656 analysed
+  frames were kept.
+  - This is the one accepted compatibility break (Fred, 2026-11-17):
+    users re-run the analysis, and frames on an unplugged archive have no
+    results until it's reconnected. Keeping the values marked as older was
+    the alternative.
+- **Caches are versioned** (`RENDER_VERSION = 2`): catalog thumbnails,
+  previews, project renditions, crops and plate-solve images. The
+  aberration cache key carries a measurement version.
+  - **Older generations stay usable** (the compatibility rule in
+    CLAUDE.md). Renditions, crops and catalog thumbnails list their names
+    newest first (`rendition_candidates`, `crop_candidates`,
+    `_thumbnail_candidates`), and lookup and cleanup share that list.
+    Plate-solve images use `_solve_image_candidates` for lookup only.
+  - When only an older file exists, it is served at once and one
+    background refresh writes the current one. A failed refresh (source
+    offline) keeps the older file. When no file exists, the request
+    renders as before.
+  - A saved framing counts for the Gallery and Home when any generation of
+    its file exists.
+  - Project refreshes run one at a time and hold no thread while they
+    wait. Shutdown cancels the ones not yet rendering, so a reload or quit
+    isn't held up.
+  - Once a new disk file is written, the older generations with the same
+    identity in that folder are deleted, by exact name.
+  - Plate-solve images aren't refreshed: a solve folder from before
+    v0.55.0 keeps serving `{variant}.jpg`.
+  - The preview cache is in memory and capped, so it needs no cleanup.
+  - Aberration analyses saved before v0.55.0 (keyed without
+    `measurement_version`) are served when the image file can't be read.
+    A readable file is measured again once and saved under the new key;
+    the old row stays.
+
 ## App shell
 
 - **Three ways to run NightCrate** (v0.54.0):
@@ -364,8 +526,22 @@ Since v0.47.0. Spec: [v0.47.0 design](superpowers/specs/2026-11-07-v0.47.0-desig
   2026-11-15): its frames, sessions or capture batches, or its untagged frames
   when it is the project's only rig. `PUT /api/projects/{id}/rigs` returns 409
   and the Equipment section shows no ×; dropping it only made the row come back
-  as "used, not listed". A rig used but not listed gets a hover note pointing
-  to the folder's rig in the Files tab.
+  unlisted.
+  - **The badge** on a rig the project uses but didn't add says where it comes
+    from (Fred, 2026-11-17, replacing "used, not listed").
+    `services/rig_setups.project_setups` sets `provenance` and the API passes
+    it on:
+    - `files`: frames or folders use it. The badge reads "from files", and
+      the hover note points to the folder's rig in the Files tab;
+    - `manual_sessions`: only hand-entered sessions use it. The badge reads
+      "from sessions";
+    - `auto_sessions`: only stale automatic batches use it. The badge reads
+      "from sessions", and the note suggests rebuilding.
+
+    Never word the last case as "entered by hand". A missing value shows
+    "source unknown", never a claim about files. An API test covers each
+    value: the field was once dropped between the service and the response
+    model.
 - **Equipment changes on a rig in use need `apply_mode`.** Without it,
   `PUT /api/rigs/{id}` returns 409 `rig_change_needs_choice` (counts and the
   changed parts) and writes nothing. Name, description, notes, default and
@@ -396,7 +572,7 @@ Since v0.47.0. Spec: [v0.47.0 design](superpowers/specs/2026-11-07-v0.47.0-desig
 - **Effective equipment for records** comes from `sub_frame_equipment`:
   the project's change, else the applying stamp, else the rig. It feeds pixel
   scale, star sizes in arcseconds, the arcsec HFR sorts, full-scale ADU and
-  the calibration views. Focal estimates and the project setup panel use
+  the calibration views. The project setup panel uses
   `project_setups`. Rig calculators, the planner, star-catalog coverage and
   the wishlist use the rig's current setup.
 - **Moving a night** (`PUT /api/projects/{id}/sessions/{session_id}/setup`)
@@ -441,7 +617,36 @@ Since v0.47.0. Spec: [v0.47.0 design](superpowers/specs/2026-11-07-v0.47.0-desig
 - `project_target` is the single source for main targets (overview chips and
   solve-tab stars). Main targets survive deletion of a solve; derived solve
   objects and its rendered image do not. Reuse `DsoAnnotationOverlay` in both
-  analyzers; main objects are teal and others blue.
+  analyzers; the Image Analyzer keeps teal mains and blue others.
+- **The project Plate Solve tab** (v0.55.0, Fred at acceptance; spec §12):
+  - a "Filters" side panel (catalog, type and minimum-size filters)
+    collapsing to a full-height strip; the image
+    with zoom and pan; "Other objects" and "Main targets" tables under it.
+    The tab fills the project page's height: the tables never show fewer
+    than five rows, and the image shrinks first.
+  - Marker states on this tab (`palette="project"`): other objects thin grey;
+    main targets blue `#4fb0ff` 2.5 px; selected yellow `#ffd400` 2.5 px; a
+    selected main target is the blue line with a touching 2 px yellow line
+    outside it. No centre dot. Widths are CSS pixels at every zoom.
+  - **Click targets, every overlay caller:** an outline's interior never
+    takes clicks (a large nebula would hide everything inside it); the
+    target is the outline ±6 px and the label, plus the interior of an
+    outline under 12 px across. The overlay measures its own screen scale
+    with `getScreenCTM`; the project viewer, which zooms with a CSS
+    transform, passes its scale instead (`scaleFromCss`, `--dso-unit`).
+  - Filters apply to other objects only; main targets always show. Catalog
+    membership is the DSO Catalog page's (designations plus groups), returned
+    as codes in `IdentifiedDso.catalogs`.
+  - A drag never selects, and clears its click suppression at the next
+    pointer-down, so the following click works. A double-click makes one
+    main-target change. Main-target saves are optimistic with rollback; an
+    inactive object can't be promoted.
+  - 100% is 1:1 with the solved image, and zoom continues to 8×. The saved
+    image is at most 4,000 px across, so past that the view enlarges it. The viewer must not
+    keep `will-change: transform`: Chrome then stretches a stale raster and
+    the labels blur.
+  - Measured (headless, 1440 × 1000): 500 objects, zoom and pan p95 17 ms;
+    a synthetic 3,000, p95 50 ms.
 - Catalog objects keep their row identity by `(source_catalog_id, source_key)`,
   such as the exact OpenNGC `Name` or a normalized catalog number (each
   source's key is in the [catalog architecture](dso-catalog-architecture.md)).
@@ -585,11 +790,29 @@ Since v0.47.0. Spec: [v0.47.0 design](superpowers/specs/2026-11-07-v0.47.0-desig
     the cancellation propagates, so the run record counts only committed
     folders.
 - `session` is the ingest rig/night group; `project_session` is a capture batch.
-  Derive capture batches for the first time **only on request**, never during
-  ingest. Once auto batches exist, a folder rig change rebuilds them in the same
-  transaction (Fred, 2026-11-15), because a stale batch keeps the old rig in use.
-  Replace auto rows and preserve manual rows. Derived rows are read-only (409 on
-  edit/delete).
+  **Automatic batches follow the light frames** (Fred, 2026-11-17).
+  - `session_derivation.refresh_auto_sessions` runs inside each mutation's
+    transaction:
+    - scans;
+    - folder add, rebind and removal;
+    - catalog deletion;
+    - frame-type corrections;
+    - the folder rig;
+    - the project's rig list and its location;
+    - a location's coordinates or time zone. These first re-key the ingest
+      nights with `assign_rigs_and_sessions`, so a night isn't counted twice.
+  - It rebuilds when `auto_count > 0 or manual_count == 0`. So a project with
+    only hand-entered batches keeps its first build manual, and the Sessions
+    tab offers "Build from subs" whenever there are lights and no automatic
+    batches.
+  - **Explicit "Rebuild from subs"** re-assigns rigs, then derives,
+    atomically. It repairs a scan whose post-pass failed after its folders
+    committed.
+  - Night setup moves and "from now on" rig changes keep updating batches
+    directly.
+  - Replace auto rows and preserve manual rows. Derived rows are read-only
+    (409 on edit/delete), and a setup edit on a replaced batch id refetches.
+  - A no-change rescan of 3,000 frames over 60 nights costs about 13 ms more.
 - Night counts and first/last imaging dates use light frames only. Calibration
   frames never count because they are often reused across projects (Fred,
   2026-11-15); their ingest rig/night groups still exist for calibration matching.
@@ -833,16 +1056,11 @@ Design: [v0.46.0 spec](superpowers/specs/2026-11-04-v0.46.0-design.md) and its
   primary colour, each with a tooltip and an accessible name. Clicking the
   selected button again does nothing. The Projects page's views are
   Compact, List and Pictures.
-- **Plate-solve focal length:**
-  - **Formula:** 206.265 × pixel size (µm) ÷ solved scale (″/px)
-    (`rig_calculators.py:estimate_focal_length_mm`).
-  - **Which rigs:** one estimate per rig on the project, declared or named
-    by a session, retired and not-mine included, in the gallery's order.
-    It is built in the solve response.
-  - **Freshness:** rig, session and project edits invalidate
-    `project-solve`.
-  - **Label:** an estimate. It assumes the image's pixels are the
-    camera's; binning, drizzling or resizing changes it.
+- **No plate-solve focal length estimate** (removed in v0.55.0, Fred,
+  2026-11-18). It assumed the image's pixels were the camera's, and plate
+  solves are mostly of processed, often drizzled or binned, images. The
+  tab, the solve response's `focal_length_estimates` and
+  `estimate_focal_length_mm` are gone; nothing was stored.
 - **The page** is persistent, and keeps its own scroll position.
   - It records `scrollTop` while visible. A hidden page reads 0, so it must
     never save on hide.
@@ -2149,6 +2367,12 @@ archived in [imaging-quality-model.md](archive/imaging-quality-model.md).
 - **Rules editor hover notes.** Every setting's label carries a one- or
   two-sentence hover note on the label text: no icons, no underline. The
   wording was agreed by Claude and Codex (2026-10-18).
+  - **They never block the next field** (v0.55.0, Fred: "really annoying to
+    try and then select a field that's where the popup is covering"). A note
+    opens after 0.6 s, lets the pointer through (`disableInteractive`),
+    closes as soon as its control is used (click, tick or typing) and stays
+    closed until the pointer leaves or focus moves on; keyboard focus still
+    shows it (`components/weather/RulesEditor.tsx:NoteTooltip`).
 
 ## Calculators, settings, and diagnostics
 
@@ -2291,6 +2515,23 @@ these are the constraints and traps found while building it.
   Automatic checks run only when the frontend asks and 24 h have passed
   since the last *attempt*. "Check now" and opening the Catalogs section
   still contact GitHub.
+- **Minimum OS per platform** (v0.55.0).
+  - `release.yml` writes `"min_os"` into a platform's `latest.json` entry,
+    from `tauri.conf.json`'s `minimumSystemVersion` (macOS `14.0`, which
+    `exiv2`'s Mac builds need). The feed writer is
+    `packaging/release_feed.py`.
+  - The updater plugin ignores unknown fields in a platform entry
+    (`tauri-plugin-updater` 2.14.1, `updater.rs:80`).
+  - On an older Mac the backend still shows the notice, with
+    `installable` false and `install_blocked` set to the sentence the panel
+    shows instead of an install: "This update needs macOS 14 or later."
+  - Both checks fail closed. A Mac whose version can't be read gets the
+    same refusal. An unreadable `min_os` gets "This update can't be
+    checked against this Mac's system version."
+  - The shell's `install_inner` refuses on its own too, reading the
+    manifest's `raw_json`.
+  - Releases from before v0.55.0 have no guard, but no release exists
+    yet.
 - **The install reservation** (`api/app_activity.py`) is owned by a token;
   the shell renews it while downloading and sets a non-expiring barrier
   just before stopping the backend. `admit_work` guards every
@@ -2308,6 +2549,11 @@ these are the constraints and traps found while building it.
     GPU call then kills the process;
   - on Linux it rewrites RPATHs, so the frozen files' hashes differ from
     their wheels' `RECORD` entries;
+  - `freeze.py` lists `rawpy` and `exiv2` explicitly, so their native
+    libraries are bundled. The shell self-test calls
+    `POST /api/admin/raw-check` (`raw_support.self_check`), which
+    decodes an in-memory DNG and reads its EXIF, and fails the build if
+    raw files don't work. `/api/health` reports `raw_files`;
   - its interpreter leaves SIGPIPE at the default, unlike standard
     Python. A force-quit shell closes the backend's stdin and stdout
     together, and the backend died logging "Shutting down", leaving its
@@ -2439,6 +2685,31 @@ these are the constraints and traps found while building it.
     yoyo's own `socket` reference without touching the `socket` module.
   - `http.server.HTTPServer` looks up its address's network name when it
     binds, so test servers bind without it (`tests/test_serve.py`).
+- **Background downloads end with their test, and with the app** (v0.55.0).
+  - **What runs in the background:** a sky-tile, thumbnail or HiPS-tile
+    miss, and the update check, start a task that outlives the request
+    (`_in_flight` maps, `updates._check_task`).
+  - **Draining:** each module's `drain_background_fetches()` cancels and
+    awaits a snapshot of its tasks, then removes exactly those entries.
+    HiPS tiles drain last, because the others await them. Lifespan
+    shutdown drains before `child_processes.terminate_all()` and before
+    the instance lock is released.
+  - **Connections:** the background wrappers open and close their
+    aiosqlite connection through `core.tasks.settle`, so a cancellation
+    can't interrupt either. aiosqlite 0.22 calls `stop()` without awaiting
+    it when cancelled while connecting, which left a worker thread to post
+    into a closed event loop.
+  - **Tests:**
+    - an autouse fixture drains after every test;
+    - a test that starts such a download over HTTP uses `AsyncClient`
+      over `ASGITransport`, not `TestClient(app)`, whose short-lived loop
+      orphaned the task;
+    - the fixture fails a test that leaves an aiosqlite worker thread
+      alive;
+    - `PytestUnhandledThreadExceptionWarning` and
+      `PytestUnraisableExceptionWarning` are errors.
+
+    These showed only on CI as "Event loop is closed" annotations (PR #34).
 - **Test hooks**, read only when set: `NIGHTCRATE_TEST_STARTUP_DELAY`,
   `NIGHTCRATE_TEST_BUSY_POOL` and `NIGHTCRATE_TEST_BASE_PORT` (backend);
   the `NIGHTCRATE_TEST_*` compile-time options (shell), which

@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from "react";
+import { Fragment, useCallback, useMemo, useState } from "react";
 import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
 import IconButton from "@mui/material/IconButton";
@@ -6,6 +6,11 @@ import Snackbar from "@mui/material/Snackbar";
 import Alert from "@mui/material/Alert";
 import TextField from "@mui/material/TextField";
 import Tooltip from "@mui/material/Tooltip";
+import Table from "@mui/material/Table";
+import TableBody from "@mui/material/TableBody";
+import TableCell from "@mui/material/TableCell";
+import TableHead from "@mui/material/TableHead";
+import TableRow from "@mui/material/TableRow";
 import DeleteIcon from "@mui/icons-material/Delete";
 import AddIcon from "@mui/icons-material/Add";
 import EditIcon from "@mui/icons-material/Edit";
@@ -20,6 +25,8 @@ import {
 } from "@mui/x-data-grid";
 import type { HeaderCard, HeaderOperation } from "@/api/images";
 import { patchHeader } from "@/api/images";
+import InferredPill from "@/components/common/InferredPill";
+import type { MetadataGroup } from "@/components/analyzer/analyzerColour";
 
 /** Keywords that control FITS structure — must not be edited or deleted. */
 const STRUCTURAL_KEYWORDS = new Set([
@@ -55,9 +62,11 @@ interface Props {
   hdu?: number;
   /** Called after a successful save so the parent can invalidate queries. */
   onSaved?: () => void;
+  /** Camera-raw cards arranged into their stable user-facing groups. */
+  groups?: MetadataGroup[];
 }
 
-export function FitsHeaderTable({ cards, editable = false, path, hdu = 0, onSaved }: Props) {
+export function FitsHeaderTable({ cards, editable = false, path, hdu = 0, onSaved, groups }: Props) {
   const apiRef = useGridApiRef();
   const [editing, setEditing] = useState(false);
   const [changes, setChanges] = useState<Map<string, PendingChange>>(new Map());
@@ -228,11 +237,12 @@ export function FitsHeaderTable({ cards, editable = false, path, hdu = 0, onSave
           change?.type === "update" && change.comment !== undefined
             ? change.comment
             : card.comment || card.description || "",
-        _structural: isStructural(card.key),
+        _structural: isStructural(card.key) || card.readOnly === true,
         _deleted: isDeleted,
         _modified: change?.type === "update",
         _added: false,
         _addIndex: -1,
+        _inferred: card.inferred,
       };
     });
 
@@ -246,6 +256,7 @@ export function FitsHeaderTable({ cards, editable = false, path, hdu = 0, onSave
       _modified: false,
       _added: true,
       _addIndex: i,
+      _inferred: undefined,
     }));
 
     return [...baseRows, ...addRows];
@@ -297,7 +308,7 @@ export function FitsHeaderTable({ cards, editable = false, path, hdu = 0, onSave
     cols.push(
       {
         field: "key",
-        headerName: "Keyword",
+        headerName: "Name",
         width: 120,
         editable: editing,
         renderCell: (params: GridRenderCellParams) => (
@@ -349,6 +360,8 @@ export function FitsHeaderTable({ cards, editable = false, path, hdu = 0, onSave
           <Box
             component="span"
             sx={{
+              display: "inline-flex",
+              alignItems: "center",
               fontFamily: "monospace",
               fontSize: "0.8rem",
               textDecoration: params.row._deleted ? "line-through" : "none",
@@ -356,6 +369,7 @@ export function FitsHeaderTable({ cards, editable = false, path, hdu = 0, onSave
             }}
           >
             {params.value}
+            {params.row._inferred && <InferredPill {...params.row._inferred} />}
           </Box>
         ),
         renderEditCell: (params: GridRenderEditCellParams) => {
@@ -389,7 +403,7 @@ export function FitsHeaderTable({ cards, editable = false, path, hdu = 0, onSave
       },
       {
         field: "comment",
-        headerName: "Comment",
+        headerName: "Description",
         flex: 1,
         editable: editing,
         renderCell: (params: GridRenderCellParams) => (
@@ -461,6 +475,56 @@ export function FitsHeaderTable({ cards, editable = false, path, hdu = 0, onSave
     },
     [editing],
   );
+
+  if (groups) {
+    return (
+      <Box sx={{ height: "100%", overflow: "auto" }}>
+        <Table stickyHeader size="small" aria-label="Raw metadata">
+          <TableHead>
+            <TableRow>
+              <TableCell sx={{ width: "25%" }}>Name</TableCell>
+              <TableCell sx={{ width: "35%" }}>Value</TableCell>
+              <TableCell>Description</TableCell>
+            </TableRow>
+          </TableHead>
+          <TableBody>
+            {groups.map((group, groupIndex) => (
+              <Fragment key={group.name}>
+                <TableRow>
+                  <TableCell
+                    colSpan={3}
+                    sx={{
+                      borderBottom: 0,
+                      pt: groupIndex === 0 ? "8px" : "12px",
+                      pb: "4px",
+                      fontSize: "13px",
+                      fontWeight: 600,
+                    }}
+                  >
+                    {group.name}
+                  </TableCell>
+                </TableRow>
+                {group.rows.map((row, index) => (
+                  <TableRow key={`${row.name}:${index}`}>
+                    <TableCell sx={{ fontSize: "0.8rem" }}>{row.name}</TableCell>
+                    <TableCell sx={{ fontFamily: "monospace", fontSize: "0.8rem" }}>
+                      <Box component="span" sx={{ display: "inline-flex", alignItems: "center" }}>
+                        {row.value}
+                        {row.inferred && <InferredPill {...row.inferred} />}
+                      </Box>
+                    </TableCell>
+                    <TableCell sx={{ color: "text.secondary", fontSize: "0.8rem" }}>
+                      {row.description}
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </Fragment>
+            ))}
+          </TableBody>
+        </Table>
+      </Box>
+    );
+  }
 
   return (
     <Box sx={{ display: "flex", flexDirection: "column", height: "100%" }}>

@@ -74,9 +74,11 @@ function AppNoticeBody({ notice, installKind, onInstall, onDismiss }: { notice: 
       </>
     ) : <>
       <Box sx={{ display: "flex", gap: 0.5, flexWrap: "wrap", mt: 1.25 }}>
-        {notice.installable
-          ? <Button variant="contained" size="small" onClick={onInstall}>Install and restart</Button>
-          : <Button variant="outlined" size="small" component="a" href={notice.release_url ?? undefined} target="_blank" rel="noopener">Download the installer</Button>}
+        {notice.install_blocked
+          ? <Typography color="text.secondary" sx={{ fontSize: 12.5, alignSelf: "center" }}>{notice.install_blocked}</Typography>
+          : notice.installable
+            ? <Button variant="contained" size="small" onClick={onInstall}>Install and restart</Button>
+            : <Button variant="outlined" size="small" component="a" href={notice.release_url ?? undefined} target="_blank" rel="noopener">Download the installer</Button>}
         <Button size="small" sx={{ color: "text.secondary" }} onClick={() => onDismiss("app", "later")}>Later</Button>
         <Button size="small" sx={{ color: "text.secondary" }} onClick={() => onDismiss("app", "skip")}>Skip this version</Button>
       </Box>

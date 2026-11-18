@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
 import sys
 import zipfile
+from pathlib import Path
 
 import pytest
 
@@ -24,12 +24,12 @@ from notices import (  # noqa: E402
     _python_components,
     _run,
     _system_natives,
+    bundled_native_component,
     evaluate_licence,
     has_applied_mpl_incompatibility,
     load_policy,
     render,
 )
-
 
 POLICY = load_policy(Path(__file__).parents[1] / "licence_policy.toml")
 
@@ -167,6 +167,42 @@ def test_scoped_cdla_exception_is_limited_to_webpki_root_certs() -> None:
 def test_unknown_licence_fails_with_package_name() -> None:
     with pytest.raises(NoticeError, match="mystery-package"):
         evaluate_licence("mystery-package", "LicenseRef-Unknown", POLICY)
+
+
+def test_raw_wheel_native_files_have_one_reviewed_component() -> None:
+    distributions = _installed_distributions()
+    components: set[str] = set()
+    for package in ("rawpy", "exiv2"):
+        distribution = distributions[package]
+        native_files = [
+            Path(str(item)).name
+            for item in distribution.files or []
+            if notices._is_native(Path(str(item)))
+        ]
+        assert native_files
+        for filename in native_files:
+            component = bundled_native_component(package, filename, POLICY)
+            assert component is not None
+            components.add(component["name"])
+
+    assert {
+        "rawpy native extension",
+        "LibRaw",
+        "JasPer",
+        "libjpeg-turbo",
+        "Little CMS",
+        "python-exiv2 native extension",
+        "Exiv2",
+        "INIReader",
+        "inih",
+        "Brotli",
+        "GNU libintl",
+    } <= components
+
+
+def test_declared_wheel_with_new_native_file_fails_closed() -> None:
+    with pytest.raises(NoticeError, match="rawpy.*no bundled-library policy"):
+        bundled_native_component("rawpy", "libmystery.1.dylib", POLICY)
 
 
 def test_applied_mpl_incompatibility_notice_fails(tmp_path: Path) -> None:
@@ -618,6 +654,49 @@ def test_source_archive_fetches_a_shared_ubuntu_source_once(
     assert calls == ["libavahi-client3"]
     with notices.tarfile.open(archive) as tar:
         assert tar.getnames() == ["ubuntu/avahi-0.8-5ubuntu5.5/avahi_0.8.orig.tar.gz"]
+
+
+def test_lgpl_21_only_gets_the_same_source_offer_as_or_later(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[str] = []
+
+    def fake_python_sdist(component: dict[str, object], directory: Path) -> Path:
+        calls.append(str(component["name"]))
+        path = directory / f"{component['name']}-source.tar.gz"
+        path.write_bytes(b"source")
+        return path
+
+    monkeypatch.setattr(notices, "_download_python_sdist", fake_python_sdist)
+    inventory_data = {
+        "project": {"version": "0.55.0"},
+        "platform": "test",
+        "components": [
+            {
+                "kind": "python",
+                "name": "libraw-only",
+                "version": "1.0",
+                "selected_licence": "LGPL-2.1-only",
+            },
+            {
+                "kind": "python",
+                "name": "libintl-or-later",
+                "version": "1.0",
+                "selected_licence": "LGPL-2.1-or-later",
+            },
+        ],
+        "native_libraries": [],
+    }
+
+    archive = notices._source_archive(inventory_data, tmp_path)
+
+    assert calls == ["libraw-only", "libintl-or-later"]
+    with notices.tarfile.open(archive) as tar:
+        assert tar.getnames() == [
+            "python/libintl-or-later-1.0/libintl-or-later-source.tar.gz",
+            "python/libraw-only-1.0/libraw-only-source.tar.gz",
+        ]
 
 
 def test_linux_freeze_core_relocation_is_attributed_by_basename(

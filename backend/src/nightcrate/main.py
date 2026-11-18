@@ -71,6 +71,7 @@ from nightcrate.db.session import (
     workspace_problem,
 )
 from nightcrate.db.workspace_upgrade import WorkspaceRefused, initialize_workspace
+from nightcrate.services import hips_tiles, project_images, raw_support, sky_tile_cache, thumbnails
 from nightcrate.services import plate_solve as plate_solve_service
 from nightcrate.services.star_catalog import fetch as star_catalog_fetch
 
@@ -239,6 +240,12 @@ async def lifespan(app: FastAPI):
         finally:
             await star_catalog_fetch.shutdown()
             await plate_solve_service.shutdown()
+            await project_images.drain_background_refreshes(cancel_pending=True)
+            await ingest.drain_background_thumbnail_refreshes(cancel_pending=True)
+            await sky_tile_cache.drain_background_fetches()
+            await thumbnails.drain_background_fetches()
+            await hips_tiles.drain_background_fetches()
+            await updates.drain_background_fetches()
             child_processes.terminate_all()
 
 
@@ -481,6 +488,7 @@ async def health() -> dict:
         "version": runtime.app_version(),
         "db_configured": config.db_configured and problem is None,
         "install_kind": runtime.install_kind,
+        "raw_files": raw_support.problem() or "available",
         "workspace_problem": dataclasses.asdict(problem) if problem is not None else None,
     }
 

@@ -1,15 +1,13 @@
 # NightCrate — active plan
 
-**Version:** v0.54.1 — Faster test runs, grid filters and pickers
+**Version:** v0.55.0 — Colour-camera subs and camera raw files
 
-**Branch:** `v0.54.1/faster-tests-and-grid-filters`
+**Branch:** `v0.55.0/colour-camera-subs`
 
 **Status:** Complete — awaiting merge
 
-**Next version** (Fred, 2026-11-15): colour-camera subs in the image
-analyzer, right after v0.54.1 (its number is set when it starts; see the
-roadmap). LAN mode, the second half of Distribution, follows (Fred,
-2026-11-14).
+**Next version:** LAN mode, the second half of Distribution, as v0.56.0
+(Fred, 2026-11-14; renumbered from v0.55.0 on 2026-11-17).
 
 **Tablet and phone review** (Fred, 2026-11-14): "I will do a specific
 targeted review on ipad functionality at a later stage (there's a whole lot
@@ -29,7 +27,352 @@ far:
 - v0.46.0's framing dialog: dragging the frame, and the long-press tooltip;
 - Safari, Firefox and touch devices on v0.48.0's Messier page.
 
+## v0.55.0 — Colour-camera subs and camera raw files
+
+Started on 2026-11-17 from `main` at `aa9bb9c`, after v0.54.1 merged. Fred
+chose the number the same day; LAN mode moves to v0.56.0.
+
+- [x] Start from updated `main` on `v0.55.0/colour-camera-subs`.
+
+**Opening work** (Fred, 2026-11-17; approved plan):
+- [x] **Background image downloads never outlive a test, and quitting the
+  app finishes them.** The "Event loop is closed" annotations on PR #34's
+  Ubuntu jobs were warnings, not failures. A sky-tile or thumbnail
+  download started by a request was still mid-query when the test's event
+  loop closed. Seen only on GitHub's slower machines, and older than
+  v0.54.1. Fix:
+  - drain the downloads at the end of each test, and when the app quits;
+  - a check that fails any test that leaves one running.
+
+  Codex's plan review found more: cancelling a download mid-connect left
+  aiosqlite's thread running, and HiPS tiles and the update check had
+  background tasks of their own. All are drained now.
+- [x] **"used, not listed" becomes "from files"** in a project's Equipment
+  table (Fred: "this is really confusing"). The rig is listed in that very
+  table; the badge means the project's files use it through their folder's
+  rig, though it wasn't added to the project. A rig used only by sessions
+  reads "from sessions", with a hover note saying whether they were entered
+  by hand or built from files that have since gone (Claude's call, after the
+  plan review). Checked in both themes, where the browser caught the value
+  being dropped on its way to the page.
+- [x] **Imaging sessions follow the files** (Fred, asking why he must press
+  "rebuild from subs" after adding files). Whenever a project's lights
+  change, its automatic sessions are rebuilt. The one exception: a project
+  with hand-entered sessions and no automatic ones yet keeps the button,
+  so the same night isn't listed twice until Fred says the files take
+  over. Rejected: always automatic; keeping it manual. Every change to a
+  project's lights refreshes them: scans, folders, deletions, corrections,
+  rigs, the project's location, and a location's time zone (which re-keys
+  the nights first). "Rebuild from subs" stays, and now repairs a scan that
+  failed partway.
+- [x] **Checks** (Claude, 2026-11-17): backend 4,335 passed, 4 skipped, in
+  1:16; ruff, format and bandit clean; every frontend `check:` script and
+  the build pass; lint unchanged at 78. Codex implemented both phases after
+  a two-round plan review.
+
+**Colour-camera subs** (Fred, 2026-11-15, its own version). One-shot-colour
+subs (Bayer mosaics, `BAYERPAT`) show in the analyzer as a grey mosaic. After the auto-stretch, each 2×2 RGGB block is a checker, and when
+zoomed out (28%) the browser's downscaling (`FitsImage.tsx:608`,
+`imageRendering: "auto"`) aliases it into a coarse grid. Only the plate
+solver knows the Bayer pattern (`native_solver/extract.py`, 2×2 bin).
+Scope for its spec:
+- colour display (debayer) and its stretch;
+- per-channel statistics (today a single "L");
+- the pixel inspector;
+- what aberration and star measurements do with colour data;
+- smooth downscaling when zoomed out, for every image.
+
+Found while checking an M101 sub whose Identify overlay looked wrong. The
+overlay was right: ASTAP's independent solve placed every label within
+about 3 px. The NGC objects are HII regions in M101's arms, which a single
+2-minute sub barely shows.
+
+**Finding the Bayer pattern** (Fred, 2026-11-17: "how can you tell what the
+bayer pattern is?"). For the spec:
+- FITS `BAYERPAT` (or MaxIm DL's `COLORTYP`), shifted by `XBAYROFF`/
+  `YBAYROFF`, and flipped vertically when `ROWORDER` differs from the
+  order the pixels are read in;
+- XISF's `ColorFilterArray`;
+- the camera's sensor as a fallback.
+
+Today the header table maps `BAYERPAT`, `COLORTYP` and `ROWORDER`; the
+solver only checks that a pattern exists; the XISF reader ignores
+`ColorFilterArray`; nothing reads the offsets.
+
+**Camera raw files** (Fred, 2026-11-17: include them in this version;
+rejected: their own later version, or not at all). NightCrate reads no
+raw format today (CR2/CR3, NEF, ARW, RAF, ORF, RW2, PEF, DNG).
+- The library (`rawpy` over LibRaw, LGPL-2.1 or CDDL-1.0) needs a licence
+  and packaging review, and Fred's sign-off, before it is added.
+- **Metadata through Exiv2.** Fred chose `pyexiv2` on 2026-11-17.
+  Rejected: ExifTool (an external Perl program to bundle); ExifRead (no
+  CR3 or RAF).
+  - **Claude switched to `exiv2` (python-exiv2 0.19.2, GPL-3.0-or-later)**
+    that night under Fred's delegation. `pyexiv2`'s Mac build loads a
+    Homebrew library from a fixed path and failed to import.
+  - `exiv2` is the same engine, bundles its libraries, has Apple Silicon
+    and Intel Mac builds (macOS 14+), and read all 18 sample raws, CR3
+    included.
+  - The installed app's minimum macOS becomes 14 (Sonoma).
+  - Source runs on Intel Macs and older macOS keep working, with raw files
+    off where `rawpy` (no Intel Mac build) or `exiv2` (macOS 14+) can't
+    install (Fred, 2026-11-17).
+- Raw files carry exposure, ISO, time and camera, and sometimes a
+  maker-specific camera or sensor temperature, but no frame type, filter,
+  target or sky position. The spec decides how scans
+  classify them.
+- Raws share the colour conversion with colour subs.
+- [x] Raw-format definitions researched with Codex (Fred: "consult with
+  Codex for the standard definitions of these raw formats"). Findings for
+  the spec:
+  - `rawpy` 0.28 (MIT, over LibRaw) decodes all nine formats, and its
+    official wheels leave out the GPL demosaic packs. It has Python 3.14
+    wheels for all three systems (checked on PyPI).
+  - It gives the capture time in the computer's local time, without the
+    offset, so a metadata reader is needed too:
+    - `pyexiv2` reads all nine and is GPLv3, but its Mac wheel needs
+      macOS 15 (the app supports 11);
+    - ExifTool reads all nine, but is an external Perl program;
+    - ExifRead is pure Python but has no CR3 or RAF.
+  - Temperatures are maker-specific (camera vs sensor).
+  - Astro traps: Sony's star filtering, Nikon's black clipping, lossy
+    compressed raws.
+- [x] Sample raw files: 18 CC0 files from raw.pixls.us (421 MB, checksums
+  verified) in `Imaging/sample_projects/camera_raw/` on Fred's drive, with
+  a README. They cover CR2, CR3, NEF, ARW, RAF (X-Trans and Bayer), ORF,
+  RW2, PEF and DNG. No openly licensed DSLR night-sky set (lights, darks
+  and flats) exists; one Canon 6D set allows personal use only.
+- [x] **Spec,** approved by Fred on 2026-11-17:
+  [the design](docs/superpowers/specs/2026-11-17-v0.55.0-colour-subs-and-camera-raw-design.md).
+  Approach B: keep the mosaic. Display converts it; statistics use the real
+  colour sites; measurements use merged blocks. Rejected: converting at
+  load (memory, and measurements on interpolated pixels); 2×2 colour
+  superpixels at load (half resolution, no X-Trans). A builder check raised
+  eight questions; Fred answered one (keep source runs on Intel Macs), and
+  Claude settled seven, listed in the spec.
+- [x] **Implementation plan** with Codex's review:
+  [the plan](docs/superpowers/plans/2026-11-17-v0.55.0-colour-subs-and-camera-raw.md),
+  in five phases:
+  1. foundations;
+  2. the project workflow;
+  3. the analyzer and measurements;
+  4. screens;
+  5. packaging.
+
+  Codex's review converged in four rounds; every finding was adopted (the
+  plan's "Codex review" section). Fred approved it on 2026-11-17 and
+  delegated the remaining decisions overnight ("take care of it yourself
+  (discuss with Codex)"). They are listed under "Decisions made overnight"
+  below.
+- [x] **Phase A, foundations:**
+  - the raw libraries and their capability probe;
+  - colour patterns from FITS, XISF and raw files;
+  - the one image loader with its display, per-colour, merged-grey and
+    thumbnail forms;
+  - raw samples and metadata.
+- [x] **The pattern rule checked on real captures** (plan Task 6). A
+  missing `ROWORDER` means top-down, as Siril's code and default do.
+  - A Seestar sub of star-free hydrogen-alpha nebula through a duo-band
+    filter is brightest at the site the rule calls red.
+  - All 18 sample raws convert with colours matching their cameras'
+    previews.
+  - No N.I.N.A., ASIAIR or SharpCap colour sub was reachable that night.
+    Fred checks one at acceptance.
+- [x] **Phase B, the project workflow:**
+  - migration 0075, verified on a copy of Fred's workspace: every row
+    kept, all 656 analysed frames keep their results;
+  - raw scans;
+  - frame types from file and folder names;
+  - filter corrections that survive rescans;
+  - ISO in sessions and calibration matching;
+  - colour thumbnails.
+- [x] **Phase C, the analyzer and measurements:**
+  - per-colour statistics in recorded units;
+  - the pixel inspector's colour site;
+  - stars measured on merged grey, and a full-resolution solve;
+  - the aberration cache versioned;
+  - an archive-reading bug fixed on the way.
+- [x] **Phase D, the screens:**
+  - the filter field in "Correct N frames", "Select its frames", and ISO
+    and Gain columns only when used;
+  - the "inferred" pills;
+  - the analyzer's Metadata tab, the "Colour pattern" choice, and the
+    inspector naming each site's colour.
+
+  Checked in a browser in both themes, with raw files of four makes, a
+  raw dark and flat, Seestar colour subs, and a one-plane FITS without a
+  pattern. Ten fixes came out of that check, all rechecked.
+- [x] **Phase E, packaging:**
+  - the installed app needs macOS 14;
+  - each release feed names a minimum OS, which the update notice and
+    the shell both respect;
+  - the frozen build bundles both raw libraries, and its self-test reads
+    a generated raw file.
+- [x] **A fresh Codex review of the data side** found five issues, all
+  fixed:
+  - migration 0076 relabels old frames whose time came from the file;
+  - raw scans no longer decode pixels;
+  - an archive's name stays out of classification unless its root is
+    bound;
+  - hand-entered sessions take ISO;
+  - old thumbnail versions are deleted when replaced.
+
+  Migration 0076 verified on the workspace copy: no row changed.
+- [x] **A fresh Codex review of the pixel side** found four issues, all
+  fixed:
+  - measurements now use an unclipped scale, so a calibrated float sub's
+    negative sky level isn't reported as 0; mono 16-bit results are
+    unchanged;
+  - both macOS update checks refuse when the Mac's version can't be read;
+  - a chosen colour pattern no longer carries over to another image in
+    the same file;
+  - a statistics field was missing from the frontend's type.
+
+  Claude's check of those fixes added two small ones: the histogram
+  counts clipped samples in its end bins, and one plain sentence explains
+  a refused update.
+- [x] **A fresh Codex review of Claude's documentation:**
+  - the reference DDL was invalid SQL; it now loads, and matches a
+    freshly migrated database table for table and view for view;
+  - stale schema descriptions, a leftover "macOS 15", and the bundled
+    libraries' credits were fixed;
+  - LibRaw is recorded as LGPL-2.1-only.
+- [x] **Prepare** (Claude, 2026-11-17): version 0.55.0 in `VERSION`,
+  `backend/pyproject.toml`, `frontend/package.json`, `Cargo.toml` and
+  the schema-document headers. Checks:
+  - **Backend:** 4,671 passed, 5 skipped, in 3:22 (the skips are the
+    usual four plus the real-sample raw test, which passes with
+    `NIGHTCRATE_RAW_SAMPLES` set); no stray-thread warnings; ruff and
+    format clean; bandit 0 findings.
+  - **Coverage of the new modules:** `cfa` 91%, `mosaic` 95%,
+    `pixel_loader` 87%, `raw_io` 89%, `raw_support` 93%,
+    `update_notices` 98%.
+  - **Frontend:** the build and all 11 `check:` scripts pass; lint 76,
+    below the 78 baseline.
+  - **Packaging:** 47 tests; the shell's Rust tests, 27.
+  - **Docs:** no broken local links; the reference DDL loads and matches
+    a freshly migrated database.
+  - **`make dev` restarted on Fred's workspace.** It backed the workspace
+    up first (`backups/nightcrate-before-0.55.0-…`), then applied 0075
+    and 0076. All 3,183 frames are there, all 656 analysed results kept
+    (tagged `adu`), every capture time labelled `header`. Health reports
+    raw files available.
+- [x] **Compatibility review, during acceptance** (Fred, 2026-11-17:
+  "backward compatibility is an absolute REQUIREMENT"). His rule is now in
+  `CLAUDE.md`. Claude and a fresh Codex session each reviewed v0.55.0
+  against v0.54.1 (records `51`–`59`).
+  - **Fixed:**
+    - older image files are served until their replacement exists, even
+      when the source is offline: project images, saved framings (the
+      Gallery and Home had listed 3 of Fred's 27), catalog thumbnails. A background refresh writes the new file, one project
+      image at a time, and shutdown doesn't wait for queued refreshes.
+      Fred's first look had sat on black tiles for about two minutes;
+    - a plate solve run in v0.55.0 showed no image: it wrote
+      `full_v2.jpg` and the route read only `full.jpg`;
+    - a frame the user corrected kept its "guessed" pill;
+    - saved aberration analyses weren't shown for an image whose file is
+      unreachable (v0.54.1 showed them).
+  - **Accepted by Fred:** migration 0075 still clears the quality results
+    it can't vouch for.
+  - **Checked, not breaks:**
+    - no release exists, so no installed v0.54 app can be offered the
+      macOS 14 update;
+    - a plate-solve preview takes about 0.15 s longer and peaks at
+      427 MB instead of 172 MB (a real 26 MP frame, timed against
+      v0.54.1);
+    - a frame with no type at all may get one from its folder name;
+    - automatic sessions follow the lights (Fred's decision);
+    - levels in recorded units are a deliberate correction.
+  - Live check on Fred's workspace: the Gallery lists all three sizes for
+    all nine projects; an old small framing was served byte for byte, then
+    replaced by its `_v2_` file; the server stopped in about a second.
+  - A fresh Codex review of Claude's documentation corrected the 0075
+    description (unsigned 16-bit only) and the record's wording, and
+    found the aberration break above.
+  - **Checks after the fixes:** the full backend suite, 4,688 passed and 5
+    skipped (before the small aberration fix; its modules then passed, 52);
+    ruff, format and bandit clean; the frontend build and the
+    catalog-marker check pass.
+- [x] **Added at acceptance** (Fred, 2026-11-17):
+  - **The project Plate Solve tab** (spec §12, plan Task 17), from a
+    mockup Fred chose and refined: a collapsible "Filters" panel
+    (catalog, type and minimum-size filters), the
+    image with zoom and pan, and "Other objects" and "Main targets" tables
+    that fill the page; grey, blue, yellow and blue-with-yellow markers.
+    Codex reviewed the plan (eleven findings, all adopted) and built it;
+    Claude's three rendered rounds fixed the height allocation, blurred
+    labels, a slow 3,000-object field and a click swallowed after a drag.
+  - **Clicks inside large outlines,** in the Image Analyzer as well: an
+    outline's interior no longer takes clicks, so smaller objects inside a
+    big nebula can be selected.
+  - **Imaging rules notes no longer block the next field** (Claude): they
+    let the pointer through and close while a control is in use.
+  - **The plate-solve focal length check is gone** (Fred, 2026-11-18): it
+    assumed the image's pixels were the camera's, which drizzled, binned or
+    resized images break. Removed from the tab, the API and the backend.
+  - **Raw files' metadata hides undecoded binary values** (Fred,
+    2026-11-18: "hide binary fields in general"): byte blobs over 16 bytes
+    and number lists over 64 values that Exiv2 can't interpret, such as
+    Canon's MakerNote (45,072 bytes) and `ColorData`. Decoded maker-note
+    tags stay. Checked on all 18 sample raws: no MakerNote row remains.
+  - **The pixel inspector's colour rows are back** (Fred, 2026-11-18: "what
+    happened to the named colors in pixel inspector?"). v0.55.0 had replaced
+    them with the recorded value alone; both now show. Its "Move over the
+    image" prompt no longer flashes while the pointer moves. Checked on the
+    Canon 600D sample: no prompt in 60 moves, "charcoal" with `#292e36`.
+  - **Checks after these:** the full backend suite again (4,692 passed, 5 skipped), ruff,
+    format and bandit clean, the build and `check:plate-solve` pass, lint 76.
+  - **Checks:** the full backend suite, 4,692 passed and 5 skipped (before
+    the last frontend-only fixes); the affected backend modules again
+    (102); ruff, format and bandit clean; the frontend build, all 12
+    `check:` scripts and lint at 76. A fresh Codex review of Claude's
+    changes found seven issues, all fixed and re-checked in a browser.
+- [x] Fred's acceptance (2026-11-18: "ok, I'm happy with things now. please
+  continue and finalize").
+
+**Decisions made overnight** (Claude, 2026-11-17, under Fred's delegation;
+Codex consulted):
+- **`exiv2` instead of `pyexiv2`**, so the installed app needs macOS 14
+  (above).
+- **A missing `ROWORDER` means top-down,** confirmed on Seestar subs
+  (above).
+- **Every pre-0.55 XISF quality result is cleared:** nothing stored proves
+  its sample format. FITS results stay where the old and new numbers
+  agree (mono 16-bit, no scaling). On Fred's workspace all 656 were kept.
+- **The screens** follow one idea: a small outlined pill marks what
+  NightCrate inferred rather than read (`guessed`, `estimated`,
+  `file time`, `your choice`), the same shape as the Equipment "from
+  files" badge.
+  - Two labels are plainer than the plan's: "RGGB (this rig's camera)"
+    and "1,234 ADU, under a red filter".
+  - The "Colour pattern" choice sits in the analyzer's title bar.
+- **Raw exposures come from the file's EXIF fraction,** so 1/125 s is
+  exactly 0.008 s and darks match lights.
+- **Left alone:** the metadata grid's console warning about mounting while
+  its tab is hidden. It predates this version.
+- **`make dev` was stopped** while the migration was unfinished, so it
+  couldn't touch Fred's real workspace. It restarts at the end, and the
+  app backs the workspace up before migrating.
+
+**For Fred's acceptance:**
+- One colour sub from N.I.N.A. or ASIAIR (the M101 sub): nebula and stars
+  in natural colour, the sky neutral after the stretch.
+- A scan of `sample_projects/camera_raw`.
+- The Files tab and the analyzer on his own projects.
+- The Gallery and Home with his saved framings, in each view size, and a
+  new plate solve's image.
+- The new Plate Solve tab on his own solves, and the imaging rules notes.
+
+**From the start sweep (2026-11-17):** nothing is due.
+- v0.46.0-R1 waits for the LAN design, now v0.56.0.
+- v0.47.0-R1 and R2 stay parked, as Fred asked on 2026-11-12. Claude
+  explained both again and suggested closing R1 and tying R2 to the
+  calibration coverage work; Fred made no change.
+
 ## v0.54.1 — Faster test runs, grid filters and pickers
+
+Merged in [PR #34](https://github.com/fbaptiste/nightcrate/pull/34) on
+2026-11-17 (`aa9bb9c`).
 
 Started on 2026-11-15 from `main` at `36738e7`, after v0.54.0 merged.
 Fred chose the version number the same day; LAN mode stays v0.55.0. He
@@ -238,6 +581,16 @@ in `docs/superpowers/` follow from it.
 actual release yet. we still need to work through some additional things"). Merging doesn't
 release; `release.yml` builds a draft only when Fred says "release".
 - [ ] The additional work Fred brings next.
+- [x] **The first release must include v0.55.0's update guard** (Codex's
+  plan review, 2026-11-17).
+  - v0.55.0 needs macOS 14. Versions before it offer any update to any
+    Apple Silicon Mac, whatever its system version.
+  - No release has been published yet (`gh release list` is empty), so no
+    installed app lacks the guard. Releasing a version without it would
+    strand people on older macOS with an app that won't start.
+  - **Done in v0.55.0:** the feed names each platform's minimum, and the
+    update notice and the shell both refuse below it. So the first
+    release must be v0.55.0 or later.
 - [ ] Fred's check on Windows: install, first run, a workspace, Use My
   Location, and the SmartScreen step. A Windows 11 virtual machine on his
   Mac runs the x64 installer through Windows' x64 emulation; CI covers
@@ -4293,31 +4646,12 @@ Messier checklist became v0.48.0 and object search v0.49.0. The updated XISF
 specification became v0.50.0. On 2026-11-12 Fred placed a cleanup version,
 v0.51.0, before Distribution. On 2026-11-13 he placed the sky chart as
 v0.52.0 and the Home page as v0.53.0, both before Distribution. On
-2026-11-14 he split Distribution in two: installers and updates as v0.54.0
-(the active version above), and LAN mode as v0.55.0.
+2026-11-14 he split Distribution in two: installers and updates as v0.54.0,
+and LAN mode as v0.55.0. On 2026-11-17 he numbered colour-camera subs and
+camera raw files v0.55.0, and LAN mode became v0.56.0.
 Version numbers are otherwise assigned when each version starts.
 
-### Colour-camera subs in the image analyzer (next, after v0.54.1)
-
-Fred, 2026-11-15, its own version. One-shot-colour raws (Bayer mosaics,
-`BAYERPAT`) show in the analyzer as a grey
-mosaic. After the auto-stretch, each 2×2 RGGB block is a checker, and when
-zoomed out (28%) the browser's downscaling (`FitsImage.tsx:608`,
-`imageRendering: "auto"`) aliases it into a coarse grid. Only the plate
-solver knows the Bayer pattern (`native_solver/extract.py`, 2×2 bin).
-Scope for its spec:
-- colour display (debayer) and its stretch;
-- per-channel statistics (today a single "L");
-- the pixel inspector;
-- what aberration and star measurements do with colour data;
-- smooth downscaling when zoomed out, for every image.
-
-Found while checking an M101 sub whose Identify overlay looked wrong. The
-overlay was right: ASTAP's independent solve placed every label within
-about 3 px. The NGC objects are HII regions in M101's arms, which a single
-2-minute sub barely shows.
-
-### LAN mode (v0.55.0)
+### LAN mode (v0.56.0)
 
 The second half of Distribution (Fred, 2026-11-14). Only these decisions
 exist so far; its spec follows v0.54.0.

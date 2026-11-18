@@ -1,5 +1,6 @@
 use crate::{restart_backend, BackendSlot};
 use serde::Serialize;
+use serde_json::Value;
 use std::io::{BufRead, BufReader, Write};
 use std::net::{TcpStream, ToSocketAddrs};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -89,6 +90,93 @@ fn is_expected_version(available: Option<&str>, expected: &str) -> bool {
 
 fn should_release_reservation(owns_install_guard: bool, install_failed: bool) -> bool {
     owns_install_guard && install_failed
+}
+
+fn numeric_version(value: &str) -> Option<Vec<u64>> {
+    let parts: Option<Vec<_>> = value
+        .split('.')
+        .map(|part| {
+            if part.is_empty() || !part.bytes().all(|byte| byte.is_ascii_digit()) {
+                None
+            } else {
+                part.parse().ok()
+            }
+        })
+        .collect();
+    parts.filter(|parts| !parts.is_empty())
+}
+
+fn version_is_older(current: &str, required: &str) -> Option<bool> {
+    let (Some(mut current), Some(mut required)) =
+        (numeric_version(current), numeric_version(required))
+    else {
+        return None;
+    };
+    let length = current.len().max(required.len());
+    current.resize(length, 0);
+    required.resize(length, 0);
+    Some(current < required)
+}
+
+fn platform_min_os<'a>(manifest: &'a Value, target: &str) -> Option<&'a str> {
+    let platforms = manifest.get("platforms")?;
+    let qualified_target = format!("{target}-{}", std::env::consts::ARCH);
+    platforms
+        .get(target)
+        .or_else(|| platforms.get(&qualified_target))?
+        .get("min_os")?
+        .as_str()
+}
+
+fn macos_requirement(required: &str) -> String {
+    let Some(mut parts) = numeric_version(required) else {
+        return required.to_owned();
+    };
+    while parts.len() > 1 && parts.last() == Some(&0) {
+        parts.pop();
+    }
+    parts
+        .iter()
+        .map(u64::to_string)
+        .collect::<Vec<_>>()
+        .join(".")
+}
+
+fn minimum_os_error(current: Option<&str>, required: &str) -> Option<String> {
+    if numeric_version(required).is_none() {
+        return Some("This update can't be checked against this Mac's system version.".to_owned());
+    }
+    if current.and_then(|value| version_is_older(value.trim(), required)) == Some(false) {
+        return None;
+    }
+    Some(format!(
+        "This update needs macOS {} or later.",
+        macos_requirement(required)
+    ))
+}
+
+#[cfg(target_os = "macos")]
+fn enforce_minimum_os(manifest: &Value, target: &str) -> Result<(), InstallError> {
+    use std::process::Command;
+
+    let Some(required) = platform_min_os(manifest, target) else {
+        return Ok(());
+    };
+    let current = Command::new("/usr/bin/sw_vers")
+        .arg("-productVersion")
+        .output()
+        .ok()
+        .filter(|output| output.status.success())
+        .and_then(|output| String::from_utf8(output.stdout).ok());
+    if let Some(message) = minimum_os_error(current.as_deref(), required) {
+        return Err(failure(InstallStage::Download, message));
+    }
+    Ok(())
+}
+
+#[cfg(not(target_os = "macos"))]
+fn enforce_minimum_os(_manifest: &Value, _target: &str) -> Result<(), InstallError> {
+    Ok(())
 }
 
 pub fn allowed_test_url(value: &str) -> bool {
@@ -274,6 +362,7 @@ async fn install_inner(
         return Err(changed_failure());
     }
     let update = update.expect("the version check accepted an available update");
+    enforce_minimum_os(&update.raw_json, &update.target)?;
 
     let renewal = Renewal::start(port, token.to_owned());
     let failed = Arc::clone(&renewal.failed);
@@ -400,5 +489,47 @@ mod tests {
         assert!(!should_release_reservation(false, true));
         assert!(!should_release_reservation(true, false));
         assert!(should_release_reservation(true, true));
+    }
+
+    #[test]
+    fn compares_macos_versions_numerically_and_reads_platform_minimum() {
+        assert_eq!(version_is_older("13.6.9", "14.0"), Some(true));
+        assert_eq!(version_is_older("14.0", "14.0"), Some(false));
+        assert_eq!(version_is_older("14.0.1", "14.0"), Some(false));
+        assert_eq!(version_is_older("15.0", "14.0"), Some(false));
+        assert_eq!(version_is_older("14.10", "14.2"), Some(false));
+        assert_eq!(version_is_older("unknown", "14.0"), None);
+        let manifest = serde_json::json!({
+            "platforms": {
+                "darwin-aarch64": {"url": "https://example.test", "signature": "x", "min_os": "14.0"}
+            }
+        });
+        assert_eq!(platform_min_os(&manifest, "darwin-aarch64"), Some("14.0"));
+        if std::env::consts::ARCH == "aarch64" {
+            assert_eq!(platform_min_os(&manifest, "darwin"), Some("14.0"));
+        }
+        assert_eq!(platform_min_os(&manifest, "linux-x86_64"), None);
+        assert_eq!(macos_requirement("14.0"), "14");
+    }
+
+    #[test]
+    fn minimum_macos_check_fails_closed() {
+        assert_eq!(minimum_os_error(Some("14.0"), "14.0"), None);
+        assert_eq!(
+            minimum_os_error(Some("13.6.9"), "14.0").as_deref(),
+            Some("This update needs macOS 14 or later.")
+        );
+        assert_eq!(
+            minimum_os_error(None, "14.0").as_deref(),
+            Some("This update needs macOS 14 or later.")
+        );
+        assert_eq!(
+            minimum_os_error(Some("unknown"), "14.0").as_deref(),
+            Some("This update needs macOS 14 or later.")
+        );
+        assert_eq!(
+            minimum_os_error(Some("15.0"), "unknown").as_deref(),
+            Some("This update can't be checked against this Mac's system version.")
+        );
     }
 }

@@ -154,6 +154,7 @@ export default function SessionFormDialog({
   );
   const [numSubs, setNumSubs] = useState(session ? String(session.num_subs) : "");
   const [gain, setGain] = useState(session?.gain != null ? String(session.gain) : "");
+  const [iso, setIso] = useState(session?.iso != null ? String(session.iso) : "");
   const [binning, setBinning] = useState(
     session?.binning != null ? String(session.binning) : session ? "" : "1",
   );
@@ -164,7 +165,12 @@ export default function SessionFormDialog({
   const exposureNum = Number(exposure);
   const subsNum = Number(numSubs);
   const valid =
-    filterSel != null && exposure !== "" && exposureNum > 0 && numSubs !== "" && subsNum > 0;
+    filterSel != null &&
+    exposure !== "" &&
+    exposureNum > 0 &&
+    numSubs !== "" &&
+    subsNum > 0 &&
+    (iso === "" || (Number.isInteger(Number(iso)) && Number(iso) > 0));
 
   const handleSave = async () => {
     if (!valid) return;
@@ -176,6 +182,7 @@ export default function SessionFormDialog({
         exposure_seconds: exposureNum,
         num_subs: subsNum,
         gain: gain === "" ? null : Number(gain),
+        iso: iso === "" ? null : Number(iso),
         binning: binning === "" ? null : Number(binning),
         session_date: date || null,
         rig_id: rig?.id ?? null,
@@ -255,6 +262,17 @@ export default function SessionFormDialog({
               sx={{ flex: 1 }}
             />
             <TextField
+              label="ISO"
+              type="number"
+              value={iso}
+              onChange={(e) => setIso(e.target.value)}
+              inputProps={{ min: 1, step: 1 }}
+              sx={{ flex: 1 }}
+            />
+          </Box>
+
+          <Box sx={{ display: "flex", gap: 2 }}>
+            <TextField
               select
               label="Binning"
               value={binning}
@@ -273,7 +291,7 @@ export default function SessionFormDialog({
               value={date}
               onChange={(e) => setDate(e.target.value)}
               InputLabelProps={{ shrink: true }}
-              sx={{ flex: 1.4 }}
+              sx={{ flex: 1 }}
             />
           </Box>
 

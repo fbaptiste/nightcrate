@@ -89,6 +89,13 @@ instructions to restore removed features.
   platform_machine == 'arm64'`: it has no Intel wheel or source distribution.
   Changes require both native resolution and
   `uv sync --python-platform x86_64-apple-darwin --dry-run` (mlx absent on Intel).
+- Camera raw files (v0.55.0) use `rawpy` (no Intel Mac build) and `exiv2`
+  (python-exiv2; Mac builds need macOS 14, Darwin 23), with markers in
+  `backend/pyproject.toml`. Where they can't install, source runs keep working
+  with raw files off. `services/raw_support.problem()` is the capability probe;
+  never import either library outside `raw_io` and `raw_support`. The same two
+  resolution checks apply. `pyexiv2` was rejected: its Mac wheel loads a
+  Homebrew library from a fixed path.
 
 ## Shared patterns
 
@@ -119,6 +126,16 @@ instructions to restore removed features.
 
 ## Database and data preservation
 
+- **Backward compatibility is required** (Fred, 2026-11-17). An upgrade keeps
+  everything a user already has working: databases, settings, workspaces,
+  project files, caches, saved UI state, and the behaviour they rely on.
+  - Convert whatever a change makes incompatible: a forward migration for the
+    database, an idempotent conversion for files and settings.
+  - Never discard user data, or results the user would have to redo.
+  - A cache may change format only if the old copy is still served until its
+    replacement exists, including when the source is offline.
+  - A break that can't be avoided needs Fred's decision before it ships.
+    Plans and reviews state each change's upgrade path.
 - **Never edit an existing migration, even one added on this unmerged branch.**
   Development reloads apply migrations immediately; yoyo will not rerun an
   edited file. Add the next numbered forward migration instead.

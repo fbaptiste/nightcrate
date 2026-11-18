@@ -29,7 +29,9 @@ from nightcrate.core import child_processes
 from nightcrate.core.tasks import settle
 from nightcrate.services import (
     fits_io,
+    pixel_loader,
     pxiproject_io,
+    raw_io,
     solve_operations,
     standard_io,
     xisf_io,
@@ -51,6 +53,7 @@ from nightcrate.services.plate_solve_models import (
     PlateSolveResult,
     SolveAttempt,
 )
+from nightcrate.services.raw_support import RawUnavailable
 from nightcrate.services.star_catalog import handles
 
 logger = logging.getLogger("nightcrate")
@@ -88,7 +91,13 @@ def _read_astap_source(image_path: str, hdu: int):
         )
     except FileNotFoundError:
         raise
-    except (OSError, ValueError, xisf_io.XISFError, pxiproject_io.PxiProjectError) as exc:
+    except (
+        OSError,
+        ValueError,
+        RawUnavailable,
+        xisf_io.XISFError,
+        pxiproject_io.PxiProjectError,
+    ) as exc:
         raise ImageReadError(str(exc)) from exc
 
 
@@ -236,6 +245,8 @@ def read_header_cards(
         return fits_io.read_header(source, hdu)
     if file_type == "xisf":
         return xisf_io.read_header(source, hdu)
+    if file_type == "raw":
+        return raw_io.read_header(source)
     return standard_io.read_header(source)
 
 
@@ -1291,6 +1302,33 @@ async def run_astap_chain(
     return last_result
 
 
+def _restore_sensor_result(
+    result: PlateSolveResult,
+    block_size: int,
+    width: int,
+    height: int,
+) -> None:
+    """Convert a solution on block pixels back to sensor-pixel coordinates."""
+    if block_size == 1:
+        return
+    for name in ("cd1_1", "cd1_2", "cd2_1", "cd2_2"):
+        value = getattr(result, name)
+        if value is not None:
+            setattr(result, name, value / block_size)
+    for name in ("crpix1", "crpix2"):
+        value = getattr(result, name)
+        if value is not None:
+            setattr(result, name, block_size * value + (1 - block_size) / 2)
+    if result.pixel_scale_arcsec is not None:
+        result.pixel_scale_arcsec /= block_size
+        result.fov_width_arcmin = round(result.pixel_scale_arcsec * width / 60.0, 2)
+        result.fov_height_arcmin = round(result.pixel_scale_arcsec * height / 60.0, 2)
+    if result.rms_px is not None:
+        result.rms_px *= block_size
+    result.image_width = width
+    result.image_height = height
+
+
 async def _do_solve(
     astap_binary: Path,
     image_path: str,
@@ -1343,18 +1381,43 @@ async def _do_solve(
         )
     with tempfile.TemporaryDirectory(prefix="nightcrate_solve_") as tmp:
         try:
-            image_file = await asyncio.to_thread(
-                _prepare_image_file,
-                fresh_source(),
-                file_type,
-                image_index,
-                hdu,
-                Path(tmp),
-                header_keywords=raw_header,
-            )
+            if file_type == "raw":
+                image = await asyncio.to_thread(
+                    pixel_loader.load_resolved,
+                    fresh_source(),
+                    file_type,
+                    image_index,
+                    hdu,
+                )
+                grey, block_size = pixel_loader.grey_of(image)
+                image_file = await asyncio.to_thread(
+                    _write_temp_fits,
+                    grey,
+                    Path(tmp),
+                    raw_header,
+                )
+                sensor_width, sensor_height = image.width, image.height
+            else:
+                image_file = await asyncio.to_thread(
+                    _prepare_image_file,
+                    fresh_source(),
+                    file_type,
+                    image_index,
+                    hdu,
+                    Path(tmp),
+                    header_keywords=raw_header,
+                )
+                block_size = 1
+                sensor_width = sensor_height = None
         except FileNotFoundError:
             raise
-        except (OSError, ValueError, xisf_io.XISFError, pxiproject_io.PxiProjectError) as exc:
+        except (
+            OSError,
+            ValueError,
+            RawUnavailable,
+            xisf_io.XISFError,
+            pxiproject_io.PxiProjectError,
+        ) as exc:
             raise ImageReadError(str(exc)) from exc
         try:
             width, height = await asyncio.to_thread(_get_dimensions_from_file, image_file)
@@ -1370,7 +1433,7 @@ async def _do_solve(
 
         hints = hints_for(
             cards,
-            image_height=height,
+            image_height=sensor_height or height,
             ra_hint=ra_hint,
             dec_hint=dec_hint,
             scale_hint_arcsec=scale_hint_arcsec,
@@ -1387,7 +1450,9 @@ async def _do_solve(
             astap_binary,
             image_file,
             position=position,
-            scale_arcsec=hints.scale_arcsec,
+            scale_arcsec=(
+                hints.scale_arcsec * block_size if hints.scale_arcsec is not None else None
+            ),
             image_width=width,
             image_height=height,
             deadline=deadline,
@@ -1397,6 +1462,8 @@ async def _do_solve(
             position_source=hints.position_source,
             scale_source=hints.scale_source,
         )
+        if sensor_width is not None and sensor_height is not None:
+            _restore_sensor_result(result, block_size, sensor_width, sensor_height)
         result.solver = "astap"
         result.solve_time_seconds = round(time.monotonic() - started, 1)
         return result

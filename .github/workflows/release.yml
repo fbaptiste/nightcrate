@@ -374,6 +374,10 @@ jobs:
           import os
           import pathlib
           import subprocess
+          import sys
+
+          sys.path.insert(0, "packaging")
+          from release_feed import platform_entry
 
           version = os.environ["VERSION_INPUT"]
           release = pathlib.Path("release")
@@ -441,13 +445,15 @@ jobs:
               )
               if trusted is None or f"version:{version}" not in trusted.split():
                   raise SystemExit(f"wrong trusted comment in {signature.name}: {trusted!r}")
-              platforms[target] = {
-                  "url": (
+              platforms[target] = platform_entry(
+                  target,
+                  url=(
                       "https://github.com/fbaptiste/nightcrate/releases/download/"
                       f"v{version}/{archive.name}"
                   ),
-                  "signature": signature_text,
-              }
+                  signature=signature_text,
+                  tauri_config=config,
+              )
           (release / "latest.json").write_text(
               json.dumps({"version": version, "platforms": platforms}, indent=2, sort_keys=True)
               + "\n",

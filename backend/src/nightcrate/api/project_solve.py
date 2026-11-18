@@ -20,7 +20,6 @@ from nightcrate.api._common import get_or_404, integrity_guard, load_other_names
 from nightcrate.api.app_activity import admit_work
 from nightcrate.api.plate_solve import _failure_detail, query_dsos_in_cone
 from nightcrate.api.project_solve_models import (
-    FocalLengthEstimate,
     IdentifiedDso,
     ProjectSolveRequest,
     ProjectSolveResponse,
@@ -37,15 +36,18 @@ from nightcrate.services.image_annotations import compute_fov, project_dsos
 from nightcrate.services.path_resolver import resolve_path
 from nightcrate.services.plate_solve import run_solve, validate_astap_path
 from nightcrate.services.plate_solve_models import AstapLaunchError, ImageReadError
-from nightcrate.services.project_images import VARIANT_SIZES, generate_rendered_images
-from nightcrate.services.rig_calculators import estimate_focal_length_mm
-from nightcrate.services.rig_setups import project_setups
+from nightcrate.services.project_images import (
+    VARIANT_SIZES,
+    generate_rendered_images,
+    rendition_path,
+)
 
 logger = logging.getLogger("nightcrate")
 
 router = APIRouter(prefix="/api/projects", tags=["Projects"])
 
 _VALID_VARIANTS = set(VARIANT_SIZES.keys())
+_CATALOG_ID_BATCH_SIZE = 500
 _project_solve_locks: dict[int, asyncio.Lock] = {}
 
 _DSO_COLUMNS = (
@@ -64,6 +66,16 @@ def _solve_dir(project_id: int) -> Path:
 
 def _staging_dir(project_id: int, operation_id) -> Path:
     return _solve_dir(project_id) / f".staging-{operation_id}"
+
+
+def _solve_image_candidates(solve_dir: Path, solve_id: int | None, variant: str) -> list[Path]:
+    """Return current and legacy solve-image paths in lookup order."""
+    paths: list[Path] = []
+    if solve_id is not None:
+        generation_dir = solve_dir / str(solve_id)
+        paths.extend([rendition_path(generation_dir, variant), generation_dir / f"{variant}.jpg"])
+    paths.extend([rendition_path(solve_dir, variant), solve_dir / f"{variant}.jpg"])
+    return paths
 
 
 def _ensure_primary_fits_image(image_path: str) -> None:
@@ -150,51 +162,6 @@ def _wcs_from_solve(row: dict) -> WcsParams:
     )
 
 
-async def _load_focal_length_estimates(
-    conn, project_id: int, pixel_scale_arcsec: float | None
-) -> list[FocalLengthEstimate]:
-    if (
-        pixel_scale_arcsec is None
-        or not math.isfinite(pixel_scale_arcsec)
-        or pixel_scale_arcsec <= 0
-    ):
-        return []
-
-    estimates: list[FocalLengthEstimate] = []
-    for rig in await project_setups(conn, project_id):
-        for setup in rig.setups:
-            cursor = await conn.execute(
-                """
-                SELECT cam.model_name AS camera_name, sen.pixel_size_um,
-                       tc.effective_focal_length_mm AS rig_focal_length_mm
-                FROM camera cam
-                JOIN sensor sen ON sen.id = cam.sensor_id
-                JOIN telescope_configuration tc ON tc.id = ?
-                WHERE cam.id = ?
-                """,
-                (setup.parts.telescope_configuration_id, setup.parts.camera_id),
-            )
-            row = await cursor.fetchone()
-            if row is None:
-                continue
-            estimated = estimate_focal_length_mm(row["pixel_size_um"], pixel_scale_arcsec)
-            if estimated is None:
-                continue
-            estimates.append(
-                FocalLengthEstimate(
-                    rig_id=rig.rig_id,
-                    rig_setup_id=setup.rig_setup_id,
-                    setup_until_at=setup.until_at,
-                    rig_name=rig.rig_name,
-                    camera_name=row["camera_name"],
-                    pixel_size_um=row["pixel_size_um"],
-                    rig_focal_length_mm=row["rig_focal_length_mm"],
-                    estimated_focal_length_mm=estimated,
-                )
-            )
-    return estimates
-
-
 async def _assemble_response(conn, project_id: int) -> ProjectSolveResponse | None:
     cursor = await conn.execute("SELECT * FROM project_solve WHERE project_id = ?", (project_id,))
     solve = await cursor.fetchone()
@@ -210,7 +177,27 @@ async def _assemble_response(conn, project_id: int) -> ProjectSolveResponse | No
     )
     link_rows = [row_to_dict(r) for r in await cursor.fetchall()]
 
-    other_names = await load_other_names(conn, [int(row["dso_id"]) for row in link_rows])
+    dso_ids = [int(row["dso_id"]) for row in link_rows]
+    other_names = await load_other_names(conn, dso_ids)
+    unique_dso_ids = list(dict.fromkeys(dso_ids))
+    catalogs: dict[int, list[str]] = {dso_id: [] for dso_id in unique_dso_ids}
+    for start in range(0, len(unique_dso_ids), _CATALOG_ID_BATCH_SIZE):
+        batch = unique_dso_ids[start : start + _CATALOG_ID_BATCH_SIZE]
+        # Numbered placeholders let both UNION branches reuse the same batch
+        # without doubling SQLite's bound-variable count.
+        placeholders = ",".join(f"?{index}" for index in range(1, len(batch) + 1))
+        catalog_sql = (
+            "SELECT dso_id, catalog FROM ("  # nosec B608 - generated placeholders only
+            "SELECT dso_id, catalog FROM dso_designation "
+            f"WHERE dso_id IN ({placeholders}) UNION "
+            "SELECT gm.dso_id, g.catalog FROM dso_group_member gm "
+            "JOIN dso_group g ON g.id = gm.group_id "
+            f"WHERE gm.dso_id IN ({placeholders})) "
+            "ORDER BY dso_id, catalog"
+        )
+        cursor = await conn.execute(catalog_sql, batch)
+        for row in await cursor.fetchall():
+            catalogs[int(row["dso_id"])].append(str(row["catalog"]))
 
     # is_main now derives from project_target (the persistent source of truth),
     # so toggling a chip from the Overview and from the Plate Solve tab share
@@ -240,6 +227,7 @@ async def _assemble_response(conn, project_id: int) -> ProjectSolveResponse | No
             primary_designation=a.primary_designation,
             common_name=a.common_name,
             other_names=other_names.get(a.id, []),
+            catalogs=catalogs.get(a.id, []),
             obj_type=a.obj_type,
             type_group=a.type_group,
             constellation=a.constellation,
@@ -260,9 +248,6 @@ async def _assemble_response(conn, project_id: int) -> ProjectSolveResponse | No
     ]
     # Mains first, then largest objects.
     objects.sort(key=lambda o: (not o.is_main, -(o.maj_axis_arcmin or 0.0)))
-    focal_length_estimates = await _load_focal_length_estimates(
-        conn, project_id, solve["pixel_scale_arcsec"]
-    )
 
     return ProjectSolveResponse(
         id=solve["id"],
@@ -294,7 +279,6 @@ async def _assemble_response(conn, project_id: int) -> ProjectSolveResponse | No
         scale_stage=solve["scale_stage"],
         wcs=wcs,
         objects=objects,
-        focal_length_estimates=focal_length_estimates,
     )
 
 
@@ -780,10 +764,16 @@ async def get_solve_image(
         row = await cursor.fetchone()
     if solve_id is not None and (row is None or int(row["id"]) != solve_id):
         return Response(status_code=204)
-    path = solve_dir / str(row["id"]) / f"{variant}.jpg" if row is not None else None
-    if path is None or not path.is_file():
-        path = solve_dir / f"{variant}.jpg"
-    if not path.is_file():
+    solve_id_value = int(row["id"]) if row is not None else None
+    path = next(
+        (
+            candidate
+            for candidate in _solve_image_candidates(solve_dir, solve_id_value, variant)
+            if candidate.is_file()
+        ),
+        None,
+    )
+    if path is None:
         return Response(status_code=204)
     return FileResponse(
         path,

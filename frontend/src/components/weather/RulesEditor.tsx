@@ -66,18 +66,62 @@ const CLOUD_MODELS: Array<{
   },
 ];
 
+/**
+ * A control's explanation, shown above it on hover or keyboard focus.
+ *
+ * It must never get in the way of the next field: the note lets the pointer
+ * through (`disableInteractive`), closes as soon as the control is used
+ * (click, tick or typing), and stays closed until the pointer leaves the
+ * control or focus moves on. Sweeping across several fields doesn't open each
+ * one in turn (`enterNextDelay`).
+ */
 function NoteTooltip({ note, children }: { note: string; children: React.ReactElement }) {
+  const [open, setOpen] = useState(false);
+  // `inUse` drives rendering; `inUseRef` is what MUI's delayed open reads, since
+  // its timer keeps the onOpen of the render that started it.
+  const [inUse, setInUse] = useState(false);
+  const inUseRef = useRef(false);
+  const setUsed = (value: boolean) => {
+    inUseRef.current = value;
+    setInUse(value);
+    if (value) setOpen(false);
+  };
   return (
-    <Tooltip
-      arrow
-      placement="top-start"
-      enterDelay={300}
-      enterTouchDelay={0}
-      describeChild
-      title={note}
+    // `display: contents` keeps the wrapper out of the layout; it only listens.
+    <Box
+      component="span"
+      sx={{ display: "contents" }}
+      onPointerDownCapture={(event: React.PointerEvent) => {
+        // Touch keeps today's tap-to-read behaviour until the tablet review.
+        if (event.pointerType !== "touch") setUsed(true);
+      }}
+      onKeyDownCapture={(event: React.KeyboardEvent) => {
+        if (event.key !== "Tab" && event.key !== "Shift") setUsed(true);
+      }}
+      onPointerLeave={() => setUsed(false)}
+      onBlurCapture={() => setUsed(false)}
     >
-      {children}
-    </Tooltip>
+      <Tooltip
+        arrow
+        placement="top-start"
+        enterDelay={600}
+        enterNextDelay={600}
+        enterTouchDelay={0}
+        disableInteractive
+        // While in use, no hover opening at all: this also stops MUI from
+        // putting the note back as the browser's own title popup.
+        disableHoverListener={inUse}
+        describeChild
+        title={note}
+        open={open}
+        onOpen={() => {
+          if (!inUseRef.current) setOpen(true);
+        }}
+        onClose={() => setOpen(false)}
+      >
+        {children}
+      </Tooltip>
+    </Box>
   );
 }
 

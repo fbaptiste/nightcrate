@@ -19,6 +19,7 @@ import MenuItem from "@mui/material/MenuItem";
 import TextField from "@mui/material/TextField";
 import CircularProgress from "@mui/material/CircularProgress";
 import { fetchRigs } from "@/api/rigs";
+import { fetchCamera } from "@/api/equipment";
 import { invalidateProjectInfo } from "@/api/projectInfo";
 import { invalidateProjectLinks } from "@/api/projectTargetLinks";
 import { fetchProject, fetchProjectRigSetups } from "@/api/projects";
@@ -172,6 +173,8 @@ export default function ProjectCatalogTab({ projectId }: Props) {
   // Multi-select for bulk corrections. Cleared whenever the visible set changes,
   // so a hidden selection can never be acted on by mistake.
   const [selected, setSelected] = useState<Set<CatalogSelectionKey>>(new Set());
+  const [selectingFolderId, setSelectingFolderId] = useState<number | null>(null);
+  const [pendingScrollFrameId, setPendingScrollFrameId] = useState<number | null>(null);
   const itemsRef = useRef<CatalogItem[]>([]);
   const lastSelectedRef = useRef<CatalogSelectionKey | null>(null);
 
@@ -332,7 +335,6 @@ export default function ProjectCatalogTab({ projectId }: Props) {
     invalidateCatalog();
     queryClient.invalidateQueries({ queryKey: ["project-sessions", projectId] });
     queryClient.invalidateQueries({ queryKey: ["project-integration", projectId] });
-    queryClient.invalidateQueries({ queryKey: ["project-solve", projectId] });
     void invalidateProjectInfo(queryClient, projectId);
     queryClient.invalidateQueries({ queryKey: ["equipment-usage"] });
     queryClient.invalidateQueries({ queryKey: ["home"] });
@@ -459,7 +461,7 @@ export default function ProjectCatalogTab({ projectId }: Props) {
       const n = r.sub_frames + r.processed_images + r.files;
       clearSelection();
       setConfirmDelete(false);
-      invalidateCatalog();
+      invalidateRigDependent();
       setSnack(`Removed ${n.toLocaleString()} item${n === 1 ? "" : "s"} from the catalog`);
     },
     onError: (e: Error) => {
@@ -478,6 +480,7 @@ export default function ProjectCatalogTab({ projectId }: Props) {
     }) => addFolder(projectId, path, false, rigId),
     onSuccess: (folder) => {
       invalidateFolders();
+      invalidateRigDependent();
       setSnack("Folder added — scanning…");
       ingestMut.mutate(folder.id); // newly added folders scan automatically
     },
@@ -556,6 +559,20 @@ export default function ProjectCatalogTab({ projectId }: Props) {
     ]);
     return allRigs.filter((rig) => (rig.active && rig.is_mine) || usedIds.has(rig.id));
   }, [allRigs, folders, project, projectRigSetups]);
+  const cameraIds = useMemo(
+    () => [...new Set(rigs.map((rig) => rig.camera_id))].sort((a, b) => a - b),
+    [rigs],
+  );
+  const { data: cameraPatterns = new Map<number, string | null>() } = useQuery({
+    queryKey: ["project-rig-camera-patterns", cameraIds],
+    queryFn: async () => new Map(
+      await Promise.all(cameraIds.map(async (id) => {
+        const camera = await fetchCamera(id);
+        return [id, camera.sensor.bayer_pattern] as const;
+      }))),
+    enabled: cameraIds.length > 0,
+    staleTime: Infinity,
+  });
   const folderRigMut = useMutation({
     mutationFn: ({ folderId, rigId }: { folderId: number; rigId: number | null }) =>
       setFolderRig(projectId, folderId, rigId),
@@ -598,9 +615,12 @@ export default function ProjectCatalogTab({ projectId }: Props) {
           id: f.id,
           path: f.path,
           name: f.path.split("/").pop() ?? String(f.id),
+          suggestedPattern: isSubFrame(f)
+            ? cameraPatterns.get(rigs.find((rig) => rig.name === f.rig_name)?.camera_id ?? -1) ?? null
+            : null,
         }));
     },
-    [items, tab, uncatalogedQuery.data?.files],
+    [cameraPatterns, items, rigs, tab, uncatalogedQuery.data?.files],
   );
 
   const openInAnalyzer = useCallback(
@@ -668,6 +688,63 @@ export default function ProjectCatalogTab({ projectId }: Props) {
     selectableKeys.length > 0 &&
     selectableKeys.every((key) => selected.has(key));
 
+  const correctionRigFilters = useMemo(() => {
+    const frames = correctTarget === "bulk"
+      ? items.filter(isSubFrame).filter((frame) => selected.has(subFrameSelectionKey(frame.id)))
+      : correctTarget
+        ? [correctTarget]
+        : [];
+    const rigNames = new Set(frames.flatMap((frame) => frame.rig_name ? [frame.rig_name] : []));
+    return rigs
+      .filter((rig) => rigNames.has(rig.name))
+      .flatMap((rig) => [
+        ...(rig.single_filter_name ? [rig.single_filter_name] : []),
+        ...rig.filter_slots.map((slot) => slot.filter_name),
+      ]);
+  }, [correctTarget, items, rigs, selected]);
+
+  const selectFolderFrames = async (folderId: number, folderPath: string) => {
+    const nextTab: TabKey = isFrameTab ? tab : "light";
+    const nextSort: CatalogSort = isFrameTab ? sort : "date_desc";
+    setSelectingFolderId(folderId);
+    try {
+      const page = await fetchCatalogFrames(projectId, 100000, 0, nextTab, null, nextSort);
+      const root = folderPath.replace(/[\\/]+$/, "");
+      const inFolder = page.rows.filter((frame) => {
+        const path = frame.path ?? "";
+        return path === root || path.startsWith(`${root}/`) || path.startsWith(`${root}\\`) || path.startsWith(`${root}::`);
+      });
+      if (nextTab !== tab) setTab(nextTab);
+      setFilterPill(null);
+      setSort(nextSort);
+      setUnclassifiedOnly(false);
+      queryClient.setQueryData(
+        ["project-catalog", projectId, nextTab, null, nextSort, false],
+        { pages: [page], pageParams: [0] },
+      );
+      setSelected(new Set(inFolder.map((frame) => subFrameSelectionKey(frame.id))));
+      lastSelectedRef.current = inFolder.length
+        ? subFrameSelectionKey(inFolder[inFolder.length - 1].id)
+        : null;
+      setPendingScrollFrameId(inFolder[0]?.id ?? null);
+      if (!inFolder.length) setSnack("No frames from this folder are in this category");
+    } catch (error) {
+      setSnack(error instanceof Error ? error.message : String(error));
+    } finally {
+      setSelectingFolderId(null);
+    }
+  };
+
+  useEffect(() => {
+    if (pendingScrollFrameId == null) return;
+    const frame = requestAnimationFrame(() => {
+      document.querySelector(`[data-catalog-frame-id="${pendingScrollFrameId}"]`)
+        ?.scrollIntoView({ block: "center", behavior: "smooth" });
+      setPendingScrollFrameId(null);
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [pendingScrollFrameId, items]);
+
   return (
     <Box
       sx={{
@@ -717,7 +794,7 @@ export default function ProjectCatalogTab({ projectId }: Props) {
               key={f.id}
               sx={(theme) => ({
                 display: "grid",
-                gridTemplateColumns: "minmax(180px, 1fr) auto auto auto",
+                gridTemplateColumns: "minmax(180px, 1fr) auto auto auto auto",
                 gap: "12px",
                 alignItems: "center",
                 px: "14px",
@@ -726,7 +803,7 @@ export default function ProjectCatalogTab({ projectId }: Props) {
                 borderColor: theme.palette.mode === "dark" ? "#34373d" : "#dcd9d4",
                 "&:last-child": { borderBottom: 0 },
                 "@container (max-width: 899px)": {
-                  gridTemplateColumns: "minmax(130px, 160px) minmax(130px, 170px) auto auto",
+                  gridTemplateColumns: "minmax(130px, 160px) minmax(130px, 170px) auto auto auto",
                   gap: "8px",
                   alignItems: "center",
                   justifyContent: "start",
@@ -773,6 +850,15 @@ export default function ProjectCatalogTab({ projectId }: Props) {
                   </MenuItem>
                 ))}
               </TextField>
+              <Button
+                size="small"
+                onClick={() => void selectFolderFrames(f.id, f.path)}
+                disabled={selectingFolderId !== null}
+                startIcon={selectingFolderId === f.id ? <CircularProgress size={14} /> : undefined}
+                sx={{ minHeight: 32, whiteSpace: "nowrap" }}
+              >
+                Select its frames
+              </Button>
               <Button
                 size="small"
                 onClick={() => ingestMut.mutate(f.id)}
@@ -1291,7 +1377,9 @@ export default function ProjectCatalogTab({ projectId }: Props) {
         projectId={projectId}
         frame={correctTarget === "bulk" ? null : correctTarget}
         frameIds={correctTarget === "bulk" ? selectedFrameIds : []}
+        rigFilters={correctionRigFilters}
         onSaved={(updated) => {
+          invalidateRigDependent();
           if (updated) {
             // A frame_type correction moves the frame to a different category
             // tab, so patching it in place would leave a stale row behind in

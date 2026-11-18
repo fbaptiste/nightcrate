@@ -33,8 +33,10 @@ import json
 import logging
 import os
 from contextlib import ExitStack
-from pathlib import Path
+from datetime import UTC, datetime, timedelta, timezone
+from pathlib import Path, PurePosixPath
 from typing import get_args
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import FileResponse, Response
@@ -46,7 +48,13 @@ from nightcrate.core.compute import effective_worker_count
 from nightcrate.core.config import get_settings
 from nightcrate.db.session import get_db, workspace_key
 from nightcrate.services import ingest_progress
-from nightcrate.services.catalog_thumbnail import DEFAULT_MAX_PX, render_thumbnail_bytes
+from nightcrate.services.catalog_thumbnail import (
+    DEFAULT_MAX_PX,
+    render_thumbnail_bytes,
+)
+from nightcrate.services.catalog_thumbnail import (
+    RENDER_VERSION as THUMB_RENDER_VERSION,
+)
 from nightcrate.services.fits_header_map import extract_metadata
 from nightcrate.services.frame_quality import analyze_frame_file, wants_stars
 from nightcrate.services.ingest_classify import (
@@ -97,7 +105,7 @@ from nightcrate.services.ingest_sessions import (
     project_geo_timezone,
 )
 from nightcrate.services.line_names import canonicalize_line_name
-from nightcrate.services.session_derivation import derive_sessions
+from nightcrate.services.session_derivation import refresh_auto_sessions
 
 logger = logging.getLogger("nightcrate.ingest")
 _LOG_PREFIX = "[ingest]"
@@ -176,6 +184,8 @@ _ANALYZE_LOCK = asyncio.Lock()
 # the loader (each render still reads a file). Renders run in a thread; results
 # are cached on disk by content hash, so this only gates first-time renders.
 _THUMB_SEM = asyncio.Semaphore(3)
+_thumbnail_in_flight: dict[Path, asyncio.Task[None]] = {}
+_thumbnail_running: set[asyncio.Task[None]] = set()
 
 
 def _thumb_cache_dir() -> Path:
@@ -260,6 +270,9 @@ async def add_folder(project_id: int, body: SourceFolderCreate) -> SourceFolder:
         await assign_rigs_and_sessions(
             conn, project_id, await project_geo_timezone(conn, project_id)
         )
+        await refresh_auto_sessions(
+            conn, project_id, tz_name=await project_geo_timezone(conn, project_id)
+        )
         await conn.commit()
         return await _fetch_folder(conn, folder_id)
 
@@ -296,21 +309,14 @@ async def update_folder(project_id: int, folder_id: int, body: SourceFolderUpdat
         if body.rig_id is not None:
             await get_or_404(conn, "rig", body.rig_id, "Rig")
         rig_changed = body.rig_id != folder["rig_id"]
-        had_auto_batches = False
-        if rig_changed:
-            cursor = await conn.execute(
-                "SELECT 1 FROM project_session WHERE project_id = ? AND source = 'auto' LIMIT 1",
-                (project_id,),
-            )
-            had_auto_batches = await cursor.fetchone() is not None
         await conn.execute(
             "UPDATE project_source_folder SET rig_id = ? WHERE id = ?",
             (body.rig_id, folder_id),
         )
         tz_name = await project_geo_timezone(conn, project_id)
         await assign_rigs_and_sessions(conn, project_id, tz_name)
-        if rig_changed and had_auto_batches:
-            await derive_sessions(conn, project_id, tz_name=tz_name)
+        if rig_changed:
+            await refresh_auto_sessions(conn, project_id, tz_name=tz_name)
         await conn.commit()
         return await _fetch_folder(conn, folder_id)
 
@@ -380,6 +386,9 @@ async def remove_folder(project_id: int, folder_id: int) -> None:
         # rig + session rather than only sweeping. This also drops emptied sessions.
         await assign_rigs_and_sessions(
             conn, project_id, await project_geo_timezone(conn, project_id)
+        )
+        await refresh_auto_sessions(
+            conn, project_id, tz_name=await project_geo_timezone(conn, project_id)
         )
         await conn.commit()
 
@@ -482,17 +491,17 @@ async def _run_ingest(project_id: int, folders: list[str], workspace: str) -> In
                         stack.enter_context(child_processes.registered_pool(pool))
                     for folder in folders:
                         await _ingest_folder(
-                            conn, project_id, run_id, folder, pool, errors, counters
+                            conn, project_id, run_id, folder, pool, errors, counters, tz_name
                         )
                     await _reclassify_dark_flats(conn, project_id)
                     # Rig + session are assigned in one post-pass rather than per file: a
                     # frame's rig depends on which bound folder *innermost* contains it,
                     # which isn't known until every folder is on the table. The pass also
-                    # sweeps sessions a re-scan emptied. The user-facing project_session
-                    # rows are never touched by ingest — deriving those is an explicit
-                    # action on the Sessions tab.
+                    # sweeps sessions a re-scan emptied. Automatic capture batches
+                    # follow those cataloged lights in this same transaction.
                     ingest_progress.stage("grouping")
                     await assign_rigs_and_sessions(conn, project_id, tz_name)
+                    await refresh_auto_sessions(conn, project_id, tz_name=tz_name)
                     status = "completed"
                 except asyncio.CancelledError as exc:
                     status = "cancelled"
@@ -614,7 +623,9 @@ def _first_error(errors: list[dict]) -> str | None:
     return f"{label}: {first['error']}"
 
 
-async def _ingest_folder(conn, project_id, run_id, folder, pool, errors, counters) -> None:
+async def _ingest_folder(
+    conn, project_id, run_id, folder, pool, errors, counters, geo_tz: str | None
+) -> None:
     ingest_progress.folder(folder)
     ingest_progress.stage("listing")
     report = await _to_thread_and_drain_on_cancel(scan_directory, folder)
@@ -642,7 +653,7 @@ async def _ingest_folder(conn, project_id, run_id, folder, pool, errors, counter
             file_counters = counters.copy()
             await conn.execute("SAVEPOINT ingest_file")
             try:
-                await _persist_parsed(conn, project_id, run_id, result, counters)
+                await _persist_parsed(conn, project_id, run_id, result, counters, geo_tz, folder)
             except Exception as exc:  # noqa: BLE001 - keep the other files in this folder
                 await conn.execute("ROLLBACK TO ingest_file")
                 await conn.execute("RELEASE ingest_file")
@@ -796,12 +807,20 @@ async def _parse_in_pool(entries, pool) -> list[dict]:
     return list(await asyncio.gather(*futures))
 
 
-async def _persist_parsed(conn, project_id, run_id, result, counters) -> None:
+async def _persist_parsed(
+    conn, project_id, run_id, result, counters, geo_tz: str | None, bound_folder: str
+) -> None:
     meta = result["meta"]
     raw_header = result["raw_header"]
-    route, frame_type = classify_frame(meta, raw_header, filename=Path(result["path"]).name)
+    filename = Path(result["path"].rsplit("::", 1)[-1]).name
+    route, frame_type, frame_type_basis = classify_frame(
+        meta,
+        raw_header,
+        filename=filename,
+        folder_names=_classification_folder_names(result["path"], bound_folder),
+    )
 
-    date_obs = _coerce_date_obs(meta.get("date_obs"), result["mtime"])
+    date_obs, date_obs_source = _coerce_date_obs(meta, result["mtime"], geo_tz)
 
     if route == CATEGORY_PROCESSED:
         await _upsert_processed(
@@ -826,7 +845,9 @@ async def _persist_parsed(conn, project_id, run_id, result, counters) -> None:
         meta,
         raw_header,
         frame_type,
+        frame_type_basis,
         date_obs,
+        date_obs_source,
     )
     counters["inserted" if was_insert else "updated"] += 1
 
@@ -844,7 +865,9 @@ async def _upsert_sub_frame(
     meta,
     raw_header,
     frame_type,
+    frame_type_basis,
     date_obs,
+    date_obs_source,
 ) -> tuple[int, bool]:
     content_hash = result["content_hash"]
     cursor = await conn.execute(
@@ -860,11 +883,14 @@ async def _upsert_sub_frame(
 
     cols = {
         "frame_type": frame_type,
+        "frame_type_basis": frame_type_basis,
         "filter_name_hint": _as_str(meta.get("filter_name")) if keeps_filter else None,
         "exposure_seconds": _as_float(meta.get("exposure_time")) or 0.0,
         "gain": _as_float(meta.get("gain")),
+        "iso": _as_int(meta.get("iso")),
         "offset_adu": _as_float(meta.get("offset")),
         "sensor_temp_c": _as_float(meta.get("sensor_temp")),
+        "camera_temp_c": _as_float(meta.get("camera_temp")),
         "set_temp_c": _as_float(meta.get("sensor_temp_target")),
         "binning_x": _as_int(meta.get("binning_x")),
         "binning_y": _as_int(meta.get("binning_y")),
@@ -872,9 +898,13 @@ async def _upsert_sub_frame(
         "image_width": _as_int(meta.get("image_width")),
         "image_height": _as_int(meta.get("image_height")),
         "date_obs_utc": date_obs,
+        "date_obs_source": date_obs_source,
         "airmass": _as_float(meta.get("airmass")),
         "object_hint": _as_str(meta.get("object_name")),
         "fits_header_json": json.dumps(raw_header),
+        "file_metadata_json": (
+            json.dumps(result["file_metadata"]) if result.get("file_metadata") is not None else None
+        ),
         "ingestion_run_id": run_id,
     }
 
@@ -892,11 +922,11 @@ async def _upsert_sub_frame(
     # Re-scan must never clobber a hand correction (migration 0043): frame_type
     # keeps its stored value while frame_type_source = 'user'.
     #
-    # filter_name_hint is DERIVED, not user-owned — it is a function of (header
-    # FILTER, effective frame type), where "effective" means the corrected type
-    # when one was set. Recomputing it here rather than freezing it means a frame
-    # corrected *to* light or flat gets its filter name back, which a one-way
-    # freeze would have withheld forever (and matching_flats joins on it).
+    # An automatic filter is derived from (header FILTER, effective frame type),
+    # where "effective" means the corrected type when one was set. A user filter
+    # is preserved verbatim. Recomputing the automatic case means a frame corrected
+    # *to* light or flat gets its header filter back, while matching calibration
+    # types lose it (matching_flats joins on this column).
     cols.pop("filter_name_hint")  # rebuilt below from the effective frame type
     raw_hint = _as_str(meta.get("filter_name"))
     set_clause = ", ".join(
@@ -907,10 +937,32 @@ async def _upsert_sub_frame(
     )
     await conn.execute(
         f"UPDATE sub_frame SET {set_clause}, filter_name_hint = CASE WHEN "  # nosec B608 - set_clause is built from a fixed internal column dict; every value is parameterized
+        "filter_name_source = 'user' THEN filter_name_hint WHEN "
         "(CASE WHEN frame_type_source = 'user' THEN frame_type ELSE ? END) "
         "IN ('light', 'flat') THEN ? ELSE NULL END WHERE id = ?",
         (*cols.values(), frame_type, raw_hint, existing["id"]),
     )
+    if _legacy_quality_unchanged(result, raw_header):
+        await conn.execute(
+            "UPDATE sub_frame SET quality_units = 'adu' WHERE id = ? "
+            "AND quality_method IS NULL AND (hfr IS NOT NULL OR star_count IS NOT NULL "
+            "OR median_adu IS NOT NULL OR background_adu IS NOT NULL "
+            "OR snr_estimate IS NOT NULL OR quality_analyzed_at IS NOT NULL "
+            "OR quality_status IS NOT NULL OR quality_error IS NOT NULL)",
+            (existing["id"],),
+        )
+    else:
+        await conn.execute(
+            "UPDATE sub_frame SET hfr = NULL, star_count = NULL, median_adu = NULL, "
+            "background_adu = NULL, snr_estimate = NULL, quality_analyzed_at = NULL, "
+            "quality_status = NULL, quality_error = NULL, quality_units = NULL "
+            "WHERE id = ? AND quality_method IS NULL AND (hfr IS NOT NULL "
+            "OR star_count IS NOT NULL OR median_adu IS NOT NULL "
+            "OR background_adu IS NOT NULL OR snr_estimate IS NOT NULL "
+            "OR quality_analyzed_at IS NOT NULL OR quality_status IS NOT NULL "
+            "OR quality_error IS NOT NULL)",
+            (existing["id"],),
+        )
     return existing["id"], False
 
 
@@ -1265,6 +1317,9 @@ async def catalog_delete(project_id: int, body: CatalogDeleteRequest) -> Catalog
         await assign_rigs_and_sessions(
             conn, project_id, await project_geo_timezone(conn, project_id)
         )
+        await refresh_auto_sessions(
+            conn, project_id, tz_name=await project_geo_timezone(conn, project_id)
+        )
         await conn.commit()
 
     logger.info(
@@ -1511,7 +1566,8 @@ async def _write_quality(
     await conn.execute(
         "UPDATE sub_frame SET hfr = ?, star_count = ?, median_adu = ?, "
         "background_adu = ?, snr_estimate = ?, quality_status = ?, "
-        "quality_error = ?, quality_analyzed_at = datetime('now'), "
+        "quality_error = ?, quality_method = 2, quality_units = ?, "
+        "quality_analyzed_at = datetime('now'), "
         "updated_at = datetime('now') WHERE id = ?",
         (
             out["hfr"] if out else None,
@@ -1521,6 +1577,7 @@ async def _write_quality(
             out["snr_estimate"] if out else None,
             status,
             error,
+            out.get("quality_units") if out else None,
             frame_id,
         ),
     )
@@ -1553,13 +1610,31 @@ def _header_filter_name(fits_header_json: str | None) -> str | None:
     return _as_str(extract_metadata(header).get("filter_name"))
 
 
+async def _automatic_filter_name(conn, frame, frame_type: str) -> str | None:
+    if frame_type not in ("light", "flat"):
+        return None
+    header_name = _header_filter_name(frame["fits_header_json"])
+    if header_name is not None:
+        return header_name
+    if frame["file_metadata_json"] is None or frame["rig_id"] is None:
+        return None
+    cursor = await conn.execute(
+        "SELECT f.model_name FROM rig r LEFT JOIN filter f ON f.id = r.single_filter_id "
+        "WHERE r.id = ?",
+        (frame["rig_id"],),
+    )
+    row = await cursor.fetchone()
+    return row["model_name"] if row is not None else None
+
+
 async def _apply_correction(conn, project_id: int, frame_id: int, body: FrameCorrection) -> None:
     """Apply one classification correction. Caller owns the transaction.
 
     Shared by the single-frame and bulk endpoints so the two can never drift.
     """
     cursor = await conn.execute(
-        "SELECT id, frame_type, fits_header_json FROM sub_frame WHERE id = ? AND project_id = ?",
+        "SELECT id, frame_type, frame_type_source, filter_name_source, fits_header_json, "
+        "file_metadata_json, rig_id FROM sub_frame WHERE id = ? AND project_id = ?",
         (frame_id, project_id),
     )
     frame = await cursor.fetchone()
@@ -1579,14 +1654,20 @@ async def _apply_correction(conn, project_id: int, frame_id: int, body: FrameCor
         # filter), and one corrected back to light/flat gets the header's FILTER
         # again. A one-way null would strand the frame with no filter forever, and
         # matching_flats joins on this column.
-        updates["filter_name_hint"] = (
-            _header_filter_name(frame["fits_header_json"])
-            if body.frame_type in ("light", "flat")
-            else None
-        )
+        if frame["filter_name_source"] == "auto" and "filter" not in sent:
+            updates["filter_name_hint"] = await _automatic_filter_name(conn, frame, body.frame_type)
+
+    if "filter" in sent:
+        updates["filter_name_hint"] = body.filter
+        updates["filter_name_source"] = "user"
 
     for f in body.reset_to_auto:
-        updates[f"{f}_source"] = "auto"
+        updates["filter_name_source" if f == "filter" else f"{f}_source"] = "auto"
+        if f == "filter":
+            effective_type = updates.get("frame_type", frame["frame_type"])
+            updates["filter_name_hint"] = await _automatic_filter_name(
+                conn, frame, str(effective_type)
+            )
 
     if not updates:
         return
@@ -1612,6 +1693,9 @@ async def correct_frame_classification(
         await conn.execute("PRAGMA foreign_keys = ON")
         await get_or_404(conn, "project", project_id, "Project")
         await _apply_correction(conn, project_id, frame_id, body)
+        await refresh_auto_sessions(
+            conn, project_id, tz_name=await project_geo_timezone(conn, project_id)
+        )
         await conn.commit()
         cursor = await conn.execute(
             _FRAME_SELECT + "WHERE sf.id = ? GROUP BY sf.id",  # nosec B608 - fixed literal
@@ -1636,6 +1720,9 @@ async def bulk_correct_frames(project_id: int, body: BulkFrameCorrection) -> Bul
         await get_or_404(conn, "project", project_id, "Project")
         for frame_id in body.frame_ids:
             await _apply_correction(conn, project_id, frame_id, body)
+        await refresh_auto_sessions(
+            conn, project_id, tz_name=await project_geo_timezone(conn, project_id)
+        )
         await conn.commit()
         return BulkCorrectionResult(updated=len(body.frame_ids))
 
@@ -1836,9 +1923,24 @@ async def _serve_thumbnail(row):
     if row is None or not row["path"]:
         raise HTTPException(status_code=404, detail="No file for this item")
 
-    cache_path = _thumb_cache_dir() / f"{row['content_hash']}_{DEFAULT_MAX_PX}.jpg"
+    candidates = _thumbnail_candidates(_thumb_cache_dir(), row["content_hash"], DEFAULT_MAX_PX)
+    cache_path = candidates[0]
     if cache_path.is_file():
         return FileResponse(cache_path, media_type="image/jpeg")
+
+    older = next((path for path in candidates[1:] if path.is_file()), None)
+    if older is not None:
+        cached = await _read_thumbnail_generation(older, candidates)
+        if cached is not None:
+            path, body = cached
+            if path != cache_path:
+                _refresh_thumbnail_in_background(
+                    cache_path,
+                    row["content_hash"],
+                    row["path"],
+                    DEFAULT_MAX_PX,
+                )
+            return Response(content=body, media_type="image/jpeg")
 
     async with _THUMB_SEM:
         if cache_path.is_file():  # another request rendered it while we waited
@@ -1848,11 +1950,114 @@ async def _serve_thumbnail(row):
         except Exception as exc:  # noqa: BLE001 - unreadable source → no preview, not a 500
             logger.info("%s thumbnail render failed for %s: %s", _LOG_PREFIX, row["path"], exc)
             raise HTTPException(status_code=404, detail="Could not render thumbnail") from exc
-        _write_cache_atomic(cache_path, data)
+        if _write_cache_atomic(cache_path, data):
+            _delete_older_thumbnail_generations(
+                cache_path.parent,
+                row["content_hash"],
+                DEFAULT_MAX_PX,
+            )
     return Response(content=data, media_type="image/jpeg")
 
 
-def _write_cache_atomic(cache_path: Path, data: bytes) -> None:
+def _thumbnail_candidates(cache_dir: Path, digest: str, max_px: int) -> list[Path]:
+    """Return catalog-thumbnail generations newest first."""
+    stem = f"{digest}_{max_px}"
+    paths = [cache_dir / f"{stem}_v{THUMB_RENDER_VERSION}.jpg"]
+    paths.extend(
+        cache_dir / f"{stem}_v{version}.jpg" for version in range(THUMB_RENDER_VERSION - 1, 0, -1)
+    )
+    paths.append(cache_dir / f"{stem}.jpg")
+    return paths
+
+
+async def _read_thumbnail_generation(
+    path: Path, candidates: list[Path]
+) -> tuple[Path, bytes] | None:
+    """Read a cached generation, retrying lookup once if refresh replaced it."""
+    try:
+        return path, await asyncio.to_thread(path.read_bytes)
+    except FileNotFoundError:
+        path = next((candidate for candidate in candidates if candidate.is_file()), None)
+        if path is None:
+            return None
+        try:
+            return path, await asyncio.to_thread(path.read_bytes)
+        except FileNotFoundError:
+            return None
+
+
+async def _refresh_thumbnail(
+    cache_path: Path,
+    digest: str,
+    source_path: str,
+    max_px: int,
+) -> None:
+    async with _THUMB_SEM:
+        task = asyncio.current_task()
+        if task is not None:
+            _thumbnail_running.add(task)
+        try:
+            if cache_path.is_file():
+                return
+            data = await asyncio.to_thread(render_thumbnail_bytes, source_path, max_px)
+            if _write_cache_atomic(cache_path, data):
+                _delete_older_thumbnail_generations(cache_path.parent, digest, max_px)
+        finally:
+            if task is not None:
+                _thumbnail_running.discard(task)
+
+
+async def _background_thumbnail_wrapper(
+    cache_path: Path,
+    digest: str,
+    source_path: str,
+    max_px: int,
+) -> None:
+    try:
+        await _refresh_thumbnail(cache_path, digest, source_path, max_px)
+    except Exception as exc:  # noqa: BLE001 - refresh failures preserve the older file
+        logger.info(
+            "%s background thumbnail refresh failed for %s: %s",
+            _LOG_PREFIX,
+            source_path,
+            exc,
+        )
+    finally:
+        if _thumbnail_in_flight.get(cache_path) is asyncio.current_task():
+            _thumbnail_in_flight.pop(cache_path, None)
+
+
+def _refresh_thumbnail_in_background(
+    cache_path: Path,
+    digest: str,
+    source_path: str,
+    max_px: int,
+) -> None:
+    if cache_path in _thumbnail_in_flight:
+        return
+    task = asyncio.create_task(
+        _background_thumbnail_wrapper(cache_path, digest, source_path, max_px)
+    )
+    _thumbnail_in_flight[cache_path] = task
+
+
+async def drain_background_thumbnail_refreshes(*, cancel_pending: bool = False) -> None:
+    """Drain thumbnail refreshes, optionally cancelling queued work."""
+    snapshot = tuple(_thumbnail_in_flight.items())
+    tasks = tuple(task for _, task in snapshot)
+    if cancel_pending:
+        running = _thumbnail_running.copy()
+        for task in tasks:
+            if not task.done() and task not in running:
+                task.cancel()
+    if tasks:
+        await asyncio.gather(*tasks, return_exceptions=True)
+    for path, task in snapshot:
+        if _thumbnail_in_flight.get(path) is task:
+            _thumbnail_in_flight.pop(path, None)
+
+
+def _write_cache_atomic(cache_path: Path, data: bytes) -> bool:
     """Write thumbnail bytes to the cache via a temp file + rename."""
     try:
         cache_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1861,6 +2066,22 @@ def _write_cache_atomic(cache_path: Path, data: bytes) -> None:
         tmp.replace(cache_path)
     except OSError as exc:  # caching is best-effort — serve the bytes regardless
         logger.warning("%s could not cache thumbnail %s: %s", _LOG_PREFIX, cache_path.name, exc)
+        return False
+    return True
+
+
+def _delete_older_thumbnail_generations(cache_dir: Path, digest: str, max_px: int) -> None:
+    """Remove exact older names for one catalog-thumbnail identity."""
+    for path in _thumbnail_candidates(cache_dir, digest, max_px)[1:]:
+        try:
+            path.unlink(missing_ok=True)
+        except OSError:
+            logger.warning(
+                "%s could not remove obsolete thumbnail %s",
+                _LOG_PREFIX,
+                path.name,
+                exc_info=True,
+            )
 
 
 # Shared frame projection: the list endpoint and the single-frame refetch (after
@@ -1877,11 +2098,12 @@ _FULL_SCALE_SQL = "CASE WHEN sen.adc_bit_depth > 0 THEN (1 << sen.adc_bit_depth)
 
 _FRAME_SELECT = (
     "SELECT sf.id, sf.frame_type, sf.filter_name_hint, "
-    "sf.object_hint, sf.exposure_seconds, sf.gain, sf.set_temp_c, sf.binning_x, "
+    "sf.object_hint, sf.exposure_seconds, sf.gain, sf.iso, sf.set_temp_c, "
+    "sf.camera_temp_c, sf.binning_x, "
     "sf.binning_y, sf.image_width, sf.image_height, sf.date_obs_utc, sf.accepted, "
-    "sf.frame_type_source, "
+    "sf.frame_type_source, sf.frame_type_basis, sf.filter_name_source, sf.date_obs_source, "
     "sf.hfr, sf.star_count, sf.median_adu, sf.background_adu, sf.snr_estimate, "
-    "sf.quality_status, sf.quality_analyzed_at, "
+    "sf.quality_status, sf.quality_analyzed_at, sf.quality_units, "
     "r.name AS rig_name, "
     f"{_PIXEL_SCALE_SQL} AS pixel_scale_arcsec, "  # nosec B608
     f"{_FULL_SCALE_SQL} AS full_scale_adu, "  # nosec B608
@@ -1916,7 +2138,9 @@ def _catalog_frame(d: dict, night_tz: str | None) -> CatalogFrame:
         object_hint=d.get("object_hint"),
         exposure_seconds=d.get("exposure_seconds"),
         gain=d.get("gain"),
+        iso=d.get("iso"),
         set_temp_c=d.get("set_temp_c"),
+        camera_temp_c=d.get("camera_temp_c"),
         binning=binning,
         image_width=d.get("image_width"),
         image_height=d.get("image_height"),
@@ -1926,6 +2150,9 @@ def _catalog_frame(d: dict, night_tz: str | None) -> CatalogFrame:
         accepted=bool(d["accepted"]) if d.get("accepted") is not None else None,
         rig_name=d.get("rig_name"),
         frame_type_source=d.get("frame_type_source"),
+        frame_type_basis=d.get("frame_type_basis"),
+        filter_name_source=d.get("filter_name_source"),
+        date_obs_source=d.get("date_obs_source"),
         hfr=d.get("hfr"),
         star_count=d.get("star_count"),
         median_adu=d.get("median_adu"),
@@ -1933,6 +2160,7 @@ def _catalog_frame(d: dict, night_tz: str | None) -> CatalogFrame:
         snr_estimate=d.get("snr_estimate"),
         quality_status=d.get("quality_status"),
         quality_analyzed_at=d.get("quality_analyzed_at"),
+        quality_units=d.get("quality_units"),
         pixel_scale_arcsec=scale,
         full_scale_adu=d.get("full_scale_adu"),
         # Derived on read, never stored: re-tagging a folder's rig must change
@@ -1950,9 +2178,96 @@ async def _count(conn, sql: str, params: tuple) -> int:
     return row[0] if row else 0
 
 
-def _coerce_date_obs(value, fallback_mtime: str) -> str:
-    text = _as_str(value)
-    return text if text else fallback_mtime
+def _coerce_date_obs(meta: dict, fallback_mtime: str, geo_tz: str | None) -> tuple[str, str]:
+    """Return capture time in UTC and the provenance of its timezone."""
+    header = _as_str(meta.get("date_obs"))
+    if header is not None:
+        return _utc_iso(header, UTC), "header"
+
+    captured = _as_str(meta.get("captured_local"))
+    if captured is not None:
+        offset_minutes = _as_int(meta.get("utc_offset_minutes"))
+        if offset_minutes is not None:
+            source = meta.get("time_source")
+            provenance = "maker_note" if source == "maker_note" else "exif_offset"
+            return _utc_iso(captured, timezone(timedelta(minutes=offset_minutes))), provenance
+        if geo_tz:
+            try:
+                zone = ZoneInfo(geo_tz)
+            except ZoneInfoNotFoundError:
+                zone = None
+            if zone is not None:
+                return _utc_iso(captured, zone), "estimated_project_zone"
+        # A naive datetime's astimezone() uses the computer's local timezone
+        # rules for that date. Reusing today's fixed-offset tzinfo would shift
+        # winter captures scanned in summer (and vice versa) by an hour.
+        local_time = datetime.fromisoformat(captured.strip())
+        return local_time.astimezone(UTC).isoformat(), "estimated_computer_zone"
+
+    return _utc_iso(fallback_mtime, UTC), "file_time"
+
+
+def _utc_iso(value: str, assumed_zone) -> str:
+    text = value.strip().replace("Z", "+00:00")
+    parsed = datetime.fromisoformat(text)
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=assumed_zone)
+    return parsed.astimezone(UTC).isoformat()
+
+
+def _classification_folder_names(path: str, bound_folder: str) -> list[str]:
+    """Folders eligible for name classification, nearest first and within scope."""
+    path_left, path_sep, path_inner = path.partition("::")
+    bound_left, bound_sep, bound_inner = bound_folder.partition("::")
+    if path_sep and Path(path_left) == Path(bound_left):
+        inner_parent = PurePosixPath(path_inner).parent
+        if bound_sep and bound_inner:
+            inner_bound = PurePosixPath(bound_inner)
+            try:
+                relative = inner_parent.relative_to(inner_bound)
+            except ValueError:
+                return []
+            names = list(reversed(relative.parts))
+            if inner_bound.name:
+                names.append(inner_bound.name)
+            return [name for name in names if name not in {"", "."}]
+
+        names = list(reversed(inner_parent.parts))
+        archive_name = Path(path_left).name
+        for suffix in (".tar.gz", ".tar.bz2", ".tar.zst", ".tar", ".zip", ".7z"):
+            if archive_name.lower().endswith(suffix):
+                archive_name = archive_name[: -len(suffix)]
+                break
+        names.append(archive_name)
+        return [name for name in names if name not in {"", "."}]
+
+    file_parent = Path(path).parent
+    bound = Path(bound_folder)
+    try:
+        relative = file_parent.relative_to(bound)
+    except ValueError:
+        return [bound.name] if bound.name else []
+    names = list(reversed(relative.parts))
+    if bound.name:
+        names.append(bound.name)
+    return names
+
+
+def _legacy_quality_unchanged(result: dict, raw_header: dict) -> bool:
+    """Whether the v0.54 measurement is byte-for-byte equivalent under v0.55."""
+    if result.get("file_type") != "fits":
+        return False
+    try:
+        return (
+            int(raw_header.get("BITPIX")) == 16
+            and float(raw_header.get("BZERO")) == 32768.0
+            and float(raw_header.get("BSCALE", 1)) == 1.0
+            and int(raw_header.get("NAXIS")) == 2
+            and not _as_str(raw_header.get("BAYERPAT"))
+            and not _as_str(raw_header.get("COLORTYP"))
+        )
+    except _COERCE_ERRORS:
+        return False
 
 
 def _as_str(value) -> str | None:

@@ -165,6 +165,19 @@ async def _shared_check() -> None:
     await asyncio.shield(task)
 
 
+async def drain_background_fetches() -> None:
+    """Cancel and await the update check present when draining starts."""
+    global _check_task
+    task = _check_task
+    if task is None:
+        return
+    if not task.done():
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+    if _check_task is task:
+        _check_task = None
+
+
 @router.post("/check", response_model=UpdatesStatus)
 async def check_updates() -> UpdatesStatus:
     await _shared_check()

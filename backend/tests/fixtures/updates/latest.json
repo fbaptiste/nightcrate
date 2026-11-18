@@ -3,7 +3,7 @@
   "notes": "See the release page",
   "pub_date": "2026-11-20T20:00:00Z",
   "platforms": {
-    "darwin-aarch64": {"signature": "test", "url": "https://example.test/update.tar.gz"},
+    "darwin-aarch64": {"signature": "test", "url": "https://example.test/update.tar.gz", "min_os": "14.0"},
     "windows-x86_64": {"signature": "test", "url": "https://example.test/update.zip"},
     "linux-x86_64": {"signature": "test", "url": "https://example.test/update.AppImage.tar.gz"}
   }

@@ -7,6 +7,7 @@ export interface IdentifiedDso {
   primary_designation: string;
   common_name: string | null;
   other_names: string[];
+  catalogs: string[];
   obj_type: string;
   type_group: string;
   constellation: string | null;
@@ -22,17 +23,6 @@ export interface IdentifiedDso {
   ellipse_semi_major_px: number | null;
   ellipse_semi_minor_px: number | null;
   ellipse_angle_deg: number | null;
-}
-
-export interface FocalLengthEstimate {
-  rig_id: number;
-  rig_setup_id: number | null;
-  setup_until_at: string | null;
-  rig_name: string;
-  camera_name: string;
-  pixel_size_um: number;
-  rig_focal_length_mm: number;
-  estimated_focal_length_mm: number;
 }
 
 export interface ProjectSolve {
@@ -62,7 +52,6 @@ export interface ProjectSolve {
   attempts: SolveAttempt[];
   wcs: WcsParams;
   objects: IdentifiedDso[];
-  focal_length_estimates: FocalLengthEstimate[];
 }
 
 export interface CreateSolveRequest {

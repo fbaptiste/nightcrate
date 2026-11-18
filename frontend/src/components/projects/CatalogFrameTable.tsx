@@ -22,6 +22,8 @@ import { CatalogInfiniteScroller } from "./CatalogCardList";
 import { formatDate, formatSubExposure } from "./CatalogCards";
 import FilterSwatch from "./FilterSwatch";
 import { notRecordedFilter, resolveFilterLabel } from "./filterColors";
+import InferredPill from "@/components/common/InferredPill";
+import { frameTypeNote, qualityLevelText, timeSourceNote } from "./catalogMarkers";
 import {
   subFrameSelectionKey,
   type CatalogSelectionKey,
@@ -30,8 +32,8 @@ import {
 const HFR_HELP = "Half-Flux Radius — the median over every detected star. Lower is sharper. Arcseconds are comparable between rigs; pixels are shown when the image scale is unknown.";
 const STARS_HELP = "Stars detected using fixed settings, so counts are comparable between frames. Well below the rest of the night usually means cloud, dew or lost focus. Not comparable across PixInsight processing stages — detection is sensitive to the noise floor.";
 const SNR_HELP = "Median signal-to-noise of the detected stars — mainly a transparency indicator. This is not the Statistics panel's median/σ, which measures the sky against its own noise.";
-const SKY_HELP = "Sky background in raw ADU, against the camera's full scale. It rises with moonlight, twilight and light pollution. PixInsight float files carry no bit depth, so theirs is normalized × 65535 rather than a real sensor reading.";
-const MEDIAN_HELP = "Median pixel level in raw ADU, against the camera's full scale (2^ADC - 1). On a flat this is the exposure check — around a third to a half of full scale is the usual aim. On a dark or bias it is the offset pedestal.";
+const SKY_HELP = "Sky background in the file's recorded units. For integer files, ADU can be compared with the camera's full scale. It rises with moonlight, twilight and light pollution.";
+const MEDIAN_HELP = "Median pixel level in the file's recorded units. On an ADU flat this is the exposure check — around a third to a half of the camera's full scale is the usual aim. On a dark or bias it is the offset pedestal.";
 const UNREADABLE_HELP = "This file could not be read the last time quality was measured — the volume was probably offline. Re-run the analysis to try again.";
 const NO_STARS_HELP = "The file read fine but detection found nothing — cloud, a closed shutter, or badly defocused. A real result, not an error.";
 
@@ -76,26 +78,25 @@ function temperature(value: number | null): string {
   return `${String(value).replace("-", "−")}°C`;
 }
 
-function aduText(value: number | null): string {
-  return value == null ? "" : `${Math.round(value).toLocaleString()} ADU`;
-}
-
-function aduTooltip(
+function levelTooltip(
   label: "Median" | "Sky background",
   value: number,
   fullScale: number | null,
+  units: string | null,
 ): string {
-  const valueText = Math.round(value).toLocaleString();
+  const valueText = qualityLevelText(value, units);
   if (label === "Median") {
-    const scale = fullScale
+    const scale = units === "adu" && fullScale
       ? `That is ${((value / fullScale) * 100).toFixed(1)}% of the camera's ${fullScale.toLocaleString()} ADU full scale. `
-      : "Tag this frame's source folder with a rig to see the full-scale figure. ";
-    return `Median pixel level: ${valueText} ADU. ${scale}On a flat this is the exposure check — around a third to a half of full scale is the usual aim. On a dark or bias it is the offset pedestal.`;
+      : units === "adu"
+        ? "Tag this frame's source folder with a rig to see the full-scale figure. "
+        : "";
+    return `Median pixel level: ${valueText}. ${scale}On a flat this is the exposure check — around a third to a half of full scale is the usual aim. On a dark or bias it is the offset pedestal.`;
   }
-  const scale = fullScale
+  const scale = units === "adu" && fullScale
     ? `That is ${((value / fullScale) * 100).toFixed(1)}% of the camera's ${fullScale.toLocaleString()} ADU full scale. `
     : "";
-  return `Sky background: ${valueText} ADU. ${scale}It rises with moonlight, twilight and light pollution. PixInsight float files carry no bit depth, so theirs is normalized × 65535 rather than a real sensor reading.`;
+  return `Sky background: ${valueText}. ${scale}It rises with moonlight, twilight and light pollution.`;
 }
 
 function nextSort(
@@ -171,8 +172,10 @@ export default function CatalogFrameTable({
   loading,
 }: Props) {
   const timeSorted = sort === "date_desc" || sort === "date";
+  const showIso = rows.some((row) => row.iso != null);
+  const showGain = rows.some((row) => row.gain != null);
   const measuredColumns = calibration ? 2 : 4;
-  const columnCount = 8 + measuredColumns + 2 + Number(showRig);
+  const columnCount = 7 + Number(showIso) + Number(showGain) + measuredColumns + 2 + Number(showRig);
 
   return (
     <CatalogInfiniteScroller
@@ -188,7 +191,7 @@ export default function CatalogFrameTable({
         size="small"
         sx={{
           width: "100%",
-          minWidth: 980 + Number(showRig) * 120,
+          minWidth: 982 + Number(showIso) * 48 + Number(showGain) * 48 + Number(showRig) * 120,
           tableLayout: "fixed",
           border: 1,
           borderColor: "divider",
@@ -215,11 +218,12 @@ export default function CatalogFrameTable({
               sort={sort}
               active={timeSorted}
               onClick={() => onSort(nextSort(sort, "date_desc", "date"))}
-              width={78}
+              width={160}
             />
             <TableCell sx={{ width: 88 }}>Filter</TableCell>
             <TableCell align="right" sx={{ width: 52 }}>Exp</TableCell>
-            <TableCell align="right" sx={{ width: 48 }}>Gain</TableCell>
+            {showIso && <TableCell align="right" sx={{ width: 48 }}>ISO</TableCell>}
+            {showGain && <TableCell align="right" sx={{ width: 48 }}>Gain</TableCell>}
             <TableCell align="right" sx={{ width: 56 }}>Temp</TableCell>
             <TableCell align="right" sx={{ width: 42 }}>Bin</TableCell>
             {calibration ? (
@@ -295,6 +299,8 @@ export default function CatalogFrameTable({
                 showNight={showNight}
                 columnCount={columnCount}
                 calibration={calibration}
+                showIso={showIso}
+                showGain={showGain}
                 showRig={showRig}
                 selected={selected.has(subFrameSelectionKey(row.id))}
                 onToggleSelect={onToggleSelect}
@@ -317,6 +323,8 @@ interface RowProps {
   showNight: boolean;
   columnCount: number;
   calibration: boolean;
+  showIso: boolean;
+  showGain: boolean;
   showRig: boolean;
   selected: boolean;
   onToggleSelect: (key: CatalogSelectionKey, shift: boolean) => void;
@@ -332,6 +340,8 @@ const FrameRows = memo(function FrameRows({
   showNight,
   columnCount,
   calibration,
+  showIso,
+  showGain,
   showRig,
   selected,
   onToggleSelect,
@@ -340,6 +350,8 @@ const FrameRows = memo(function FrameRows({
 }: RowProps) {
   const measuredColumns = calibration ? 2 : 4;
   const status = row.quality_analyzed_at ? row.quality_status : null;
+  const typeNote = frameTypeNote(row.frame_type_source, row.frame_type_basis);
+  const timeNote = timeSourceNote(row.date_obs_source);
   return (
     <>
       {showNight && (
@@ -359,7 +371,7 @@ const FrameRows = memo(function FrameRows({
           </TableCell>
         </TableRow>
       )}
-      <TableRow hover selected={selected}>
+      <TableRow hover selected={selected} data-catalog-frame-id={row.id}>
         <TableCell padding="checkbox">
           <Checkbox
             size="small"
@@ -385,7 +397,10 @@ const FrameRows = memo(function FrameRows({
           />
         </TableCell>
         <TableCell title={formatDate(row.date_obs_utc, timezone)} sx={{ whiteSpace: "nowrap", fontVariantNumeric: "tabular-nums" }}>
-          {captureDate(row.date_obs_utc, timezone, !timeSorted)}
+          <Box component="span" sx={{ display: "inline-flex", alignItems: "center" }}>
+            {captureDate(row.date_obs_utc, timezone, !timeSorted)}
+            {timeNote && <InferredPill {...timeNote} />}
+          </Box>
         </TableCell>
         <TableCell title={row.filter_name ?? "Not recorded"}>
           <Box sx={{ display: "flex", alignItems: "center", gap: "6px", minWidth: 0 }}>
@@ -400,10 +415,11 @@ const FrameRows = memo(function FrameRows({
               </Typography>
             </Box>
         </TableCell>
-        <TableCell align="right" sx={{ fontVariantNumeric: "tabular-nums" }}>{formatSubExposure(row.exposure_seconds)}</TableCell>
-        <TableCell align="right" sx={{ fontVariantNumeric: "tabular-nums" }}>{row.gain ?? ""}</TableCell>
-        <TableCell align="right" sx={{ fontVariantNumeric: "tabular-nums" }}>{temperature(row.set_temp_c)}</TableCell>
-        <TableCell align="right" sx={{ fontVariantNumeric: "tabular-nums" }}>{row.binning?.replace("x", "×") ?? ""}</TableCell>
+        <TableCell align="right" sx={{ fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }}>{formatSubExposure(row.exposure_seconds)}</TableCell>
+        {showIso && <TableCell align="right" sx={{ fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }}>{row.iso ?? ""}</TableCell>}
+        {showGain && <TableCell align="right" sx={{ fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }}>{row.gain ?? ""}</TableCell>}
+        <TableCell align="right" sx={{ fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }}>{temperature(row.set_temp_c)}</TableCell>
+        <TableCell align="right" sx={{ fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }}>{row.binning?.replace("x", "×") ?? ""}</TableCell>
         {status === "unreadable" || (!calibration && status === "no_stars") ? (
           <TableCell colSpan={measuredColumns} align="center">
             <Tooltip title={status === "unreadable" ? UNREADABLE_HELP : NO_STARS_HELP}>
@@ -416,23 +432,26 @@ const FrameRows = memo(function FrameRows({
           Array.from({ length: measuredColumns }, (_, index) => <TableCell key={index} />)
         ) : calibration ? (
           <>
-            <AduCell label="Median" value={row.median_adu} fullScale={row.full_scale_adu} />
-            <AduCell label="Sky background" value={row.background_adu} fullScale={row.full_scale_adu} />
+            <QualityLevelCell label="Median" value={row.median_adu} fullScale={row.full_scale_adu} units={row.quality_units} />
+            <QualityLevelCell label="Sky background" value={row.background_adu} fullScale={row.full_scale_adu} units={row.quality_units} />
           </>
         ) : (
           <>
             <HfrCell row={row} />
-            <TableCell align="right" sx={{ fontVariantNumeric: "tabular-nums" }}>{row.star_count?.toLocaleString() ?? ""}</TableCell>
-            <TableCell align="right" sx={{ fontVariantNumeric: "tabular-nums" }}>{row.snr_estimate?.toFixed(0) ?? ""}</TableCell>
-            <AduCell label="Sky background" value={row.background_adu} fullScale={row.full_scale_adu} />
+            <TableCell align="right" sx={{ fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }}>{row.star_count?.toLocaleString() ?? ""}</TableCell>
+            <TableCell align="right" sx={{ fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }}>{row.snr_estimate?.toFixed(0) ?? ""}</TableCell>
+            <QualityLevelCell label="Sky background" value={row.background_adu} fullScale={row.full_scale_adu} units={row.quality_units} />
           </>
         )}
         <TableCell sx={{ minWidth: 140, overflow: "hidden" }}>
-          <Tooltip title={row.path ?? ""}>
-            <Typography sx={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "text.secondary", fontSize: "13px" }}>
-              {fileName(row.path)}
-            </Typography>
-          </Tooltip>
+          <Box component="span" sx={{ display: "inline-flex", alignItems: "center", maxWidth: "100%" }}>
+            <Tooltip title={row.path ?? ""}>
+              <Typography component="span" sx={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "text.secondary", fontSize: "13px" }}>
+                {fileName(row.path)}
+              </Typography>
+            </Tooltip>
+            {typeNote && <InferredPill {...typeNote} />}
+          </Box>
         </TableCell>
         {showRig && <TableCell>{row.rig_name ?? ""}</TableCell>}
         <TableCell align="right" sx={{ py: "0 !important", whiteSpace: "nowrap" }}>
@@ -460,17 +479,27 @@ function HfrCell({ row }: { row: CatalogFrame }) {
   const tooltip = row.hfr_arcsec != null
     ? `Half-Flux Radius: ${row.hfr_arcsec.toFixed(2)}″ (${row.hfr.toFixed(2)} px at ${row.pixel_scale_arcsec?.toFixed(3)}″/px, from the rig tagged on this frame's source folder). Lower is sharper; arcseconds are comparable between rigs.`
     : `Half-Flux Radius: ${row.hfr.toFixed(2)} px. Lower is sharper. Tag this frame's source folder with a rig to convert it to arcseconds, which is comparable between rigs.`;
-  return <TableCell align="right" title={tooltip} sx={{ fontVariantNumeric: "tabular-nums" }}>{text}</TableCell>;
+  return <TableCell align="right" title={tooltip} sx={{ fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }}>{text}</TableCell>;
 }
 
-function AduCell({ label, value, fullScale }: { label: "Median" | "Sky background"; value: number | null; fullScale: number | null }) {
+function QualityLevelCell({
+  label,
+  value,
+  fullScale,
+  units,
+}: {
+  label: "Median" | "Sky background";
+  value: number | null;
+  fullScale: number | null;
+  units: string | null;
+}) {
   return (
     <TableCell
       align="right"
-      title={value == null ? undefined : aduTooltip(label, value, fullScale)}
+      title={value == null ? undefined : levelTooltip(label, value, fullScale, units)}
       sx={{ fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }}
     >
-      {aduText(value)}
+      {qualityLevelText(value, units)}
     </TableCell>
   );
 }

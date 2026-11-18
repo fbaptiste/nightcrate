@@ -35,6 +35,7 @@ class SessionCreate(BaseModel):
     line_name: str | None = None
     exposure_seconds: float = Field(gt=0)
     gain: int | None = Field(default=None, ge=0)
+    iso: int | None = Field(default=None, gt=0)
     num_subs: int = Field(gt=0)
     binning: int | None = Field(default=None, ge=1)
     session_date: str | None = None
@@ -60,6 +61,7 @@ class SessionUpdate(BaseModel):
     line_name: str | None = None
     exposure_seconds: float | None = Field(default=None, gt=0)
     gain: int | None = Field(default=None, ge=0)
+    iso: int | None = Field(default=None, gt=0)
     num_subs: int | None = Field(default=None, gt=0)
     binning: int | None = Field(default=None, ge=1)
     session_date: str | None = None
@@ -79,6 +81,7 @@ class SessionResponse(BaseModel):
     filter_label: str | None
     exposure_seconds: float
     gain: int | None
+    iso: int | None
     num_subs: int
     binning: int | None
     session_date: str | None

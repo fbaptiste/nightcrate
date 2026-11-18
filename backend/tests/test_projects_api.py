@@ -15,6 +15,7 @@ from httpx import ASGITransport, AsyncClient
 from PIL import Image
 
 from nightcrate.main import app
+from nightcrate.services.project_images import crop_path
 
 
 @pytest.fixture
@@ -726,7 +727,7 @@ class TestThumbnailCrops:
             },
         )
         crop_row = (await _crop_rows(pid))[0]
-        crop_file = _permanent_dir(pid) / f"thumb_crop_large_{crop_row['id']}.jpg"
+        crop_file = crop_path(_permanent_dir(pid), "large", crop_row["id"])
         assert crop_file.is_file()
         await client.delete(f"/api/projects/{pid}/images/{iid}")
         assert not crop_file.is_file()
@@ -911,7 +912,7 @@ class TestImageIdentity:
         ).status_code == 200
         first_row = (await _crop_rows(project_id))[0]
         first_version = (await _project_list_item(client, project_id))["thumbnail_version"]
-        first_file = _permanent_dir(project_id) / f"thumb_crop_large_{first_row['id']}.jpg"
+        first_file = crop_path(_permanent_dir(project_id), "large", first_row["id"])
         first_bytes = (await client.get(f"/api/projects/{project_id}/thumbnail?size=large")).content
         assert first_file.read_bytes() == first_bytes
 
@@ -920,7 +921,7 @@ class TestImageIdentity:
         ).status_code == 200
         second_row = (await _crop_rows(project_id))[0]
         second_version = (await _project_list_item(client, project_id))["thumbnail_version"]
-        second_file = _permanent_dir(project_id) / f"thumb_crop_large_{second_row['id']}.jpg"
+        second_file = crop_path(_permanent_dir(project_id), "large", second_row["id"])
         assert second_row["id"] > first_row["id"]
         assert second_version != first_version
         assert second_file.is_file()
@@ -1127,8 +1128,8 @@ class TestImageIdentity:
             },
         )
         before = {row["size"]: row for row in await _crop_rows(project_id)}
-        large_file = _permanent_dir(project_id) / f"thumb_crop_large_{before['large']['id']}.jpg"
-        small_file = _permanent_dir(project_id) / f"thumb_crop_small_{before['small']['id']}.jpg"
+        large_file = crop_path(_permanent_dir(project_id), "large", before["large"]["id"])
+        small_file = crop_path(_permanent_dir(project_id), "small", before["small"]["id"])
 
         await client.post(f"/api/projects/{project_id}/images/{images[1]['id']}/main")
         after = {row["size"]: row for row in await _crop_rows(project_id)}
@@ -1152,7 +1153,7 @@ class TestImageIdentity:
             json={"crops": {"large": _crop_frame(source_image_id=None)}},
         )
         crop = (await _crop_rows(project_id))[0]
-        crop_file = _permanent_dir(project_id) / f"thumb_crop_large_{crop['id']}.jpg"
+        crop_file = crop_path(_permanent_dir(project_id), "large", crop["id"])
         await client.delete(f"/api/projects/{project_id}/images/{images[0]['id']}")
         assert await _crop_rows(project_id) == []
         assert not crop_file.exists()
@@ -1168,7 +1169,7 @@ class TestImageIdentity:
             json={"crops": {"small": _crop_frame(source_image_id=images[1]["id"])}},
         )
         crop = (await _crop_rows(project_id))[0]
-        crop_file = _permanent_dir(project_id) / f"thumb_crop_small_{crop['id']}.jpg"
+        crop_file = crop_path(_permanent_dir(project_id), "small", crop["id"])
         await client.delete(f"/api/projects/{project_id}/images/{images[1]['id']}")
         assert await _crop_rows(project_id) == []
         assert not crop_file.exists()
@@ -1264,15 +1265,18 @@ class TestImageIdentity:
             json={"crops": {"medium": _crop_frame(source_image_id=None)}},
         )
         rows_before = await _crop_rows(project_id)
-        crop_file = _permanent_dir(project_id) / f"thumb_crop_medium_{rows_before[0]['id']}.jpg"
+        crop_file = crop_path(_permanent_dir(project_id), "medium", rows_before[0]["id"])
         bytes_before = crop_file.read_bytes()
         await client.post(f"/api/projects/{project_id}/images/{images[0]['id']}/main")
         assert await _crop_rows(project_id) == rows_before
         assert crop_file.read_bytes() == bytes_before
 
-    async def test_legacy_crop_file_is_ignored(self, client: AsyncClient, tmp_path: Path):
+    async def test_legacy_crop_generation_is_served_then_refreshed(
+        self, client: AsyncClient, tmp_path: Path
+    ):
         from nightcrate.api.projects import _permanent_dir
         from nightcrate.db.session import get_db
+        from nightcrate.services.project_images import drain_background_refreshes
 
         project_id, images, _ = await self._project_with_images(client, tmp_path, [(30, 60, 90)])
         async with get_db() as conn:
@@ -1283,12 +1287,25 @@ class TestImageIdentity:
             await conn.commit()
         legacy = _permanent_dir(project_id) / "thumb_crop_large.jpg"
         legacy.write_bytes(b"legacy crop")
+        crop_row = (await _crop_rows(project_id))[0]
+        old_unversioned = _permanent_dir(project_id) / f"thumb_crop_large_{crop_row['id']}.jpg"
+        old_versioned = _permanent_dir(project_id) / f"thumb_crop_large_v1_{crop_row['id']}.jpg"
+        unrelated = _permanent_dir(project_id) / "thumb_crop_large_v1_999999.jpg"
+        old_unversioned.write_bytes(b"old generation")
+        old_versioned.write_bytes(b"old generation")
+        unrelated.write_bytes(b"keep")
         response = await client.get(f"/api/projects/{project_id}/thumbnail?size=large")
-        expected = await client.get(
-            f"/api/projects/{project_id}/images/{images[0]['id']}/rendered/thumb_lg"
-        )
         assert response.status_code == 200
-        assert response.content == expected.content
+        assert response.content == b"old generation"
+        await drain_background_refreshes()
+        regenerated = crop_path(_permanent_dir(project_id), "large", crop_row["id"])
+        assert regenerated.is_file()
+        assert not old_unversioned.exists()
+        assert not old_versioned.exists()
+        assert unrelated.read_bytes() == b"keep"
+        assert legacy.read_bytes() == b"legacy crop"
+        response = await client.get(f"/api/projects/{project_id}/thumbnail?size=large")
+        assert response.content == regenerated.read_bytes()
         assert response.content != legacy.read_bytes()
 
     async def test_save_sweeps_orphan_crops_but_keeps_live_and_temporary_files(
@@ -1301,7 +1318,7 @@ class TestImageIdentity:
         assert (await client.put(url, json={"crops": {"large": _crop_frame()}})).status_code == 200
         project_dir = _permanent_dir(project_id)
         large_row = (await _crop_rows(project_id))[0]
-        live_large = project_dir / f"thumb_crop_large_{large_row['id']}.jpg"
+        live_large = crop_path(project_dir, "large", large_row["id"])
         live_bytes = live_large.read_bytes()
         legacy_small = project_dir / "thumb_crop_small.jpg"
         orphan_medium = project_dir / "thumb_crop_medium_999.jpg"
@@ -1316,7 +1333,7 @@ class TestImageIdentity:
         )
 
         rows = {row["size"]: row for row in await _crop_rows(project_id)}
-        new_small = project_dir / f"thumb_crop_small_{rows['small']['id']}.jpg"
+        new_small = crop_path(project_dir, "small", rows["small"]["id"])
         assert response.status_code == 200
         assert set(rows) == {"large", "small"}
         assert new_small.is_file()

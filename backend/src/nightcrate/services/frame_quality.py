@@ -12,16 +12,13 @@ Metric definitions — these are the contract, keep them in step with the column
 ``hfr``              Median per-star half-flux radius, **pixels**. Lights only.
 ``star_count``       Stars surviving ``QUALITY_SETTINGS``. Lights only.
 ``snr_estimate``     Median per-star SNR (flux/fluxerr). Lights only.
-``median_adu``       ``median(data) * ADU_FULL_SCALE``. All frame types.
-``background_adu``   ``sep`` global background * ``ADU_FULL_SCALE``. All types.
+``median_adu``       Median of the recorded samples. All frame types.
+``background_adu``   ``sep`` global background in recorded units. All types.
 ===================  ==========================================================
 
-**Units — 16-bit-equivalent ADU.** ``imaging.normalize_to_01`` is type-based, not
-min-max: ``uint16`` is divided by 65535 and float data is assumed already in
-``[0, 1]``. Multiplying back by 65535 therefore recovers **true ADU for integer
-sources** and yields a **16-bit-equivalent** scale for PixInsight float XISF
-(which carries no bit depth at all). One comparable scale across the catalog —
-but do not present the float-sourced numbers as real ADU.
+**Units follow the source.** Integer and camera-raw levels are recorded ADU;
+floating-point sources stay floating point. ``quality_units`` identifies which.
+Stars are always detected on the normalized measurement grey image.
 
 **HFR is in pixels and only comparable within a rig.** ``pixel_scale_arcsec`` is
 usually NULL on a cataloged frame, so there is no honest arcsec conversion here.
@@ -47,10 +44,10 @@ import numpy as np
 
 from nightcrate.services.aberration import DetectionSettings, background_level, detect_stars
 from nightcrate.services.imaging import LUM_B, LUM_G, LUM_R
+from nightcrate.services.pixel_loader import LoadedImage, grey_of, samples_of
 
-# Full-scale value the normalized [0, 1] arrays are scaled back by. See the
-# module docstring — this is real ADU for integer sources, 16-bit-equivalent
-# for float ones.
+# Compatibility scale for legacy callers that pass a bare normalized array.
+# LoadedImage callers keep their recorded units and do not use this constant.
 ADU_FULL_SCALE = 65535.0
 
 # Frozen detection settings for the batch pass. Deliberately the library
@@ -71,11 +68,12 @@ def wants_stars(frame_type: str | None) -> bool:
     return (frame_type or "") in STAR_BEARING_FRAME_TYPES
 
 
-def analyze_array(data: np.ndarray, with_stars: bool) -> dict:
+def analyze_array(data: np.ndarray | LoadedImage, with_stars: bool) -> dict:
     """Compute the quality metrics for an already-loaded frame.
 
-    *data* is a ``[0, 1]`` array — 2D mono, or (3, H, W) colour, which is
-    collapsed to luminance since detection is mono-only.
+    *data* is normally a :class:`LoadedImage`, preserving recorded samples for
+    levels and using its normalized measurement grey for stars. A bare ``[0,1]``
+    array remains supported for older callers.
 
     Split out from :func:`analyze_frame_file` so the Image Analyzer can measure
     the array it already has in memory instead of re-reading the file. **Both
@@ -86,33 +84,63 @@ def analyze_array(data: np.ndarray, with_stars: bool) -> dict:
     ``with_stars=False`` skips detection (the expensive part — roughly 0.36 s of
     a 0.42 s pass on a 26 MP frame) and returns the ADU stats only.
     """
-    if data.ndim == 3 and data.shape[0] == 3:
-        data = LUM_R * data[0] + LUM_G * data[1] + LUM_B * data[2]
+    image = data if isinstance(data, LoadedImage) else None
+    if image is not None:
+        recorded = np.concatenate([np.ravel(channel) for channel in samples_of(image).values()])
+        normalized = image.normalised()
+        normalized_level_plane = (
+            normalized.reshape(-1, image.width) if normalized.ndim == 3 else normalized
+        )
+        detection_data, block_size = grey_of(image)
+        median = float(np.median(recorded))
+        background = (
+            None
+            if with_stars and image.kind == "mono"
+            else float(image.denormalise(background_level(normalized_level_plane)))
+        )
+        quality_units = image.units
+    else:
+        if data.ndim == 3 and data.shape[0] == 3:
+            data = LUM_R * data[0] + LUM_G * data[1] + LUM_B * data[2]
+        detection_data = data
+        block_size = 1
+        median = float(np.median(data)) * ADU_FULL_SCALE
+        background = None if with_stars else background_level(data) * ADU_FULL_SCALE
+        quality_units = "adu"
 
     result: dict = {
         "error": None,
         "status": "ok",
-        "median_adu": round(float(np.median(data)) * ADU_FULL_SCALE, 3),
-        "background_adu": None,
+        "median_adu": round(median, 3),
+        "background_adu": round(background, 3) if background is not None else None,
         "hfr": None,
         "star_count": None,
         "snr_estimate": None,
     }
 
     if with_stars:
-        analysis = detect_stars(data, QUALITY_SETTINGS)
+        analysis = detect_stars(
+            detection_data,
+            QUALITY_SETTINGS,
+            block_size=block_size,
+            original_shape=(image.height, image.width) if image is not None else None,
+        )
         result["star_count"] = analysis.star_count
         result["hfr"] = analysis.median_hfr
         result["snr_estimate"] = analysis.median_snr
-        if analysis.background_level is not None:
-            result["background_adu"] = round(analysis.background_level * ADU_FULL_SCALE, 3)
+        if background is None and analysis.background_level is not None:
+            level = (
+                float(image.denormalise(analysis.background_level))
+                if image is not None
+                else analysis.background_level * ADU_FULL_SCALE
+            )
+            result["background_adu"] = round(level, 3)
         if analysis.star_count == 0:
             # A real outcome, not a failure: clouds, a closed shutter, or a frame
             # that simply has nothing detectable in it. Recorded so the UI can
             # distinguish it from "we could not read this file".
             result["status"] = "no_stars"
-    else:
-        result["background_adu"] = round(background_level(data) * ADU_FULL_SCALE, 3)
+    result["quality_units"] = quality_units
 
     return result
 
@@ -126,7 +154,7 @@ def analyze_frame_file(path: str, with_stars: bool) -> dict:
     unreadable file cannot abort the batch.
     """
     from nightcrate.core.compute import set_gpu_enabled
-    from nightcrate.services.pixel_loader import load_normalized_mono
+    from nightcrate.services.pixel_loader import load_image
 
     # A fresh spawn worker starts with _gpu_enabled = True regardless of the
     # user's setting, so anything that reached get_array_module() here would pick
@@ -139,7 +167,8 @@ def analyze_frame_file(path: str, with_stars: bool) -> dict:
     set_gpu_enabled(False)
 
     try:
-        result = analyze_array(load_normalized_mono(path), with_stars)
+        image = load_image(path)
+        result = analyze_array(image, with_stars)
         result["path"] = path
         return result
     except Exception as exc:  # noqa: BLE001 - any failure is recorded, never fatal

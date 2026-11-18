@@ -25,6 +25,7 @@ import logging
 import os
 import re
 import time
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -32,6 +33,7 @@ from typing import Literal
 
 import aiosqlite
 
+from nightcrate.core.tasks import settle
 from nightcrate.services import hips_tiles, image_cache
 from nightcrate.services.sky_tiles import (
     TIERS,
@@ -236,6 +238,19 @@ _in_flight: dict[CellKey, asyncio.Task] = {}
 _failure_backoff: dict[CellKey, float] = {}
 
 
+async def drain_background_fetches() -> None:
+    """Cancel and await the fetches present when draining starts."""
+    snapshot = tuple(_in_flight.items())
+    pending = tuple(task for _, task in snapshot if not task.done())
+    for task in pending:
+        task.cancel()
+    if pending:
+        await asyncio.gather(*pending, return_exceptions=True)
+    for key, task in snapshot:
+        if _in_flight.get(key) is task:
+            _in_flight.pop(key, None)
+
+
 def _clock() -> float:
     return time.monotonic()
 
@@ -363,7 +378,7 @@ async def _background_wrapper(
 ) -> None:
     """Run ``_fetch_and_store`` against a fresh aiosqlite connection."""
     try:
-        async with conn_factory() as conn:
+        async with _cancellation_safe_connection(conn_factory) as conn:
             conn.row_factory = aiosqlite.Row
             await _fetch_and_store(
                 conn,
@@ -375,7 +390,30 @@ async def _background_wrapper(
     except Exception:  # noqa: BLE001 — background tasks mustn't crash the server
         logger.exception("[sky_tiles] background fetch crashed for cell=%s", key)
     finally:
-        _in_flight.pop(key, None)
+        if _in_flight.get(key) is asyncio.current_task():
+            _in_flight.pop(key, None)
+
+
+@asynccontextmanager
+async def _cancellation_safe_connection(conn_factory):
+    """Open and close a connection without cancelling either operation."""
+    manager = conn_factory()
+    open_task = asyncio.create_task(manager.__aenter__())
+    opened = False
+    try:
+        try:
+            conn = await settle(open_task)
+            opened = True
+        except BaseException:
+            opened = (
+                open_task.done() and not open_task.cancelled() and open_task.exception() is None
+            )
+            raise
+        yield conn
+    finally:
+        if opened:
+            close_task = asyncio.create_task(manager.__aexit__(None, None, None))
+            await settle(close_task)
 
 
 # ── Public API ───────────────────────────────────────────────────────────────

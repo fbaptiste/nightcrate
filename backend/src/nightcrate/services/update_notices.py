@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import platform
 import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -15,6 +16,7 @@ from nightcrate.core.updates_state import UpdatesState
 AGE_REMINDER_DAYS = 183
 LATER_HOURS = 24
 CHECK_INTERVAL_HOURS = 24
+MACOS_VERSION_UNAVAILABLE = "This update can't be checked against this Mac's system version."
 
 NoticeId = Literal["app", "openngc", "mgc50_age", "wikidata_age", "wikidata_query"]
 
@@ -35,6 +37,7 @@ class Notice(BaseModel):
     notes: list[str] = Field(default_factory=list, max_length=4)
     release_url: str | None = None
     installable: bool = False
+    install_blocked: str | None = None
     latest_tag: str | None = None
     installed_tag: str | None = None
     downloaded_at: datetime | None = None
@@ -43,6 +46,36 @@ class Notice(BaseModel):
 def parse_version(text: str) -> tuple[int, int, int] | None:
     match = re.fullmatch(r"(\d+)\.(\d+)\.(\d+)", text)
     return tuple(map(int, match.groups())) if match else None  # type: ignore[return-value]
+
+
+def _os_version(text: str) -> tuple[int, ...] | None:
+    if not re.fullmatch(r"\d+(?:\.\d+)*", text):
+        return None
+    return tuple(int(part) for part in text.split("."))
+
+
+def _older_version(current: tuple[int, ...], required: tuple[int, ...]) -> bool:
+    length = max(len(current), len(required))
+    return current + (0,) * (length - len(current)) < required + (0,) * (length - len(required))
+
+
+def _macos_install_blocked(latest_min_os: dict[str, str], platform_key: str | None) -> str | None:
+    if platform_key is None or not platform_key.startswith("darwin-"):
+        return None
+    if platform_key not in latest_min_os:
+        return None
+    required_text = latest_min_os[platform_key]
+    required = _os_version(required_text)
+    if required is None:
+        return MACOS_VERSION_UNAVAILABLE
+    current_text = platform.mac_ver()[0]
+    current = _os_version(current_text)
+    if current is not None and not _older_version(current, required):
+        return None
+    display = list(required)
+    while len(display) > 1 and display[-1] == 0:
+        display.pop()
+    return f"This update needs macOS {'.'.join(map(str, display))} or later."
 
 
 def parse_notes(body: str) -> list[str]:
@@ -92,6 +125,7 @@ def compute_notices(
         and (install_kind == "source" or platform_key in latest.platforms)
     ):
         platform_present = platform_key is not None and platform_key in latest.platforms
+        install_blocked = _macos_install_blocked(latest.min_os, platform_key)
         notices.append(
             Notice(
                 id="app",
@@ -100,10 +134,12 @@ def compute_notices(
                 published_at=latest.published_at,
                 notes=latest.notes[:4],
                 release_url=latest.release_url,
+                install_blocked=install_blocked,
                 installable=(
                     install_kind == "installed"
                     and platform_present
                     and latest.version == latest.release_version
+                    and install_blocked is None
                 ),
             )
         )

@@ -274,7 +274,6 @@ export default function ProjectDetailPage() {
     (p: Project) => {
       queryClient.setQueryData(["project", projectId], p);
       queryClient.invalidateQueries({ queryKey: ["projects"] });
-      queryClient.invalidateQueries({ queryKey: ["project-solve", projectId] });
       void invalidateProjectInfo(queryClient, projectId);
       void invalidateProjectLinks(queryClient);
     },
@@ -289,7 +288,6 @@ export default function ProjectDetailPage() {
     queryClient.invalidateQueries({ queryKey: ["project-catalog", projectId] });
     queryClient.invalidateQueries({ queryKey: ["project-sessions", projectId] });
     queryClient.invalidateQueries({ queryKey: ["project-integration", projectId] });
-    queryClient.invalidateQueries({ queryKey: ["project-solve", projectId] });
     void invalidateProjectInfo(queryClient, projectId);
     queryClient.invalidateQueries({ queryKey: ["equipment-usage"] });
   }, [queryClient, projectId]);
@@ -326,7 +324,12 @@ export default function ProjectDetailPage() {
   // ── Mutations ──────────────────────────────────────────────────────────
   const metaMut = useMutation({
     mutationFn: (patch: ProjectUpdate) => updateProject(projectId, patch),
-    onSuccess: applyProject,
+    onSuccess: (updated, patch) => {
+      applyProject(updated);
+      if (Object.prototype.hasOwnProperty.call(patch, "location_id")) {
+        refreshRigDependent();
+      }
+    },
     onError: (err) => setSnack(String(err)),
   });
 
@@ -443,7 +446,15 @@ export default function ProjectDetailPage() {
     : [];
 
   return (
-    <Box sx={{ p: 3, height: "100%", overflow: "auto" }}>
+    <Box
+      sx={{
+        p: 3,
+        height: "100%",
+        overflow: tab === TAB.plateSolve ? "hidden" : "auto",
+        display: "flex",
+        flexDirection: "column",
+      }}
+    >
       {/* Header */}
       <Box sx={{ display: "flex", alignItems: "center", gap: 1, mb: 2 }}>
         <IconButton onClick={() => navigate("/projects")} size="small">
@@ -522,7 +533,7 @@ export default function ProjectDetailPage() {
           next.delete("hdu");
         }
         setSearchParams(next, { replace: true });
-      }} sx={{ mb: 2 }}>
+      }} sx={{ mb: 2, flexShrink: 0 }}>
         <Tab label="Overview" />
         <Tab label="Info" />
         <Tab label="Sessions" />
@@ -535,7 +546,9 @@ export default function ProjectDetailPage() {
       {tab === TAB.info && <ProjectInfoTab projectId={projectId} onPlateSolve={openPlateSolve} />}
       {tab === TAB.files && <ProjectCatalogTab projectId={projectId} />}
       {tab === TAB.plateSolve && (
-        <ProjectPlateSolveTab projectId={projectId} onMainsChange={invalidate} />
+        <Box sx={{ flex: 1, minHeight: 0 }}>
+          <ProjectPlateSolveTab projectId={projectId} onMainsChange={invalidate} />
+        </Box>
       )}
       {tab === TAB.notes && (
         <ProjectNotesTab

@@ -14,14 +14,16 @@ import numpy as np
 from astropy.io import fits
 from PIL import Image
 
-from nightcrate.services import pxiproject_io, standard_io, xisf_io
+from nightcrate.services import pxiproject_io
 from nightcrate.services.catalog_thumbnail import render_array_jpeg
 from nightcrate.services.imaging import normalize_to_01, reshape_color
 from nightcrate.services.path_resolver import file_type, resolve_path
+from nightcrate.services.pixel_loader import load_image, superpixels_of
 
 MIN_MAX_PX = 256
 MAX_MAX_PX = 2400
 DEFAULT_MAX_PX = 1600
+RENDER_VERSION = 2
 _CACHE_MAX_BYTES = 32 * 1024 * 1024
 
 _cache: OrderedDict[str, bytes] = OrderedDict()
@@ -123,7 +125,7 @@ def _source_identity(path: str) -> _SourceIdentity:
 
 def _etag(identity: _SourceIdentity, hdu: int, max_px: int) -> tuple[str, str]:
     digest = hashlib.blake2b(
-        repr((*identity.parts, hdu, max_px)).encode("utf-8"), digest_size=16
+        repr((RENDER_VERSION, *identity.parts, hdu, max_px)).encode("utf-8"), digest_size=16
     ).hexdigest()
     return digest, f'"{digest}"'
 
@@ -280,25 +282,14 @@ def _resolve(path: str) -> tuple[Path | BinaryIO, str, int]:
 
 
 def _render(path: str, hdu: int, max_px: int) -> bytes:
-    source, kind, image_index = _resolve(path)
+    source, kind, _image_index = _resolve(path)
     try:
-        if kind == "fits":
-            data = _load_fits(source, hdu, max_px)
-            stretch = "auto"
-        elif kind == "standard":
+        if kind == "standard":
             data = _load_standard(source, max_px)
             stretch = "none"
-        elif kind == "xisf":
-            data = _decimate(xisf_io.load_image_data(source, hdu), max_px)
-            stretch = "auto"
-        elif kind == "float_tiff":
-            data = _decimate(standard_io.load_image_data(source), max_px)
-            stretch = "auto"
-        elif kind == "pxiproject":
-            data = _decimate(pxiproject_io.load_image_data(source, image_index), max_px)
-            stretch = "auto"
         else:
-            raise PreviewUnreadable(f"Unsupported image type: {kind}")
+            data = superpixels_of(load_image(path, hdu))
+            stretch = "auto"
         return render_array_jpeg(data, max_px, quality=85, stretch=stretch)
     except PreviewError:
         raise

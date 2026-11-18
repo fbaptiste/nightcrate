@@ -31,12 +31,12 @@ async def client():
 
 
 @pytest.fixture(autouse=True)
-def reset_update_globals():
-    updates._check_task = None
+async def reset_update_globals():
+    await updates.drain_background_fetches()
     saved_kind = runtime.install_kind
     runtime.install_kind = "source"
     yield
-    updates._check_task = None
+    await updates.drain_background_fetches()
     runtime.install_kind = saved_kind
 
 
@@ -75,6 +75,7 @@ async def test_manifest_and_release_metadata_are_combined(monkeypatch):
     assert latest.release_version == "0.55.0"
     assert latest.notes == ["First change", "Second change", "Third change", "Fourth change"]
     assert latest.platforms == ["darwin-aarch64", "windows-x86_64", "linux-x86_64"]
+    assert latest.min_os == {"darwin-aarch64": "14.0"}
 
 
 @pytest.mark.anyio
@@ -110,6 +111,24 @@ async def test_concurrent_checks_share_fetch(client, monkeypatch):
     assert (await first).status_code == 200
     assert (await second).status_code == 200
     assert mock.await_count == 1
+
+
+@pytest.mark.anyio
+async def test_drain_background_fetches_cancels_shared_check():
+    entered = asyncio.Event()
+
+    async def pending():
+        entered.set()
+        await asyncio.Event().wait()
+
+    task = asyncio.create_task(pending())
+    updates._check_task = task
+    await entered.wait()
+
+    await updates.drain_background_fetches()
+
+    assert task.cancelled()
+    assert updates._check_task is None
 
 
 @pytest.mark.anyio

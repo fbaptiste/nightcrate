@@ -1,5 +1,7 @@
 """Models for project-resolved rig setups and project-only changes."""
 
+from typing import Literal
+
 from pydantic import BaseModel
 
 from nightcrate.api.rig_models import RigPartsIn, RigPartsOut
@@ -35,6 +37,7 @@ class ProjectRigSetupsOut(BaseModel):
     rig_name: str
     declared: bool
     in_use: bool
+    provenance: Literal["files", "manual_sessions", "auto_sessions"] | None
     setups: list[ProjectSetupOut]
     setup_options: list[ProjectSetupOptionOut]
     base_parts: RigPartsIn

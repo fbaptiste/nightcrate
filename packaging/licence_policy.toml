@@ -12,6 +12,9 @@ accepted = [
   "GPL-3.0-or-later WITH GCC-exception-3.1",
   "HPND",
   "ISC",
+  "IJG",
+  "JasPer-2.0",
+  "LGPL-2.1-only",
   "LGPL-2.1-or-later",
   "LGPL-3.0-or-later",
   "MIT",
@@ -45,3 +48,84 @@ packages = ["webpki-root-certs"]
 
 [choices]
 r-efi = "MIT"
+
+# Native libraries intentionally bundled in the rawpy and python-exiv2 wheels.
+# packaging/notices.py requires every native file owned by either distribution
+# to match exactly one rule, so a changed wheel fails closed for review.
+
+[[bundled_native]]
+package = "rawpy"
+files = "_rawpy.*\\.(?:so|pyd|dll)"
+component = "rawpy native extension"
+licence = "MIT"
+source_url = "https://github.com/letmaik/rawpy"
+
+[[bundled_native]]
+package = "rawpy"
+files = "libraw.*\\.(?:dylib|dll|so(?:\\..*)?)"
+component = "LibRaw"
+licence = "LGPL-2.1-only"
+source_url = "https://www.libraw.org/"
+
+[[bundled_native]]
+package = "rawpy"
+files = "libjasper.*\\.(?:dylib|dll|so(?:\\..*)?)"
+component = "JasPer"
+licence = "JasPer-2.0"
+source_url = "https://jasper-software.github.io/jasper/"
+
+[[bundled_native]]
+package = "rawpy"
+files = "libjpeg.*\\.(?:dylib|dll|so(?:\\..*)?)"
+component = "libjpeg-turbo"
+licence = "BSD-3-Clause AND IJG AND Zlib"
+source_url = "https://libjpeg-turbo.org/"
+
+[[bundled_native]]
+package = "rawpy"
+files = "liblcms2.*\\.(?:dylib|dll|so(?:\\..*)?)"
+component = "Little CMS"
+licence = "MIT"
+source_url = "https://www.littlecms.com/"
+
+[[bundled_native]]
+package = "exiv2"
+files = "_[A-Za-z0-9_]+.*\\.(?:so|pyd|dll)"
+component = "python-exiv2 native extension"
+licence = "GPL-3.0-or-later"
+source_url = "https://github.com/jim-easterbrook/python-exiv2"
+
+[[bundled_native]]
+package = "exiv2"
+files = "libexiv2.*\\.(?:dylib|dll|so(?:\\..*)?)"
+component = "Exiv2"
+licence = "GPL-2.0-or-later"
+source_url = "https://exiv2.org/"
+
+[[bundled_native]]
+package = "exiv2"
+files = "libINIReader.*\\.(?:dylib|dll|so(?:\\..*)?)"
+component = "INIReader"
+licence = "BSD-3-Clause"
+source_url = "https://github.com/benhoyt/inih"
+
+[[bundled_native]]
+package = "exiv2"
+files = "libinih.*\\.(?:dylib|dll|so(?:\\..*)?)"
+component = "inih"
+licence = "BSD-3-Clause"
+source_url = "https://github.com/benhoyt/inih"
+
+[[bundled_native]]
+package = "exiv2"
+files = "libbrotli(?:common|dec).*\\.(?:dylib|dll|so(?:\\..*)?)"
+component = "Brotli"
+licence = "MIT"
+source_url = "https://github.com/google/brotli"
+
+[[bundled_native]]
+package = "exiv2"
+files = "libintl.*\\.(?:dylib|dll|so(?:\\..*)?)"
+component = "GNU libintl"
+licence = "LGPL-2.1-or-later"
+source_url = "https://www.gnu.org/software/gettext/"

@@ -35,14 +35,6 @@ def _frontend(tmp_path):
     return root
 
 
-def _free_port():
-    sock = socket.socket()
-    sock.bind(("127.0.0.1", 0))
-    port = sock.getsockname()[1]
-    sock.close()
-    return port
-
-
 def _occupied_with_free_next():
     for _ in range(100):
         occupied = socket.socket()
@@ -58,6 +50,12 @@ def _occupied_with_free_next():
         probe.close()
         return occupied, base
     raise AssertionError("could not find consecutive free ports")
+
+
+def _occupied_port():
+    occupied = socket.socket()
+    occupied.bind(("127.0.0.1", 0))
+    return occupied, occupied.getsockname()[1]
 
 
 def test_deadline_exits_even_if_terminate_raises():
@@ -263,11 +261,11 @@ def test_missing_frontend_has_build_instruction(tmp_path, monkeypatch, capsys):
 
 def test_ready_only_when_accepting_and_shell_eof_exits(tmp_path):
     frontend = _frontend(tmp_path)
-    port = _free_port()
-    process, output = _spawn(tmp_path, frontend, port=port)
+    process, output = _spawn(tmp_path, frontend, port=0)
     try:
         ready = json.loads(output.wait_for("NIGHTCRATE_READY ").split(" ", 1)[1])
-        assert ready == {"port": port}
+        port = ready["port"]
+        assert port > 0
         with urllib.request.urlopen(f"http://127.0.0.1:{port}/api/health", timeout=2) as response:
             assert response.status == 200
         _close_stdin(process)
@@ -281,7 +279,7 @@ def test_shell_eof_during_startup_hits_deadline(tmp_path):
     process, output = _spawn(
         tmp_path,
         frontend,
-        port=_free_port(),
+        port=0,
         extra_env={"NIGHTCRATE_TEST_STARTUP_DELAY": "60"},
     )
     try:
@@ -299,7 +297,7 @@ def test_heartbeat_until_ready(tmp_path):
     process, output = _spawn(
         tmp_path,
         frontend,
-        port=_free_port(),
+        port=0,
         extra_env={"NIGHTCRATE_TEST_STARTUP_DELAY": "12"},
     )
     try:
@@ -318,7 +316,7 @@ def test_heartbeat_until_ready(tmp_path):
 
 def test_port_fallback_without_flag(tmp_path):
     frontend = _frontend(tmp_path)
-    occupied, base = _occupied_with_free_next()
+    occupied, base = _occupied_port()
     process, output = _spawn(
         tmp_path,
         frontend,
@@ -326,7 +324,7 @@ def test_port_fallback_without_flag(tmp_path):
     )
     try:
         ready = json.loads(output.wait_for("NIGHTCRATE_READY ").split(" ", 1)[1])
-        assert ready == {"port": base + 1}
+        assert base < ready["port"] <= base + 10
         _close_stdin(process)
         assert process.wait(timeout=15) == 0
     finally:
@@ -356,7 +354,7 @@ def test_shell_eof_kills_busy_workers(tmp_path):
     process, output = _spawn(
         tmp_path,
         frontend,
-        port=_free_port(),
+        port=0,
         extra_env={
             "NIGHTCRATE_TEST_BUSY_POOL": "2",
             "NIGHTCRATE_TEST_STARTUP_DELAY": "60",
@@ -419,7 +417,7 @@ def test_shell_gone_with_default_sigpipe_still_stops_workers(tmp_path):
             "--frontend-dir",
             str(frontend),
             "--port",
-            str(_free_port()),
+            "0",
         ],
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,

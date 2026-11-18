@@ -72,6 +72,14 @@ async def test_health_includes_db_configured(client):
 
 
 @pytest.mark.anyio
+async def test_raw_check_reports_self_check_result(client, monkeypatch):
+    monkeypatch.setattr(admin.raw_support, "self_check", lambda: "raw probe failed")
+    response = await client.post("/api/admin/raw-check")
+    assert response.status_code == 200
+    assert response.json() == {"raw_files": "raw probe failed"}
+
+
+@pytest.mark.anyio
 async def test_active_catalog_update_guards_all_database_changes_before_side_effects(
     client, tmp_path
 ):

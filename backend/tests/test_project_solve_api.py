@@ -31,9 +31,6 @@ from nightcrate.services.plate_solve_models import (
     PlateSolveResult,
     SolveAttempt,
 )
-from nightcrate.services.rig_setups import save_earlier_setup
-from tests.catalog_helpers import _seed_rig
-from tests.rig_setup_fixtures import make_equipment, make_frame, make_project, make_rig
 
 _SCALE = 3.0 / 3600.0  # 3 arcsec/px in degrees
 
@@ -177,34 +174,6 @@ def _mock_solve(
 async def _make_project(client: AsyncClient, name: str) -> int:
     r = await client.post("/api/projects", json={"name": name})
     return r.json()["id"]
-
-
-async def _make_solve_rig(
-    name: str,
-    *,
-    sort_order: int,
-    active: bool = True,
-    is_mine: bool = True,
-) -> int:
-    rig_id = await _seed_rig(name)
-    async with get_db() as conn:
-        await conn.execute(
-            "UPDATE rig SET sort_order = ?, active = ?, is_mine = ? WHERE id = ?",
-            (sort_order, active, is_mine, rig_id),
-        )
-        await conn.commit()
-    return rig_id
-
-
-async def _add_project_session(project_id: int, rig_id: int) -> None:
-    async with get_db() as conn:
-        await conn.execute(
-            "INSERT INTO project_session"
-            " (project_id, rig_id, line_name, exposure_seconds, num_subs)"
-            " VALUES (?, ?, 'Lum', 60, 1)",
-            (project_id, rig_id),
-        )
-        await conn.commit()
 
 
 def _solve_payload(image_path: str, **values) -> dict:
@@ -1126,6 +1095,74 @@ class TestCreateSolve:
 
 
 class TestGetSolve:
+    async def test_solve_objects_carry_catalogs(self, client: AsyncClient):
+        big, small = await _seed_two_dsos()
+        async with get_db() as conn:
+            cursor = await conn.execute("SELECT source_catalog_id FROM dso WHERE id = ?", (big,))
+            source_id = int((await cursor.fetchone())["source_catalog_id"])
+            cursor = await conn.execute(
+                """
+                INSERT INTO dso (
+                    primary_designation, obj_type, ra_deg, dec_deg, constellation,
+                    maj_axis_arcmin, min_axis_arcmin, position_angle_deg, mag_b,
+                    source_catalog_id, source_row_hash
+                ) VALUES ('Uncatalogued', 'G', 210.2, 54.1, 'UMa', 2.0, 1.0, 0.0,
+                          12.0, ?, 'h3')
+                """,
+                (source_id,),
+            )
+            uncatalogued = int(cursor.lastrowid)
+            await conn.executemany(
+                """
+                INSERT INTO dso_designation (
+                    dso_id, catalog, identifier, display_form, search_key, is_primary
+                ) VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    (big, "ngc", "5457", "NGC 5457", "ngc5457", 1),
+                    (big, "lbn", "1", "LBN 1", "lbn1", 0),
+                    (big, "sharpless2", "1", "Sh2-1", "sh21", 0),
+                ),
+            )
+            group = await conn.execute(
+                """
+                INSERT INTO dso_group (catalog, identifier, display_form, search_key)
+                VALUES ('sharpless2', '1', 'Sh2-1', 'sh21')
+                """
+            )
+            await conn.executemany(
+                "INSERT INTO dso_group_member (group_id, dso_id) VALUES (?, ?)",
+                ((group.lastrowid, big), (group.lastrowid, small)),
+            )
+            await conn.commit()
+
+        pid = await _make_project(client, "Solve Catalog Membership")
+        dsos = [
+            _dso_dict(big, "M 101", 210.0, 54.0, 28.0),
+            _dso_dict(small, "NGC 5474", 210.1, 54.05, 4.8),
+            _dso_dict(uncatalogued, "Uncatalogued", 210.2, 54.1, 2.0),
+        ]
+        with _mock_solve(dsos):
+            created = await client.post(
+                f"/api/projects/{pid}/solve", json=_solve_payload("/fake/catalogs.fits")
+            )
+
+        expected = {
+            big: ["lbn", "ngc", "sharpless2"],
+            small: ["sharpless2"],
+            uncatalogued: [],
+        }
+        assert created.status_code == 200
+        assert {item["dso_id"]: item["catalogs"] for item in created.json()["objects"]} == expected
+
+        fetched = await client.get(f"/api/projects/{pid}/solve")
+        assert {item["dso_id"]: item["catalogs"] for item in fetched.json()["objects"]} == expected
+
+        updated = await client.put(
+            f"/api/projects/{pid}/solve/objects/{small}", json={"is_main": True}
+        )
+        assert {item["dso_id"]: item["catalogs"] for item in updated.json()["objects"]} == expected
+
     async def test_get_after_create(self, client: AsyncClient):
         big, _ = await _seed_two_dsos()
         pid = await _make_project(client, "Solve Get")
@@ -1152,110 +1189,6 @@ class TestGetSolve:
         resp = await client.get(f"/api/projects/{pid}/solve")
         assert resp.status_code == 200
         assert resp.json()["objects"][0]["active"] is False
-
-    async def test_focal_length_estimates_use_declared_and_session_rigs(self, client: AsyncClient):
-        pid = await _make_project(client, "Solve Focal Length")
-        both = await _make_solve_rig("Alpha Both", sort_order=10)
-        session_only = await _make_solve_rig("Beta Session", sort_order=10, is_mine=False)
-        declared_only = await _make_solve_rig("Zulu Retired", sort_order=20, active=False)
-        async with get_db() as conn:
-            await conn.executemany(
-                "INSERT INTO project_rig (project_id, rig_id) VALUES (?, ?)",
-                ((pid, both), (pid, declared_only)),
-            )
-            await conn.commit()
-        await _add_project_session(pid, both)
-
-        solve_result = {**_SOLVE, "pixel_scale_arcsec": 0.775}
-        with _mock_solve([], result_kwargs=solve_result):
-            created = await client.post(
-                f"/api/projects/{pid}/solve", json=_solve_payload("/fake/a.fits")
-            )
-        assert created.status_code == 200
-        initial = created.json()
-        assert [item["rig_id"] for item in initial["focal_length_estimates"]] == [
-            both,
-            declared_only,
-        ]
-        assert initial["focal_length_estimates"][0] == {
-            "rig_id": both,
-            "rig_setup_id": None,
-            "setup_until_at": None,
-            "rig_name": "Alpha Both",
-            "camera_name": "Camera for Alpha Both",
-            "pixel_size_um": 3.76,
-            "rig_focal_length_mm": 600.0,
-            "estimated_focal_length_mm": pytest.approx(1000.72, abs=0.01),
-        }
-
-        # A session change must affect the next read of the stored solve. The
-        # rig is not owned by the user, and the solve itself is not replaced.
-        await _add_project_session(pid, session_only)
-        refreshed = await client.get(f"/api/projects/{pid}/solve")
-        assert refreshed.status_code == 200
-        assert refreshed.json()["id"] == initial["id"]
-        assert [item["rig_id"] for item in refreshed.json()["focal_length_estimates"]] == [
-            both,
-            session_only,
-            declared_only,
-        ]
-        assert (
-            sum(item["rig_id"] == both for item in refreshed.json()["focal_length_estimates"]) == 1
-        )
-
-    async def test_focal_length_estimates_empty_without_rigs(self, client: AsyncClient):
-        pid = await _make_project(client, "Solve Without Rigs")
-        with _mock_solve([], result_kwargs={**_SOLVE, "pixel_scale_arcsec": 0.775}):
-            created = await client.post(
-                f"/api/projects/{pid}/solve", json=_solve_payload("/fake/a.fits")
-            )
-
-        assert created.status_code == 200
-        assert created.json()["focal_length_estimates"] == []
-
-    async def test_focal_estimates_from_frames_without_batches(self, client: AsyncClient):
-        async with get_db() as conn:
-            equipment = await make_equipment(conn)
-            rig_id = await make_rig(conn, equipment, "Frame setup rig")
-            project_id = await make_project(conn, "Frames without derive")
-            await conn.execute(
-                "INSERT INTO project_rig (project_id, rig_id) VALUES (?, ?)",
-                (project_id, rig_id),
-            )
-            await make_frame(conn, project_id, "old-setup", rig_id=rig_id)
-            await save_earlier_setup(conn, rig_id, until_at="2026-11-01")
-            await conn.execute(
-                "UPDATE rig SET camera_id = ? WHERE id = ?", (equipment.camera_b, rig_id)
-            )
-            await make_frame(conn, project_id, "current-setup", rig_id=rig_id)
-            await conn.commit()
-
-        with _mock_solve([], result_kwargs={**_SOLVE, "pixel_scale_arcsec": 0.9}):
-            created = await client.post(
-                f"/api/projects/{project_id}/solve", json=_solve_payload("/fake/a.fits")
-            )
-        estimates = created.json()["focal_length_estimates"]
-        assert [item["rig_setup_id"] is None for item in estimates] == [True, False]
-        assert [item["estimated_focal_length_mm"] for item in estimates] == pytest.approx(
-            [861.7, 550.0], abs=0.1
-        )
-
-    async def test_focal_length_estimates_empty_without_pixel_scale(self, client: AsyncClient):
-        pid = await _make_project(client, "Solve Without Pixel Scale")
-        rig_id = await _make_solve_rig("No Scale Rig", sort_order=1)
-        async with get_db() as conn:
-            await conn.execute(
-                "INSERT INTO project_rig (project_id, rig_id) VALUES (?, ?)",
-                (pid, rig_id),
-            )
-            await conn.commit()
-        with _mock_solve([], result_kwargs={**_SOLVE, "pixel_scale_arcsec": None}):
-            created = await client.post(
-                f"/api/projects/{pid}/solve", json=_solve_payload("/fake/a.fits")
-            )
-
-        assert created.status_code == 200
-        assert created.json()["focal_length_estimates"] == []
 
 
 class TestSetMain:

@@ -16,10 +16,10 @@ from nightcrate.services import hips_tiles, http_client
 
 
 @pytest.fixture(autouse=True)
-def _clean_state():
-    hips_tiles.reset_state()
+async def _clean_state():
+    await hips_tiles.reset_state()
     yield
-    hips_tiles.reset_state()
+    await hips_tiles.reset_state()
 
 
 def _jpeg(rgb: tuple[int, int, int] = (30, 60, 90)) -> bytes:
@@ -266,6 +266,24 @@ async def test_fetch_tile_prefers_cds_and_uses_one_attempt(monkeypatch):
     assert tile.source == "cds"
     assert len(requests) == 1
     assert "alasky.cds.unistra.fr" in requests[0]
+
+
+@pytest.mark.asyncio
+async def test_drain_background_fetches_cancels_and_removes_snapshot():
+    entered = asyncio.Event()
+
+    async def pending():
+        entered.set()
+        await asyncio.Event().wait()
+
+    task = asyncio.create_task(pending())
+    hips_tiles._in_flight[(1, 2)] = task
+    await entered.wait()
+
+    await hips_tiles.drain_background_fetches()
+
+    assert task.cancelled()
+    assert (1, 2) not in hips_tiles._in_flight
 
 
 @pytest.mark.asyncio

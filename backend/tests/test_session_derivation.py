@@ -2,8 +2,8 @@
 
 Two layers:
   * Pure grouping helpers (grain, coercion, canonical filter key) — no DB.
-  * The service + endpoint against directly-inserted sub_frames, plus the rule
-    that ingest never derives on its own.
+  * The service + endpoint against directly-inserted sub_frames, including the
+    automatic refresh policy.
 """
 
 from __future__ import annotations
@@ -24,6 +24,7 @@ from nightcrate.services.session_derivation import (
     derive_sessions,
     filter_key,
     group_key,
+    refresh_auto_sessions,
 )
 from tests.catalog_helpers import _make_project, _seed_rig, _write_fits
 
@@ -388,8 +389,77 @@ class TestSingleRigAttribution:
 
         assert (await _sessions(client, pid))[0]["rig_id"] is None
 
+    async def test_project_rig_list_change_refreshes_existing_auto_sessions(self, client):
+        pid = await _make_project(client, "Rig list refresh")
+        await _add_lights(pid, count=1)
+        await _derive(pid)
+        assert (await _sessions(client, pid))[0]["rig_id"] is None
+        rig_id = await _seed_rig("Added fallback rig")
 
-# ── Endpoint + the "ingest never derives" rule ───────────────────────────────
+        response = await client.put(f"/api/projects/{pid}/rigs", json={"rig_ids": [rig_id]})
+
+        assert response.status_code == 200, response.text
+        assert (await _sessions(client, pid))[0]["rig_id"] == rig_id
+
+
+class TestLocationRefresh:
+    async def test_project_and_location_timezone_changes_rekey_without_extra_night(self, client):
+        pid = await _make_project(client, "Timezone refresh")
+        async with get_db() as conn:
+            utc = (
+                await conn.execute(
+                    "INSERT INTO location "
+                    "(name, latitude, longitude, timezone, geo_timezone) "
+                    "VALUES ('UTC site', 0, 0, 'UTC', 'UTC')"
+                )
+            ).lastrowid
+            new_york = (
+                await conn.execute(
+                    "INSERT INTO location "
+                    "(name, latitude, longitude, timezone, geo_timezone) "
+                    "VALUES ('Eastern site', 40, -74, 'America/New_York', 'America/New_York')"
+                )
+            ).lastrowid
+            await conn.execute("UPDATE project SET location_id = ? WHERE id = ?", (utc, pid))
+            await conn.commit()
+        await _add_lights(pid, count=2, date_obs="2026-03-16T13:00:00+00:00")
+        await _derive(pid, tz_name="UTC")
+        assert [(row["session_date"], row["num_subs"]) for row in await _sessions(client, pid)] == [
+            ("2026-03-16", 2)
+        ]
+
+        response = await client.patch(f"/api/projects/{pid}", json={"location_id": new_york})
+        assert response.status_code == 200, response.text
+        assert [(row["session_date"], row["num_subs"]) for row in await _sessions(client, pid)] == [
+            ("2026-03-15", 2)
+        ]
+
+        other_pid = await _make_project(client, "Other timezone refresh")
+        async with get_db() as conn:
+            await conn.execute(
+                "UPDATE project SET location_id = ? WHERE id = ?", (new_york, other_pid)
+            )
+            await conn.commit()
+        await _add_lights(other_pid, count=1, date_obs="2026-03-16T13:00:00+00:00")
+        await _derive(other_pid, tz_name="America/New_York")
+        assert (await _sessions(client, other_pid))[0]["session_date"] == "2026-03-15"
+
+        response = await client.put(
+            f"/api/locations/{new_york}", json={"timezone": "UTC", "geo_timezone": "UTC"}
+        )
+        assert response.status_code == 200, response.text
+        assert [(row["session_date"], row["num_subs"]) for row in await _sessions(client, pid)] == [
+            ("2026-03-16", 2)
+        ]
+        assert (await _sessions(client, other_pid))[0]["session_date"] == "2026-03-16"
+        async with get_db() as conn:
+            rows = await (
+                await conn.execute("SELECT start_utc FROM session WHERE project_id = ?", (pid,))
+            ).fetchall()
+        assert [row["start_utc"] for row in rows] == ["2026-03-16T12:00:00+00:00"]
+
+
+# ── Endpoint + automatic refresh rule ────────────────────────────────────────
 
 
 class TestDeriveEndpoint:
@@ -500,11 +570,10 @@ class TestDeriveEndpoint:
         ]
 
 
-class TestIngestDoesNotDerive:
-    """Cataloging frames must never create sessions on its own — a project may
-    hold no subs at all and still keep a hand-entered session record."""
+class TestIngestRefreshesSessions:
+    """Scans maintain automatic sessions while respecting manual-only projects."""
 
-    async def test_scan_leaves_sessions_empty(self, client, tmp_path: Path):
+    async def test_first_scan_builds_and_rescan_updates_sessions(self, client, tmp_path: Path):
         pid = await _make_project(client, "Derive Test")
         folder = tmp_path / "lights"
         folder.mkdir()
@@ -517,12 +586,73 @@ class TestIngestDoesNotDerive:
         assert resp.status_code == 200, resp.text
         assert resp.json()["subs_inserted"] == 3
 
-        assert await _sessions(client, pid) == []
+        sessions = await _sessions(client, pid)
+        assert len(sessions) == 1
+        assert sessions[0]["source"] == "auto"
+        assert sessions[0]["num_subs"] == 3
 
-        # ...and the explicit derive then picks them up.
-        resp = await client.post(f"/api/projects/{pid}/sessions/derive")
-        assert resp.json()["sessions_created"] == 1
-        assert len(await _sessions(client, pid)) == 1
+        _write_fits(folder / "light_3.fits")
+        resp = await client.post(f"/api/projects/{pid}/ingest")
+        assert resp.status_code == 200, resp.text
+        sessions = await _sessions(client, pid)
+        assert len(sessions) == 1
+        assert sessions[0]["num_subs"] == 4
+
+    async def test_manual_only_project_does_not_gain_auto_sessions(self, client):
+        pid = await _make_project(client, "Manual only")
+        manual = (
+            await client.post(
+                f"/api/projects/{pid}/sessions",
+                json={"line_name": "Ha", "exposure_seconds": 300, "num_subs": 7},
+            )
+        ).json()
+        await _add_lights(pid, count=2)
+        async with get_db() as conn:
+            result = await refresh_auto_sessions(conn, pid, tz_name=None)
+            await conn.commit()
+        assert result is None
+        assert await _sessions(client, pid) == [manual]
+
+    async def test_auto_and_manual_refresh_keeps_manual(self, client):
+        pid = await _make_project(client, "Both kinds")
+        await _add_lights(pid, count=2)
+        await _derive(pid)
+        manual = (
+            await client.post(
+                f"/api/projects/{pid}/sessions",
+                json={"line_name": "Oiii", "exposure_seconds": 180, "num_subs": 5},
+            )
+        ).json()
+        await _add_lights(pid, count=1)
+        async with get_db() as conn:
+            result = await refresh_auto_sessions(conn, pid, tz_name=None)
+            await conn.commit()
+        assert result is not None
+        rows = await _sessions(client, pid)
+        assert next(row for row in rows if row["source"] == "manual") == manual
+        assert sum(row["num_subs"] for row in rows if row["source"] == "auto") == 3
+
+    async def test_emptied_auto_with_manual_stops_refreshing(self, client):
+        pid = await _make_project(client, "Emptied auto")
+        await _add_lights(pid, count=1)
+        await _derive(pid)
+        await client.post(
+            f"/api/projects/{pid}/sessions",
+            json={"line_name": "Sii", "exposure_seconds": 120, "num_subs": 2},
+        )
+        async with get_db() as conn:
+            await conn.execute("DELETE FROM sub_frame WHERE project_id = ?", (pid,))
+            first = await refresh_auto_sessions(conn, pid, tz_name=None)
+            await conn.commit()
+        assert first is not None
+        assert {row["source"] for row in await _sessions(client, pid)} == {"manual"}
+
+        await _add_lights(pid, count=1)
+        async with get_db() as conn:
+            second = await refresh_auto_sessions(conn, pid, tz_name=None)
+            await conn.commit()
+        assert second is None
+        assert {row["source"] for row in await _sessions(client, pid)} == {"manual"}
 
 
 # ── Source-folder rig tag ────────────────────────────────────────────────────

@@ -15,6 +15,7 @@ from nightcrate.services.rig_setups import (
     RigUsage,
     apply_correction_to_earlier_setups,
     changed_groups,
+    project_setups,
     read_rig_parts,
     read_setup_parts,
     rig_usage,
@@ -53,6 +54,38 @@ def test_changed_groups_reports_only_equipment():
     guide_scope = replace(base, guide_scope_id=6)
     assert changed_groups(oag, guide_scope) == ["guider"]
     assert changed_groups(base, replace(base, guide_camera_id=7)) == ["guide_camera"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("provenance", "source"),
+    [("files", None), ("manual_sessions", "manual"), ("auto_sessions", "auto")],
+)
+async def test_project_setup_reports_undeclared_rig_provenance(
+    rig_db: Path, provenance: str, source: str | None
+):
+    async with aiosqlite.connect(rig_db) as conn:
+        conn.row_factory = aiosqlite.Row
+        await conn.execute("PRAGMA foreign_keys = ON")
+        equipment = await make_equipment(conn)
+        rig_id = await make_rig(conn, equipment, "Unlisted rig")
+        project_id = await make_project(conn)
+        if source is None:
+            await conn.execute(
+                "INSERT INTO project_source_folder (project_id, path, rig_id) VALUES (?, ?, ?)",
+                (project_id, "/synthetic/files", rig_id),
+            )
+        else:
+            await conn.execute(
+                "INSERT INTO project_session "
+                "(project_id, rig_id, line_name, exposure_seconds, num_subs, source) "
+                "VALUES (?, ?, 'Lum', 60, 1, ?)",
+                (project_id, rig_id, source),
+            )
+        rows = await project_setups(conn, project_id)
+        assert len(rows) == 1
+        assert rows[0].declared is False
+        assert rows[0].provenance == provenance
 
 
 @pytest.mark.asyncio

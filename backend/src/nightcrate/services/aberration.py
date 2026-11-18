@@ -103,6 +103,9 @@ def background_level(data: np.ndarray) -> float:
 def detect_stars(
     data: np.ndarray,
     settings: DetectionSettings | None = None,
+    *,
+    block_size: int = 1,
+    original_shape: tuple[int, int] | None = None,
 ) -> AnalysisResult:
     """Detect isolated point sources and measure per-star metrics.
 
@@ -118,6 +121,20 @@ def detect_stars(
     """
     if settings is None:
         settings = DetectionSettings()
+    if block_size < 1:
+        raise ValueError("block_size must be at least 1")
+    requested_settings = settings
+    if block_size > 1:
+        settings = settings.model_copy(
+            update={
+                "min_star_fwhm_px": settings.min_star_fwhm_px / block_size,
+                "max_star_fwhm_px": settings.max_star_fwhm_px / block_size,
+                "edge_margin_px": max(1, int(np.ceil(settings.edge_margin_px / block_size))),
+                "hfr_max_radius": settings.hfr_max_radius / block_size,
+                "max_semi_major_px": settings.max_semi_major_px / block_size,
+                "min_separation_px": settings.min_separation_px / block_size,
+            }
+        )
 
     height, width = data.shape
     img = np.ascontiguousarray(data, dtype=np.float64)
@@ -136,7 +153,17 @@ def detect_stars(
     objects = None
     for attempt in range(4):
         try:
-            objects = sep.extract(img_sub, thresh=thresh, err=bkg.globalrms)
+            # SEP's implicit 3x3 filter is already a sensor-scale kernel at
+            # block 1. On merged pixels it would become 6x6 or 9x9 sensor
+            # pixels and inflate measured FWHM, so use the closest available
+            # working-scale equivalent: no prefilter.
+            extract_options = {"filter_kernel": None} if block_size > 1 else {}
+            objects = sep.extract(
+                img_sub,
+                thresh=thresh,
+                err=bkg.globalrms,
+                **extract_options,
+            )
             break
         except Exception as exc:
             if "pixel buffer full" in str(exc) and attempt < 3:
@@ -145,13 +172,17 @@ def detect_stars(
                 raise
 
     if objects is None or len(objects) == 0:
+        output_height, output_width = original_shape or (
+            height * block_size,
+            width * block_size,
+        )
         return AnalysisResult(
             stars=[],
             star_count=0,
-            image_width=width,
-            image_height=height,
+            image_width=output_width,
+            image_height=output_height,
             background_level=bkg_level,
-            settings=settings,
+            settings=requested_settings,
         )
 
     stars: list[StarMeasurement] = []
@@ -167,7 +198,7 @@ def detect_stars(
     hfrs, _ = sep.flux_radius(img_sub, xs, ys, rmax, 0.5)
 
     radii = settings.aperture_radius_factor * as_
-    radii = np.clip(radii, 3.0, 50.0)
+    radii = np.clip(radii, 3.0 / block_size, 50.0 / block_size)
     flux_arr, fluxerr_arr, _ = sep.sum_circle(
         img_sub,
         xs,
@@ -215,19 +246,21 @@ def detect_stars(
         if settings.max_star_peak_adu is not None and peak > settings.max_star_peak_adu:
             continue
 
+        sensor_x = (x + 0.5) * block_size - 0.5
+        sensor_y = (y + 0.5) * block_size - 0.5
         stars.append(
             StarMeasurement(
-                x=round(x, 2),
-                y=round(y, 2),
-                fwhm=round(fwhm, 3),
-                hfr=round(hfr, 3),
+                x=round(sensor_x, 2),
+                y=round(sensor_y, 2),
+                fwhm=round(fwhm * block_size, 3),
+                hfr=round(hfr * block_size, 3),
                 eccentricity=round(ecc, 4),
                 elongation_angle_deg=round(angle_deg, 1),
                 peak_adu=round(peak, 4),
                 flux=round(flux, 2),
                 snr=round(snr, 1),
-                semi_major=round(a, 3),
-                semi_minor=round(b, 3),
+                semi_major=round(a * block_size, 3),
+                semi_minor=round(b * block_size, 3),
                 flag=flag,
             )
         )
@@ -236,7 +269,8 @@ def detect_stars(
     if settings.min_separation_px > 0 and len(stars) > 1:
         coords = np.array([(s.x, s.y) for s in stars])
         isolated: list[StarMeasurement] = []
-        min_sep2 = settings.min_separation_px**2
+        # Star coordinates have already been restored to sensor pixels.
+        min_sep2 = requested_settings.min_separation_px**2
         for idx_s, s in enumerate(stars):
             diffs = coords - np.array([s.x, s.y])
             dists2 = diffs[:, 0] ** 2 + diffs[:, 1] ** 2
@@ -257,17 +291,18 @@ def detect_stars(
         # against a typical per-star SNR around 100.
         median_snr = round(float(np.median([s.snr for s in stars])), 3)
 
+    output_height, output_width = original_shape or (height * block_size, width * block_size)
     return AnalysisResult(
         stars=stars,
         star_count=len(stars),
-        image_width=width,
-        image_height=height,
+        image_width=output_width,
+        image_height=output_height,
         median_fwhm=median_fwhm,
         median_hfr=median_hfr,
         median_eccentricity=median_ecc,
         median_snr=median_snr,
         background_level=bkg_level,
-        settings=settings,
+        settings=requested_settings,
     )
 
 

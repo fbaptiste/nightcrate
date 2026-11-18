@@ -46,6 +46,20 @@ async def _setup(client, tmp_path, *, name: str):
 
 
 class TestFrameTypeCorrection:
+    async def test_single_correction_refreshes_automatic_sessions(self, client, tmp_path):
+        pid, _folder = await _setup(client, tmp_path, name="TypeRefreshesSessions")
+        light = (await _frames(client, pid, frame_type="light"))[0]
+        before = (await client.get(f"/api/projects/{pid}/sessions")).json()
+        assert len(before) == 1
+
+        response = await client.patch(
+            f"/api/projects/{pid}/catalog/frames/{light['id']}/classification",
+            json={"frame_type": "dark"},
+        )
+
+        assert response.status_code == 200, response.text
+        assert (await client.get(f"/api/projects/{pid}/sessions")).json() == []
+
     async def test_manual_frame_type_survives_rescan(self, client, tmp_path):
         """The dark-flat reclassification pass runs on every scan — it must not
         revert a hand-set type."""
@@ -178,6 +192,38 @@ class TestFrameTypeCorrection:
 
 
 class TestBulkCorrection:
+    async def test_bulk_correction_refreshes_automatic_sessions_once(
+        self, client, tmp_path, monkeypatch
+    ):
+        pid = await _make_project(client, "BulkRefreshesSessions")
+        folder = tmp_path / "bulk-lights"
+        folder.mkdir()
+        for index in range(2):
+            _write_fits(folder / f"light_{index}.fits")
+        await _ingest_folder(client, pid, folder)
+        lights = await _frames(client, pid, frame_type="light")
+        assert len((await client.get(f"/api/projects/{pid}/sessions")).json()) == 1
+        from nightcrate.api import ingest
+
+        original_refresh = ingest.refresh_auto_sessions
+        calls = 0
+
+        async def counted_refresh(*args, **kwargs):
+            nonlocal calls
+            calls += 1
+            return await original_refresh(*args, **kwargs)
+
+        monkeypatch.setattr(ingest, "refresh_auto_sessions", counted_refresh)
+
+        response = await client.post(
+            f"/api/projects/{pid}/catalog/frames/bulk-classification",
+            json={"frame_ids": [row["id"] for row in lights], "frame_type": "dark"},
+        )
+
+        assert response.status_code == 200, response.text
+        assert calls == 1
+        assert (await client.get(f"/api/projects/{pid}/sessions")).json() == []
+
     async def test_bulk_applies_to_every_frame(self, client, tmp_path):
         pid = await _make_project(client, "BulkApply")
         folder = tmp_path / "capture"

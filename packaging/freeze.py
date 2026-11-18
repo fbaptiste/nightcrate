@@ -107,6 +107,8 @@ build_options = {
         "httpx",
         "platformdirs",
         "multipart",
+        "rawpy",
+        "exiv2",
     ]
     + (["mlx"] if sys.platform == "darwin" else []),
     "zip_include_packages": [],

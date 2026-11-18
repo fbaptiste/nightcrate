@@ -3,32 +3,34 @@
 Two entry points:
 
 - ``generate_rendered_images(file_path, output_dir)`` — produces
-  ``full.jpg``, ``thumb_lg.jpg``, ``thumb_md.jpg``, ``thumb_sm.jpg``
-  in the given directory (per-image previews).
+  current ``full_v2.jpg``, ``thumb_lg_v2.jpg``, ``thumb_md_v2.jpg`` and
+  ``thumb_sm_v2.jpg`` renditions. Older ``_v1`` and unversioned files remain
+  usable until a current rendition replaces them.
 - ``generate_cropped_thumbnail(file_path, crop, output_path, size)`` —
-  produces a single cropped thumbnail at the target size written to
-  *output_path* (project-level display thumbnails).
+  produces one current ``thumb_crop_{size}_v2_{row_id}.jpg`` file. Older
+  ``_v1_`` and unversioned crop generations remain usable until replacement.
 
 Pure service — no FastAPI, no DB access.
 """
 
 from __future__ import annotations
 
+import asyncio
 import io
 import logging
+import math
+import re
 import threading
+from collections.abc import Callable
 from pathlib import Path
 
 import numpy as np
 from PIL import Image as PILImage
 
-from nightcrate.services import fits_io, pxiproject_io, standard_io, xisf_io
-from nightcrate.services.imaging import (
-    compute_image_stats,
-    resolve_auto_stretch,
-    stretch_plane,
-)
+from nightcrate.services import standard_io
+from nightcrate.services.catalog_thumbnail import render_array_jpeg
 from nightcrate.services.path_resolver import resolve_path
+from nightcrate.services.pixel_loader import load_image, superpixels_of
 
 logger = logging.getLogger(__name__)
 
@@ -38,19 +40,27 @@ VARIANT_SIZES: dict[str, int] = {
     "thumb_md": 400,
     "thumb_sm": 180,
 }
+RENDER_VERSION = 2
 
 _RENDER_LOCK = threading.Lock()
+_REFRESH_SEM = asyncio.Semaphore(1)
+_in_flight: dict[Path, asyncio.Task[None]] = {}
+_running_refreshes: set[asyncio.Task[None]] = set()
 
 
 def _downsample(data: np.ndarray, max_dim: int) -> np.ndarray:
-    """Stride-subsample so the largest spatial dimension <= max_dim."""
+    """Area-reduce so the largest spatial dimension is at most *max_dim*."""
     h, w = data.shape[-2], data.shape[-1]
-    step = max(1, max(h, w) // max_dim)
+    step = max(1, math.ceil(max(h, w) / max_dim))
     if step <= 1:
         return data
-    if data.ndim == 2:
-        return data[::step, ::step]
-    return data[:, ::step, ::step]
+    y_starts = np.arange(0, h, step)
+    x_starts = np.arange(0, w, step)
+    y_counts = np.minimum(step, h - y_starts)
+    x_counts = np.minimum(step, w - x_starts)
+    reduced = np.add.reduceat(data.astype(np.float32), y_starts, axis=-2)
+    reduced = np.add.reduceat(reduced, x_starts, axis=-1)
+    return reduced / (y_counts[:, None] * x_counts[None, :])
 
 
 def _load_raw(file_path: str) -> tuple[str, object]:
@@ -59,46 +69,35 @@ def _load_raw(file_path: str) -> tuple[str, object]:
     For standard images returns ("standard", PILImage).
     For scientific formats returns (ft, np.ndarray).
     """
-    p, ft, idx, _ck = resolve_path(file_path)
+    p, ft, _idx, _ck = resolve_path(file_path)
 
     if ft == "standard":
         raw = standard_io.load_image_bytes(p)
         return "standard", PILImage.open(io.BytesIO(raw))
 
-    if ft == "pxiproject":
-        data = pxiproject_io.load_image_data(p, idx)
-    elif ft == "fits":
-        data = fits_io.load_image_data(p, 0)
-    elif ft == "xisf":
-        data = xisf_io.load_image_data(p, 0)
-    elif ft == "float_tiff":
-        data = standard_io.load_image_data(p)
-    else:
-        data = standard_io.load_image_as_array(p)
+    return ft, superpixels_of(load_image(file_path))
 
-    return ft, data
+
+def rendition_path(output_dir: Path, variant: str) -> Path:
+    return output_dir / f"{variant}_v{RENDER_VERSION}.jpg"
+
+
+def rendition_candidates(output_dir: Path, variant: str) -> list[Path]:
+    """Return rendition generations newest first."""
+    paths = [rendition_path(output_dir, variant)]
+    paths.extend(
+        output_dir / f"{variant}_v{version}.jpg" for version in range(RENDER_VERSION - 1, 0, -1)
+    )
+    paths.append(output_dir / f"{variant}.jpg")
+    return paths
 
 
 def _render_scientific(data: np.ndarray, max_size: int) -> PILImage.Image:
-    """Downsample, auto-stretch, and return a Pillow Image."""
+    """Area-reduce and render through the worker-safe NumPy stretch."""
     small = _downsample(data, max_size * 2)
-    stats = compute_image_stats(small)
-    linked, per_channel, _ = resolve_auto_stretch(small, stats=stats)
-
-    if small.ndim == 2:
-        params = linked if linked is not None else (per_channel[0] if per_channel else linked)
-        scaled = stretch_plane(small, params)
-        img = PILImage.fromarray(scaled, mode="L")
-    else:
-        ch_params = (
-            per_channel if per_channel and len(per_channel) == 3 else [linked, linked, linked]
-        )
-        planes = [stretch_plane(small[i], ch_params[i]) for i in range(3)]
-        rgb = np.stack(planes, axis=2)
-        img = PILImage.fromarray(rgb, mode="RGB")
-
-    img.thumbnail((max_size, max_size), PILImage.LANCZOS)
-    return img
+    payload = render_array_jpeg(small, max_size, quality=85, stretch="auto")
+    with PILImage.open(io.BytesIO(payload)) as image:
+        return image.copy()
 
 
 def _save_jpeg(img: PILImage.Image, path: Path) -> None:
@@ -107,11 +106,39 @@ def _save_jpeg(img: PILImage.Image, path: Path) -> None:
     img.save(path, format="JPEG", quality=85)
 
 
+def _delete_exact_obsolete(paths: list[Path], identity: str) -> None:
+    for path in paths:
+        try:
+            path.unlink(missing_ok=True)
+        except OSError:
+            logger.warning(
+                "[project-images] couldn't remove obsolete %s file %s",
+                identity,
+                path,
+                exc_info=True,
+            )
+
+
+def _delete_older_renditions(output_dir: Path, variant: str) -> None:
+    _delete_exact_obsolete(rendition_candidates(output_dir, variant)[1:], "rendition")
+
+
+def _delete_older_crops(output_path: Path, size: str) -> None:
+    match = re.fullmatch(
+        rf"thumb_crop_{re.escape(size)}_v{RENDER_VERSION}_(\d+)\.jpg",
+        output_path.name,
+    )
+    if match is None:
+        return
+    row_id = match.group(1)
+    _delete_exact_obsolete(crop_candidates(output_path.parent, size, int(row_id))[1:], "crop")
+
+
 def generate_rendered_images(file_path: str, output_dir: Path) -> None:
     """Generate all pre-calculated image variants and write to *output_dir*.
 
-    Creates ``full.jpg``, ``thumb_lg.jpg``, ``thumb_md.jpg``,
-    ``thumb_sm.jpg``.  Serialised via a module-level lock so only one
+    Creates versioned ``full``, ``thumb_lg``, ``thumb_md`` and ``thumb_sm``
+    JPEG renditions. Serialised via a module-level lock so only one
     render runs at a time (MLX Metal is not thread-safe).
     """
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -126,12 +153,14 @@ def generate_rendered_images(file_path: str, output_dir: Path) -> None:
             for variant, size in VARIANT_SIZES.items():
                 copy = pil_img.copy()
                 copy.thumbnail((size, size), PILImage.LANCZOS)
-                _save_jpeg(copy, output_dir / f"{variant}.jpg")
+                _save_jpeg(copy, rendition_path(output_dir, variant))
+                _delete_older_renditions(output_dir, variant)
         else:
             data: np.ndarray = raw  # type: ignore[assignment]
             for variant, size in VARIANT_SIZES.items():
                 img = _render_scientific(data, size)
-                _save_jpeg(img, output_dir / f"{variant}.jpg")
+                _save_jpeg(img, rendition_path(output_dir, variant))
+                _delete_older_renditions(output_dir, variant)
 
     logger.info("[project-images] rendered %s → %s", file_path, output_dir)
 
@@ -149,7 +178,68 @@ class CropFrameError(ValueError):
 
 def crop_path(project_folder: Path, size: str, row_id: int) -> Path:
     """Return the generation-specific crop path inside a project folder."""
-    return project_folder / f"thumb_crop_{size}_{row_id}.jpg"
+    return project_folder / f"thumb_crop_{size}_v{RENDER_VERSION}_{row_id}.jpg"
+
+
+def crop_candidates(project_folder: Path, size: str, row_id: int) -> list[Path]:
+    """Return crop generations newest first."""
+    paths = [crop_path(project_folder, size, row_id)]
+    paths.extend(
+        project_folder / f"thumb_crop_{size}_v{version}_{row_id}.jpg"
+        for version in range(RENDER_VERSION - 1, 0, -1)
+    )
+    paths.append(project_folder / f"thumb_crop_{size}_{row_id}.jpg")
+    return paths
+
+
+async def _background_wrapper(
+    target: Path,
+    operation: Callable[..., None],
+    args: tuple[object, ...],
+) -> None:
+    try:
+        async with _REFRESH_SEM:
+            task = asyncio.current_task()
+            if task is not None:
+                _running_refreshes.add(task)
+            try:
+                await asyncio.to_thread(operation, *args)
+            finally:
+                if task is not None:
+                    _running_refreshes.discard(task)
+    except Exception as exc:  # noqa: BLE001 - refresh failures keep the older file usable
+        logger.info("[project-images] background refresh failed for %s: %s", target, exc)
+    finally:
+        if _in_flight.get(target) is asyncio.current_task():
+            _in_flight.pop(target, None)
+
+
+def refresh_in_background(
+    target: Path,
+    operation: Callable[..., None],
+    *args: object,
+) -> None:
+    """Start at most one background refresh for *target*."""
+    if target in _in_flight:
+        return
+    task = asyncio.create_task(_background_wrapper(target, operation, args))
+    _in_flight[target] = task
+
+
+async def drain_background_refreshes(*, cancel_pending: bool = False) -> None:
+    """Drain current refreshes, optionally cancelling work not yet rendering."""
+    snapshot = tuple(_in_flight.items())
+    tasks = tuple(task for _, task in snapshot)
+    if cancel_pending:
+        running = _running_refreshes.copy()
+        for task in tasks:
+            if not task.done() and task not in running:
+                task.cancel()
+    if tasks:
+        await asyncio.gather(*tasks, return_exceptions=True)
+    for target, task in snapshot:
+        if _in_flight.get(target) is task:
+            _in_flight.pop(target, None)
 
 
 def fit_box(width: int, height: int) -> tuple[float, float, float, float]:
@@ -265,5 +355,6 @@ def generate_cropped_thumbnail(
         check_crop_frame(*pil_img.size, crop_x, crop_y, crop_w, crop_h)
         cropped = render_crop(pil_img, crop_x, crop_y, crop_w, crop_h, target)
         _save_jpeg(cropped, output_path)
+        _delete_older_crops(output_path, size)
 
     logger.info("[project-images] cropped %s → %s", file_path, output_path)

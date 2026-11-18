@@ -1,5 +1,6 @@
 """Tests for aberration inspector API endpoints."""
 
+import json
 from pathlib import Path
 
 import numpy as np
@@ -7,7 +8,10 @@ import pytest
 from astropy.io import fits
 from httpx import ASGITransport, AsyncClient
 
+from nightcrate.api import aberration as aberration_api
+from nightcrate.db.session import get_db
 from nightcrate.main import app
+from nightcrate.services.aberration import AnalysisResult, DetectionSettings
 
 
 @pytest.fixture
@@ -43,6 +47,27 @@ def tmp_fits_with_stars(tmp_path: Path) -> Path:
     return path
 
 
+async def _seed_legacy_analysis(file_path: Path) -> str:
+    settings_json = json.dumps(DetectionSettings().model_dump(), sort_keys=True)
+    async with get_db() as conn:
+        cursor = await conn.execute(
+            """INSERT INTO aberration_analysis
+               (file_path, hdu, settings_json, image_width, image_height,
+                star_count, median_fwhm, median_hfr, median_eccentricity)
+               VALUES (?, 0, ?, 300, 200, 23, 6.75, 3.25, 0.2)""",
+            (str(file_path), settings_json),
+        )
+        await conn.execute(
+            """INSERT INTO aberration_stars
+               (analysis_id, x, y, fwhm, hfr, eccentricity, elongation_angle_deg,
+                peak_adu, flux, snr, semi_major, semi_minor)
+               VALUES (?, 0, 0, 6.75, 3.25, 0.2, 12, 0.8, 100, 20, 3, 2)""",
+            (cursor.lastrowid,),
+        )
+        await conn.commit()
+    return settings_json
+
+
 class TestAnalyzeEndpoint:
     async def test_analyze_basic(self, client: AsyncClient, tmp_fits_with_stars: Path):
         resp = await client.post(
@@ -58,11 +83,72 @@ class TestAnalyzeEndpoint:
         assert data["star_count"] == len(data["stars"])
 
     async def test_analyze_nonexistent_file(self, client: AsyncClient, tmp_path: Path):
+        missing = tmp_path / "nonexistent.fits"
         resp = await client.post(
             "/api/aberration/analyze",
-            params={"path": str(tmp_path / "nonexistent.fits"), "hdu": 0},
+            params={"path": str(missing), "hdu": 0},
         )
         assert resp.status_code == 404
+        assert resp.json() == {"detail": f"File not found: {missing}"}
+
+    async def test_missing_file_uses_legacy_cached_analysis(
+        self, client: AsyncClient, tmp_path: Path
+    ):
+        missing = tmp_path / "offline.fits"
+        await _seed_legacy_analysis(missing)
+
+        resp = await client.post(
+            "/api/aberration/analyze",
+            params={"path": str(missing), "hdu": 0},
+        )
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["star_count"] == 23
+        assert body["stars"][0]["fwhm"] == 6.75
+        assert body["stars"][0]["flag"] == 0
+        assert body["median_snr"] is None
+        assert body["background_level"] is None
+
+    async def test_readable_file_is_reanalysed_and_keeps_legacy_row(
+        self,
+        client: AsyncClient,
+        tmp_fits_with_stars: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        legacy_key = await _seed_legacy_analysis(tmp_fits_with_stars)
+        fresh = AnalysisResult(
+            stars=[],
+            star_count=0,
+            image_width=200,
+            image_height=200,
+            median_fwhm=None,
+            median_hfr=None,
+            median_eccentricity=None,
+            settings=DetectionSettings(),
+        )
+        monkeypatch.setattr(aberration_api, "detect_stars", lambda *_args, **_kwargs: fresh)
+
+        resp = await client.post(
+            "/api/aberration/analyze",
+            params={"path": str(tmp_fits_with_stars), "hdu": 0},
+        )
+
+        assert resp.status_code == 200
+        assert resp.json()["star_count"] == 0
+        current_key = aberration_api._settings_key(DetectionSettings())
+        async with get_db() as conn:
+            rows = await (
+                await conn.execute(
+                    "SELECT settings_json, star_count FROM aberration_analysis "
+                    "WHERE file_path = ? ORDER BY settings_json",
+                    (str(tmp_fits_with_stars),),
+                )
+            ).fetchall()
+        assert {(row["settings_json"], row["star_count"]) for row in rows} == {
+            (legacy_key, 23),
+            (current_key, 0),
+        }
 
     async def test_analyze_relative_path_rejected(self, client: AsyncClient):
         resp = await client.post(
@@ -122,6 +208,24 @@ class TestSamplesEndpoint:
             params={"path": str(tmp_path / "nonexistent.fits"), "hdu": 0},
         )
         assert resp.status_code == 404
+
+    async def test_samples_use_legacy_cache_when_file_is_missing(
+        self, client: AsyncClient, tmp_path: Path
+    ):
+        missing = tmp_path / "offline-samples.fits"
+        await _seed_legacy_analysis(missing)
+
+        resp = await client.post(
+            "/api/aberration/samples",
+            params={"path": str(missing), "hdu": 0, "samples_across": 5},
+        )
+
+        assert resp.status_code == 200
+        squares = resp.json()["squares"]
+        assert sum(square["star_count"] for square in squares) == 1
+        assert (
+            next(square["median_fwhm"] for square in squares if square["star_count"] == 1) == 6.75
+        )
 
 
 class TestCropEndpoint:

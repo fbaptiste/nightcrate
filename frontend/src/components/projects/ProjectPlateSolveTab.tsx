@@ -1,19 +1,13 @@
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSearchParams } from "react-router-dom";
 import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
-import Checkbox from "@mui/material/Checkbox";
 import Dialog from "@mui/material/Dialog";
 import DialogActions from "@mui/material/DialogActions";
 import DialogContent from "@mui/material/DialogContent";
 import DialogTitle from "@mui/material/DialogTitle";
-import Table from "@mui/material/Table";
-import TableBody from "@mui/material/TableBody";
-import TableCell from "@mui/material/TableCell";
-import TableContainer from "@mui/material/TableContainer";
-import TableHead from "@mui/material/TableHead";
-import TableRow from "@mui/material/TableRow";
+import Snackbar from "@mui/material/Snackbar";
 import Typography from "@mui/material/Typography";
 import { alpha, useTheme } from "@mui/material/styles";
 
@@ -27,33 +21,24 @@ import {
   createProjectSolve,
   deleteProjectSolve,
   getProjectSolve,
-  projectSolveImageUrl,
   setProjectObjectMain,
+  type IdentifiedDso,
   type ProjectSolve,
 } from "@/api/projectSolve";
 import { headerNumber } from "@/components/analyzer/analyzerHelpers";
 import { FileBrowser } from "@/components/fits/FileBrowser";
-import DsoAnnotationOverlay from "@/components/plate-solve/DsoAnnotationOverlay";
 import ImagePreview from "@/components/plate-solve/ImagePreview";
 import PlateSolvePanel, {
   type SolveOutcome,
 } from "@/components/plate-solve/PlateSolvePanel";
 import { solveColors } from "@/components/plate-solve/solvePalette";
 import { stepLabel } from "@/components/plate-solve/solveStepLabels";
-import { DSO_TYPE_DISPLAY } from "@/lib/dsoTypeNames";
 import { invalidateProjectLinks } from "@/api/projectTargetLinks";
 import { invalidateProjectInfo } from "@/api/projectInfo";
+import SolvedPlateSolveWorkspace from "@/components/projects/plate-solve/SolvedPlateSolveWorkspace";
 
 function fileName(path: string): string {
   return path.split(/[\\/]/).pop()?.split("::").pop() ?? path;
-}
-
-function formatFocalLength(value: number): string {
-  return Math.round(value).toLocaleString();
-}
-
-function formatPixelSize(value: number): string {
-  return value.toLocaleString(undefined, { maximumFractionDigits: 2 });
 }
 
 function formatDay(value: string): string {
@@ -63,16 +48,6 @@ function formatDay(value: string): string {
     year: "numeric",
     timeZone: "UTC",
   }).format(new Date(`${value.slice(0, 10)}T00:00:00Z`));
-}
-
-function formatAxis(value: number): string {
-  return value.toLocaleString(undefined, { maximumFractionDigits: 1 });
-}
-
-function objectSize(major: number | null, minor: number | null): string {
-  if (major == null) return "";
-  if (minor == null || Math.abs(major - minor) < 0.05) return `${formatAxis(major)}′`;
-  return `${formatAxis(major)}′ × ${formatAxis(minor)}′`;
 }
 
 function toResult(solve: ProjectSolve): PlateSolveResult {
@@ -137,12 +112,10 @@ export default function ProjectPlateSolveTab({ projectId, onMainsChange }: Props
   const queryClient = useQueryClient();
   const [params, setParams] = useSearchParams();
   const [browserOpen, setBrowserOpen] = useState(false);
-  const [selectedId, setSelectedId] = useState<number | null>(null);
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [viewerWidth, setViewerWidth] = useState(0);
-  const viewerObserverRef = useRef<ResizeObserver | null>(null);
+  const [pendingIds, setPendingIds] = useState<Set<number>>(() => new Set());
   const chosenPath = params.get("solve");
 
   const solveQuery = useQuery({
@@ -159,17 +132,6 @@ export default function ProjectPlateSolveTab({ projectId, onMainsChange }: Props
   const cards = headerQuery.data ?? [];
   const width = headerNumber(cards, "NAXIS1");
   const height = headerNumber(cards, "NAXIS2");
-
-  const setViewerElement = useCallback((viewer: HTMLDivElement | null) => {
-    viewerObserverRef.current?.disconnect();
-    viewerObserverRef.current = null;
-    if (!viewer) return;
-    const updateWidth = () => setViewerWidth(viewer.getBoundingClientRect().width);
-    updateWidth();
-    const observer = new ResizeObserver(updateWidth);
-    observer.observe(viewer);
-    viewerObserverRef.current = observer;
-  }, []);
 
   const setChosen = (path: string | null) => {
     const next = new URLSearchParams(params);
@@ -215,40 +177,55 @@ export default function ProjectPlateSolveTab({ projectId, onMainsChange }: Props
   const mainMutation = useMutation({
     mutationFn: ({ dsoId, isMain }: { dsoId: number; isMain: boolean }) =>
       setProjectObjectMain(projectId, dsoId, isMain),
-    onSuccess: refreshSaved,
-    onError: (reason) => setError(parseApiError(reason).message),
+    onMutate: ({ dsoId, isMain }) => {
+      setError(null);
+      setPendingIds((current) => new Set(current).add(dsoId));
+      queryClient.setQueryData<ProjectSolve | null>(["project-solve", projectId], (current) =>
+        current
+          ? {
+              ...current,
+              objects: current.objects.map((object) =>
+                object.dso_id === dsoId ? { ...object, is_main: isMain } : object,
+              ),
+            }
+          : current,
+      );
+    },
+    onSuccess: (updated) => {
+      queryClient.setQueryData(["project-solve", projectId], updated);
+      refreshSaved();
+    },
+    onSettled: (_data, _reason, variables) => {
+      setPendingIds((current) => {
+        const next = new Set(current);
+        next.delete(variables.dsoId);
+        return next;
+      });
+    },
+    onError: (reason, variables) => {
+      queryClient.setQueryData<ProjectSolve | null>(["project-solve", projectId], (current) =>
+        current
+          ? {
+              ...current,
+              objects: current.objects.map((object) =>
+                object.dso_id === variables.dsoId
+                  ? { ...object, is_main: !variables.isMain }
+                  : object,
+              ),
+            }
+          : current,
+      );
+      setError(parseApiError(reason).message);
+    },
   });
   const deleteMutation = useMutation({
     mutationFn: () => deleteProjectSolve(projectId),
     onSuccess: () => {
       setConfirmDelete(false);
-      setSelectedId(null);
       refreshSaved();
     },
     onError: (reason) => setError(parseApiError(reason).message),
   });
-
-  const overlayDsos = useMemo(
-    () =>
-      (solve?.objects ?? []).map((object) => ({
-        id: object.dso_id,
-        pixel_x: object.pixel_x,
-        pixel_y: object.pixel_y,
-        ellipse_semi_major_px: object.ellipse_semi_major_px,
-        ellipse_semi_minor_px: object.ellipse_semi_minor_px,
-        ellipse_angle_deg: object.ellipse_angle_deg,
-        common_name: object.common_name,
-        primary_designation: object.primary_designation,
-      })),
-    [solve],
-  );
-  const mainIds = useMemo(
-    () =>
-      new Set(
-        (solve?.objects ?? []).filter((object) => object.is_main).map((object) => object.dso_id),
-      ),
-    [solve],
-  );
 
   const handleFileSelect = (path: string) => {
     setBrowserOpen(false);
@@ -284,6 +261,8 @@ export default function ProjectPlateSolveTab({ projectId, onMainsChange }: Props
     return (
       <Box
         sx={{
+          height: "100%",
+          overflow: "auto",
           maxWidth: 520,
           display: "grid",
           justifyItems: "start",
@@ -319,7 +298,7 @@ export default function ProjectPlateSolveTab({ projectId, onMainsChange }: Props
 
   if (chosenPath) {
     return (
-      <Box sx={{ maxWidth: 1240, display: "grid", gap: 1.5 }}>
+      <Box sx={{ height: "100%", overflow: "auto", maxWidth: 1240, display: "grid", gap: 1.5 }}>
         <Box
           sx={{
             display: "flex",
@@ -414,7 +393,6 @@ export default function ProjectPlateSolveTab({ projectId, onMainsChange }: Props
   ]
     .filter(Boolean)
     .join(" ");
-  const imageRatio = solve.image_width / solve.image_height;
   const facts = [
     { label: "Centre", value: center },
     {
@@ -457,7 +435,18 @@ export default function ProjectPlateSolveTab({ projectId, onMainsChange }: Props
   ];
 
   return (
-    <Box sx={{ maxWidth: 1240, display: "grid", gap: 2 }}>
+    <Box
+      sx={{
+        width: "100%",
+        maxWidth: 1280,
+        height: "100%",
+        minHeight: 0,
+        display: "flex",
+        flexDirection: "column",
+        gap: 1.5,
+        overflow: "auto",
+      }}
+    >
       <Box
         sx={{
           display: "flex",
@@ -604,215 +593,26 @@ export default function ProjectPlateSolveTab({ projectId, onMainsChange }: Props
         </Box>
       )}
 
-      <Box sx={{ display: "flex", justifyContent: "center", width: "100%" }}>
-        <Box
-          ref={setViewerElement}
-          sx={{
-            width: `min(100%, ${imageRatio * 560}px, ${imageRatio * 60}vh)`,
-            maxHeight: "min(560px, 60vh)",
-            bgcolor: "#05070b",
-            borderRadius: "6px",
-            overflow: "hidden",
-            aspectRatio: `${solve.image_width} / ${solve.image_height}`,
-          }}
-        >
-          <DsoAnnotationOverlay
-            imageHref={projectSolveImageUrl(projectId, "full", solve.id)}
-            imgW={solve.image_width}
-            imgH={solve.image_height}
-            dsos={overlayDsos}
-            selectedId={selectedId}
-            onSelect={setSelectedId}
-            mainIds={mainIds}
-            displayWidthPx={viewerWidth || undefined}
-          />
-        </Box>
-      </Box>
-
-      <Box
-        sx={{
-          display: "grid",
-          gridTemplateColumns: {
-            xs: "minmax(0, 1fr)",
-            md:
-              solve.focal_length_estimates.length > 0
-                ? "minmax(0, 1.1fr) minmax(0, 1.2fr)"
-                : "1fr",
-          },
-          gap: 2,
-          alignItems: "start",
+      <SolvedPlateSolveWorkspace
+        projectId={projectId}
+        solve={solve}
+        pendingIds={pendingIds}
+        onToggleMain={async (object: IdentifiedDso, isMain: boolean) => {
+          try {
+            await mainMutation.mutateAsync({ dsoId: object.dso_id, isMain });
+            return true;
+          } catch {
+            return false;
+          }
         }}
-      >
-        <Box
-          sx={{
-            bgcolor: "background.paper",
-            border: 1,
-            borderColor: "divider",
-            borderRadius: "8px",
-            overflow: "hidden",
-          }}
-        >
-          <Box sx={{ p: "14px 16px 8px" }}>
-            <Typography component="h2" sx={{ fontSize: 15, fontWeight: 600 }}>
-              Objects in the image ({solve.objects.length})
-            </Typography>
-          </Box>
-          <TableContainer>
-            <Table
-              size="small"
-              aria-label="Objects in the solved image"
-              sx={{ "& th": { whiteSpace: "nowrap" } }}
-            >
-              <TableHead>
-                <TableRow>
-                  <TableCell>Object</TableCell>
-                  <TableCell>Type</TableCell>
-                  <TableCell align="right">Size</TableCell>
-                  <TableCell align="center">Main target</TableCell>
-                </TableRow>
-              </TableHead>
-              <TableBody>
-                {solve.objects.map((object) => {
-                  const title = object.common_name ?? object.primary_designation;
-                  const seen = new Set([title.toLocaleLowerCase()]);
-                  const otherDesignations = [object.primary_designation, ...object.other_names].filter(
-                    (name) => {
-                      const key = name.toLocaleLowerCase();
-                      if (seen.has(key)) return false;
-                      seen.add(key);
-                      return true;
-                    },
-                  );
-                  const typeName = DSO_TYPE_DISPLAY[object.obj_type] ?? object.obj_type;
-                  const selectObject = () => setSelectedId(object.dso_id);
-                  return (
-                    <TableRow
-                      hover
-                      key={object.dso_id}
-                      tabIndex={0}
-                      selected={selectedId === object.dso_id}
-                      onClick={selectObject}
-                      onKeyDown={(event) => {
-                        if (event.key === "Enter" || event.key === " ") {
-                          event.preventDefault();
-                          selectObject();
-                        }
-                      }}
-                      sx={{ cursor: "pointer" }}
-                    >
-                      <TableCell>
-                        <Typography sx={{ fontWeight: 500, fontSize: 13 }}>{title}</Typography>
-                        {otherDesignations.length > 0 && (
-                          <Typography color="text.secondary" sx={{ fontSize: 12 }}>
-                            {otherDesignations.join(", ")}
-                          </Typography>
-                        )}
-                      </TableCell>
-                      <TableCell sx={{ fontSize: 13 }}>{typeName}</TableCell>
-                      <TableCell align="right" sx={{ fontSize: 13, whiteSpace: "nowrap" }}>
-                        {objectSize(object.maj_axis_arcmin, object.min_axis_arcmin)}
-                      </TableCell>
-                      <TableCell
-                        align="center"
-                        onClick={(event) => event.stopPropagation()}
-                        onKeyDown={(event) => event.stopPropagation()}
-                      >
-                        <Checkbox
-                          size="small"
-                          checked={object.is_main}
-                          onChange={(event) =>
-                            mainMutation.mutate({
-                              dsoId: object.dso_id,
-                              isMain: event.target.checked,
-                            })
-                          }
-                          inputProps={{ "aria-label": `Main target: ${title}` }}
-                          sx={{ color: done, "&.Mui-checked": { color: done } }}
-                        />
-                      </TableCell>
-                    </TableRow>
-                  );
-                })}
-              </TableBody>
-            </Table>
-          </TableContainer>
-          <Typography color="text.secondary" sx={{ p: "9px 16px 14px", fontSize: 12.5 }}>
-            Search finds projects by their main targets or by any object found here.
-          </Typography>
-        </Box>
+      />
 
-        {solve.focal_length_estimates.length > 0 && (
-          <Box
-            sx={{
-              bgcolor: "background.paper",
-              border: 1,
-              borderColor: "divider",
-              borderRadius: "8px",
-              overflow: "hidden",
-            }}
-          >
-            <Typography component="h2" sx={{ p: "14px 16px 8px", fontSize: 15, fontWeight: 600 }}>
-              Focal length check
-            </Typography>
-            <TableContainer>
-              <Table
-                size="small"
-                aria-label="Focal length estimates"
-                sx={{ "& th": { whiteSpace: "nowrap" } }}
-              >
-                <TableHead>
-                  <TableRow>
-                    <TableCell>Setup</TableCell>
-                    <TableCell>Camera</TableCell>
-                    <TableCell align="right">Rig says</TableCell>
-                    <TableCell align="right">Image says</TableCell>
-                  </TableRow>
-                </TableHead>
-                <TableBody>
-                  {solve.focal_length_estimates.map((estimate) => (
-                    <TableRow key={`${estimate.rig_id}:${estimate.rig_setup_id ?? "now"}`}>
-                      <TableCell sx={{ fontSize: 13 }}>
-                        <Typography component="div" sx={{ fontSize: 13 }}>
-                          {estimate.rig_name}
-                        </Typography>
-                        <Typography component="div" color="text.secondary" sx={{ fontSize: 12 }}>
-                          {estimate.setup_until_at
-                            ? `until ${formatDay(estimate.setup_until_at)}`
-                            : "now"}
-                        </Typography>
-                      </TableCell>
-                      <TableCell sx={{ fontSize: 13 }}>
-                        <Typography component="div" sx={{ fontSize: 13 }}>
-                          {estimate.camera_name}
-                        </Typography>
-                        <Typography component="div" color="text.secondary" sx={{ fontSize: 12 }}>
-                          {formatPixelSize(estimate.pixel_size_um)} µm pixels
-                        </Typography>
-                      </TableCell>
-                      <TableCell align="right" sx={{ fontSize: 13, whiteSpace: "nowrap" }}>
-                        {formatFocalLength(estimate.rig_focal_length_mm)} mm
-                      </TableCell>
-                      <TableCell align="right" sx={{ fontSize: 13, whiteSpace: "nowrap" }}>
-                        ≈ {formatFocalLength(estimate.estimated_focal_length_mm)} mm
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </TableContainer>
-            <Typography color="text.secondary" sx={{ p: "9px 16px 14px", fontSize: 12 }}>
-              Assumes the image&apos;s pixels are the camera&apos;s own. Binning, drizzling or resizing
-              changes this estimate.
-            </Typography>
-          </Box>
-        )}
-      </Box>
-
-      {error && (
-        <Typography color="error" sx={{ fontSize: 13 }}>
-          {error}
-        </Typography>
-      )}
+      <Snackbar
+        open={error != null}
+        autoHideDuration={5000}
+        onClose={() => setError(null)}
+        message={error}
+      />
       {fileBrowser}
       <Dialog open={confirmDelete} onClose={() => setConfirmDelete(false)}>
         <DialogTitle>Remove saved solution?</DialogTitle>

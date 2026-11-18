@@ -11,7 +11,7 @@ const lan = process.env.NIGHTCRATE_LAN === "1";
 // browser warning, and Safari does not taint the canvas — pixel inspector
 // works). Fall back to the in-process basicSsl plugin (untrusted self-signed
 // cert) when no files are present.
-const CERT_DIR = path.resolve(__dirname, ".certs");
+const CERT_DIR = path.resolve(import.meta.dirname, ".certs");
 const CERT_PATH = path.join(CERT_DIR, "cert.pem");
 const KEY_PATH = path.join(CERT_DIR, "key.pem");
 const haveCerts = fs.existsSync(CERT_PATH) && fs.existsSync(KEY_PATH);
@@ -20,7 +20,7 @@ export default defineConfig({
   plugins: [react(), ...(lan && !haveCerts ? [basicSsl()] : [])],
   resolve: {
     alias: {
-      "@": path.resolve(__dirname, "./src"),
+      "@": path.resolve(import.meta.dirname, "./src"),
     },
   },
   server: {

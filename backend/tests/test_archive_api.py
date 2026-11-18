@@ -177,6 +177,25 @@ class TestArchiveImageEndpoints:
         assert len(data) >= 1
         assert data[0]["has_image"] is True
 
+    async def test_extensions_reports_mosaic_colour(self, client: AsyncClient, tmp_path: Path):
+        """The extension colour probe reopens an archive-backed FITS stream."""
+        hdu = fits.PrimaryHDU(np.arange(48, dtype=np.uint16).reshape(6, 8))
+        hdu.header["BAYERPAT"] = "RGGB"
+        hdu.header["ROWORDER"] = "TOP-DOWN"
+        source = tmp_path / "mosaic.fits"
+        hdu.writeto(source)
+        archive = tmp_path / "mosaic.zip"
+        with zipfile.ZipFile(archive, "w") as output:
+            output.writestr("lights/mosaic.fits", source.read_bytes())
+
+        response = await client.get(
+            "/api/images/extensions",
+            params={"path": f"{archive}::lights/mosaic.fits"},
+        )
+
+        assert response.status_code == 200
+        assert response.json()[0]["colour"]["kind"] == "mosaic"
+
     async def test_stats(self, client: AsyncClient, tmp_zip_with_fits: Path):
         """Archive virtual path returns channel stats."""
         virtual = f"{tmp_zip_with_fits}::lights/Ha/frame001.fits"

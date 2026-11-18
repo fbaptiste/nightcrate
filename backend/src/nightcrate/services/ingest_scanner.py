@@ -13,6 +13,7 @@ The ingest API (``api/ingest.py``) drives both and owns all DB writes.
 
 from __future__ import annotations
 
+import io
 import logging
 from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass, field
@@ -229,7 +230,6 @@ def parse_image_file(path_str: str) -> dict:
     """
     # Imports are inside the worker so the spawned process resolves them cleanly.
     from nightcrate.catalog_loader.hash import file_sha256
-    from nightcrate.services.fits_header_map import extract_metadata
     from nightcrate.services.path_resolver import file_type
 
     if "::" in path_str:
@@ -238,14 +238,7 @@ def parse_image_file(path_str: str) -> dict:
     path = Path(path_str)
     try:
         ftype = file_type(path)
-        if ftype == "xisf":
-            from nightcrate.services.xisf_io import read_header
-        else:
-            from nightcrate.services.fits_io import read_header
-
-        cards = read_header(path)
-        raw_header = {c["key"]: c["value"] for c in cards if c.get("key")}
-        meta = extract_metadata(raw_header)
+        meta, raw_header, file_metadata = _read_image_metadata(path, ftype)
         content_hash = file_sha256(path)
         if ftype == "xisf":
             from nightcrate.services import xisf_io
@@ -255,26 +248,34 @@ def parse_image_file(path_str: str) -> dict:
         stat = path.stat()
         return {
             "path": path_str,
+            "file_type": ftype,
             "content_hash": content_hash,
             "size_bytes": stat.st_size,
             "mtime": _iso_mtime(stat.st_mtime),
             "meta": meta,
             "raw_header": raw_header,
+            "file_metadata": file_metadata,
             "error": None,
         }
     except Exception as exc:  # noqa: BLE001 - any parse failure is a recorded error, not fatal
+        from nightcrate.services.raw_io import RawUnsupported
+        from nightcrate.services.raw_support import RawUnavailable
         from nightcrate.services.xisf_io import (
             XISFChecksumError,
             XISFError,
             XISFUnavailableError,
         )
 
-        message = str(exc) if isinstance(exc, XISFError) else f"{type(exc).__name__}: {exc}"
+        message = (
+            str(exc)
+            if isinstance(exc, (XISFError, RawUnsupported, RawUnavailable))
+            else f"{type(exc).__name__}: {exc}"
+        )
         reason = (
             "damaged"
             if isinstance(exc, XISFChecksumError)
             else "unsupported"
-            if isinstance(exc, XISFUnavailableError)
+            if isinstance(exc, (XISFUnavailableError, RawUnsupported, RawUnavailable))
             else "unreadable"
         )
         return {"path": path_str, "error": message, "reason": reason}
@@ -288,10 +289,8 @@ def _parse_archive_entry(path_str: str) -> dict:
     so a single buffer cannot serve both consumers.
     """
     import hashlib
-    import io
 
     from nightcrate.services.archive_io import extract_entry
-    from nightcrate.services.fits_header_map import extract_metadata
     from nightcrate.services.path_resolver import file_type
 
     archive_str, entry = path_str.rsplit("::", 1)
@@ -299,13 +298,7 @@ def _parse_archive_entry(path_str: str) -> dict:
     try:
         raw = extract_entry(archive, entry).getvalue()
         ftype = file_type(Path(entry))
-        if ftype == "xisf":
-            from nightcrate.services.xisf_io import read_header
-        else:
-            from nightcrate.services.fits_io import read_header
-
-        cards = read_header(io.BytesIO(raw))
-        raw_header = {c["key"]: c["value"] for c in cards if c.get("key")}
+        meta, raw_header, file_metadata = _read_image_metadata(io.BytesIO(raw), ftype)
         if ftype == "xisf":
             from nightcrate.services import xisf_io
 
@@ -313,29 +306,107 @@ def _parse_archive_entry(path_str: str) -> dict:
                 xisf_io.verify_image(io.BytesIO(raw), index)
         return {
             "path": path_str,
+            "file_type": ftype,
             "content_hash": hashlib.sha256(raw).hexdigest(),
             "size_bytes": len(raw),
             "mtime": _iso_mtime(archive.stat().st_mtime),
-            "meta": extract_metadata(raw_header),
+            "meta": meta,
             "raw_header": raw_header,
+            "file_metadata": file_metadata,
             "error": None,
         }
     except Exception as exc:  # noqa: BLE001 - a bad entry is a recorded error, not fatal
+        from nightcrate.services.raw_io import RawUnsupported
+        from nightcrate.services.raw_support import RawUnavailable
         from nightcrate.services.xisf_io import (
             XISFChecksumError,
             XISFError,
             XISFUnavailableError,
         )
 
-        message = str(exc) if isinstance(exc, XISFError) else f"{type(exc).__name__}: {exc}"
+        message = (
+            str(exc)
+            if isinstance(exc, (XISFError, RawUnsupported, RawUnavailable))
+            else f"{type(exc).__name__}: {exc}"
+        )
         reason = (
             "damaged"
             if isinstance(exc, XISFChecksumError)
             else "unsupported"
-            if isinstance(exc, XISFUnavailableError)
+            if isinstance(exc, (XISFUnavailableError, RawUnsupported, RawUnavailable))
             else "unreadable"
         )
         return {"path": path_str, "error": message, "reason": reason}
+
+
+def _read_image_metadata(source, ftype: str) -> tuple[dict, dict, dict | None]:
+    """Read one supported image's scan metadata without applying image processing."""
+    from nightcrate.services.fits_header_map import extract_metadata
+
+    if ftype == "raw":
+        from nightcrate.services.raw_io import read_raw_layout, read_raw_metadata
+
+        if isinstance(source, Path):
+            raw_source = source
+        else:
+            source.seek(0)
+            raw_source = io.BytesIO(source.read())
+        metadata = read_raw_metadata(raw_source)
+        layout = read_raw_layout(raw_source)
+        offset_minutes = (
+            int(metadata.utc_offset.total_seconds() // 60)
+            if metadata.utc_offset is not None
+            else None
+        )
+        file_metadata = {
+            "make": metadata.make,
+            "model": metadata.model,
+            "body_serial": metadata.body_serial,
+            "lens": metadata.lens,
+            "lens_serial": metadata.lens_serial,
+            "focal_length_mm": metadata.focal_length_mm,
+            "orientation": metadata.orientation,
+            "compression": metadata.compression,
+            "black_levels": layout.black_levels,
+            "white_level": layout.white_level,
+            "visible": layout.visible,
+            "pattern": layout.pattern.pattern.rows if layout.pattern is not None else None,
+            "metadata_cards": metadata.cards,
+        }
+        return (
+            {
+                "exposure_time": metadata.exposure_s,
+                "sensor_temp": metadata.sensor_temp_c,
+                "gain": None,
+                "iso": metadata.iso,
+                "camera_temp": metadata.camera_temp_c,
+                "captured_local": (
+                    metadata.captured_local.isoformat() if metadata.captured_local else None
+                ),
+                "utc_offset_minutes": offset_minutes,
+                "time_source": metadata.time_source,
+                "image_width": layout.visible[2],
+                "image_height": layout.visible[3],
+            },
+            {},
+            file_metadata,
+        )
+
+    if ftype == "xisf":
+        from nightcrate.services import xisf_io
+
+        cards = xisf_io.read_header(source)
+        raw_header = {card["key"]: card["value"] for card in cards if card.get("key")}
+        storage = xisf_io.image_storage_metadata(source)
+        raw_header["XISF:SAMPLEFORMAT"] = storage["sample_format"]
+        raw_header["XISF:BOUNDS"] = storage["bounds"]
+        return extract_metadata(raw_header), raw_header, None
+
+    from nightcrate.services.fits_io import read_header
+
+    cards = read_header(source)
+    raw_header = {card["key"]: card["value"] for card in cards if card.get("key")}
+    return extract_metadata(raw_header), raw_header, None
 
 
 # ── ProcessPool ──────────────────────────────────────────────────────────────
@@ -360,5 +431,5 @@ def make_pool(n_workers: int) -> ProcessPoolExecutor:
 
 
 def header_bearing(entries: list[ScanEntry]) -> list[ScanEntry]:
-    """The subset of scan entries that should be header-parsed (FITS/XISF)."""
+    """The subset of scan entries that should be parsed (FITS/XISF/camera raw)."""
     return [e for e in entries if e.category == CATEGORY_SUB]

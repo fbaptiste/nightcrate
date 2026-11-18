@@ -3,6 +3,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from nightcrate.core.updates_state import LatestApp, UpdatesState
+from nightcrate.services import update_notices
 from nightcrate.services.update_notices import (
     CatalogInstall,
     compute_notices,
@@ -71,6 +72,53 @@ def test_platform_skip_version_mismatch_and_source_rules():
         )
         == []
     )
+
+
+def test_update_not_installable_below_min_os(monkeypatch):
+    monkeypatch.setattr(update_notices.platform, "mac_ver", lambda: ("13.6.9", ("", "", ""), ""))
+    latest = _state().latest_app.model_copy(update={"min_os": {"darwin-aarch64": "14.0"}})
+    notice = _notices(_state(latest_app=latest), kind="installed", platform="darwin-aarch64")[0]
+    assert notice.installable is False
+    assert notice.install_blocked == "This update needs macOS 14 or later."
+
+
+@pytest.mark.parametrize("running", ["", "unknown"])
+def test_update_not_installable_when_running_macos_is_unreadable(monkeypatch, running):
+    monkeypatch.setattr(update_notices.platform, "mac_ver", lambda: (running, ("", "", ""), ""))
+    latest = _state().latest_app.model_copy(update={"min_os": {"darwin-aarch64": "14.0"}})
+
+    notice = _notices(_state(latest_app=latest), kind="installed", platform="darwin-aarch64")[0]
+
+    assert notice.installable is False
+    assert notice.install_blocked == "This update needs macOS 14 or later."
+
+
+def test_update_not_installable_when_min_os_is_invalid(monkeypatch):
+    monkeypatch.setattr(update_notices.platform, "mac_ver", lambda: ("15.0", ("", "", ""), ""))
+    latest = _state().latest_app.model_copy(update={"min_os": {"darwin-aarch64": "unknown"}})
+
+    notice = _notices(_state(latest_app=latest), kind="installed", platform="darwin-aarch64")[0]
+
+    assert notice.installable is False
+    assert notice.install_blocked == (
+        "This update can't be checked against this Mac's system version."
+    )
+
+
+@pytest.mark.parametrize("running", ["14.0", "14.0.1", "15.0"])
+def test_update_installable_at_or_above_min_os(monkeypatch, running):
+    monkeypatch.setattr(update_notices.platform, "mac_ver", lambda: (running, ("", "", ""), ""))
+    latest = _state().latest_app.model_copy(update={"min_os": {"darwin-aarch64": "14.0"}})
+    notice = _notices(_state(latest_app=latest), kind="installed", platform="darwin-aarch64")[0]
+    assert notice.installable is True
+    assert notice.install_blocked is None
+
+
+def test_min_os_absent_is_installable(monkeypatch):
+    monkeypatch.setattr(update_notices.platform, "mac_ver", lambda: ("13.6.9", ("", "", ""), ""))
+    notice = _notices(_state(), kind="installed", platform="darwin-aarch64")[0]
+    assert notice.installable is True
+    assert notice.install_blocked is None
 
 
 def test_later_skip_newer_version_and_release_mismatch():

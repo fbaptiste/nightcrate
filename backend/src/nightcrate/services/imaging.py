@@ -5,12 +5,16 @@ All functions accept normalized [0, 1] float64 arrays — no knowledge of FITS, 
 
 import io
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
 import bottleneck as bn
 import numpy as np
 from PIL import Image
 
 from nightcrate.core.compute import get_array_module
+
+if TYPE_CHECKING:
+    from nightcrate.services.pixel_loader import LoadedImage
 
 # ── STF constants (matches PixInsight AutoSTF defaults) ──────────────────────
 
@@ -88,6 +92,7 @@ class StfParams:
 class ChannelStats:
     min: float
     max: float
+    mean: float
     median: float
     mad: float
     avg_dev: float
@@ -98,6 +103,8 @@ class ChannelStats:
 @dataclass
 class ImageStats:
     color: bool
+    units: str = "float"
+    full_scale: float | None = 1.0
     channels: list[ChannelStats] = field(default_factory=list)
     linked_stf: StfParams | None = None
     background_delta: list[float] | None = None  # per-channel deviation from mean median
@@ -142,21 +149,26 @@ def _compute_stf(median: float, avg_dev: float) -> StfParams:
     return StfParams(shadow=c0, midtone=m, highlight=1.0)
 
 
-def _channel_stats(plane: np.ndarray) -> ChannelStats:
-    """Compute statistics for a single [0, 1]-normalized channel.
+def _channel_stats(plane: np.ndarray, normalised: np.ndarray | None = None) -> ChannelStats:
+    """Compute recorded-unit levels and a normalized STF for one channel.
 
     Uses GPU (mlx/cupy) when available for median and deviation computation.
     """
+    normalised = plane if normalised is None else normalised
     xp = get_array_module()
     if xp is not np:
-        # GPU path: convert to GPU array, compute stats, extract scalars
+        # GPU path: convert to GPU arrays, compute stats, extract scalars.
         gpu = xp.array(plane)
         med = float(xp.median(gpu).item())
         deviations = xp.abs(gpu - med)
         mad = float(xp.median(deviations).item())
         avg_dev = float(xp.mean(deviations).item())
+        mean = float(xp.mean(gpu).item())
         vmin = float(xp.min(gpu).item())
         vmax = float(xp.max(gpu).item())
+        normal_gpu = xp.array(normalised)
+        normal_med = float(xp.median(normal_gpu).item())
+        normal_avg_dev = float(xp.mean(xp.abs(normal_gpu - normal_med)).item())
     else:
         # CPU path: bottleneck for fast median
         flat = plane.ravel()
@@ -164,19 +176,114 @@ def _channel_stats(plane: np.ndarray) -> ChannelStats:
         deviations = np.abs(flat - med)
         mad = float(bn.nanmedian(deviations))
         avg_dev = float(np.mean(deviations))
+        mean = float(np.mean(flat))
         vmin = float(flat.min())
         vmax = float(flat.max())
+        normal_flat = normalised.ravel()
+        normal_med = float(bn.nanmedian(normal_flat))
+        normal_avg_dev = float(np.mean(np.abs(normal_flat - normal_med)))
     sigma = mad * 1.4826
     snr = med / sigma if sigma > 0 else 0.0
-    stf = _compute_stf(med, avg_dev)
+    stf = _compute_stf(normal_med, normal_avg_dev)
     return ChannelStats(
         min=vmin,
         max=vmax,
+        mean=mean,
         median=med,
         mad=mad,
         avg_dev=avg_dev,
         snr=snr,
         stf=stf,
+    )
+
+
+def _image_stats(
+    recorded_channels: list[np.ndarray],
+    normalised_channels: list[np.ndarray],
+    *,
+    units: str,
+    full_scale: float | None,
+) -> ImageStats:
+    """Build image statistics from aligned recorded and normalized channels."""
+    channels = [
+        _channel_stats(recorded, normalised)
+        for recorded, normalised in zip(recorded_channels, normalised_channels, strict=True)
+    ]
+    if len(channels) == 1:
+        flat = normalised_channels[0].ravel()
+        mrf = float(np.count_nonzero((flat >= 0.1) & (flat <= 0.9)) / max(flat.size, 1))
+        return ImageStats(
+            color=False,
+            units=units,
+            full_scale=full_scale,
+            channels=channels,
+            mid_range_fraction=mrf,
+        )
+
+    n = len(channels)
+    normal_medians = [float(bn.nanmedian(channel.ravel())) for channel in normalised_channels]
+    normal_avg_devs = [
+        float(np.mean(np.abs(channel.ravel() - median)))
+        for channel, median in zip(normalised_channels, normal_medians, strict=True)
+    ]
+    avg_c0 = (
+        sum(
+            median + STF_SHADOWS_CLIP * avg_dev
+            for median, avg_dev in zip(normal_medians, normal_avg_devs, strict=True)
+        )
+        / n
+    )
+    avg_c0 = max(0.0, min(avg_c0, 1.0))
+    avg_median = float(np.mean(normal_medians))
+    b0 = avg_median - avg_c0
+    if b0 <= 0.0:
+        midtone = 0.0
+    elif b0 >= 1.0:
+        midtone = 0.5
+    else:
+        midtone = _mtf_scalar(b0, STF_TARGET_BG)
+
+    linked_stf = StfParams(shadow=avg_c0, midtone=midtone, highlight=1.0)
+    recorded_mean_median = float(np.mean([channel.median for channel in channels]))
+    background_delta = [channel.median - recorded_mean_median for channel in channels]
+    aligned = all(channel.shape == normalised_channels[0].shape for channel in normalised_channels)
+    if aligned:
+        normalised_stack = np.stack(normalised_channels)
+        lab_a_median = _compute_lab_a_median(normalised_stack) if n == 3 else None
+        lum_flat = sum(
+            normalised_stack[index] * weight
+            for index, weight in enumerate([LUM_R, LUM_G, LUM_B][:n])
+        ).ravel()
+    else:
+        # Mosaic site arrays have different lengths (two green sites in a Bayer
+        # block). They still provide exact channel levels, but not aligned RGB
+        # pixels from which a Lab balance or luminance can honestly be derived.
+        lab_a_median = None
+        lum_flat = np.concatenate([channel.ravel() for channel in normalised_channels])
+    mrf = float(np.count_nonzero((lum_flat >= 0.1) & (lum_flat <= 0.9)) / max(lum_flat.size, 1))
+    return ImageStats(
+        color=True,
+        units=units,
+        full_scale=full_scale,
+        channels=channels,
+        linked_stf=linked_stf,
+        background_delta=background_delta,
+        lab_a_median=lab_a_median,
+        mid_range_fraction=mrf,
+    )
+
+
+def compute_channel_stats(samples: dict[str, np.ndarray], img: LoadedImage) -> ImageStats:
+    """Statistics for real channel samples, with levels in recorded units."""
+    recorded = [np.asarray(values) for values in samples.values()]
+    # STF and linearity decisions are display inputs. Recorded levels above
+    # remain untouched, while excursions outside the display gamut are clipped.
+    normalised = [img.display_normalise(values) for values in recorded]
+    return _image_stats(
+        recorded,
+        normalised,
+        units=img.units,
+        full_scale=img.full_scale,
     )
 
 
@@ -188,51 +295,8 @@ def compute_image_stats(data: np.ndarray) -> ImageStats:
     For color images, the linked STF averages c0 and median across all channels
     before computing a single set of parameters (matching PixInsight's linked mode).
     """
-    if data.ndim == 2:
-        flat = data.ravel()
-        mrf = float(np.count_nonzero((flat >= 0.1) & (flat <= 0.9)) / max(flat.size, 1))
-        return ImageStats(color=False, channels=[_channel_stats(data)], mid_range_fraction=mrf)
-
-    n = data.shape[0]
-    channels = [_channel_stats(data[i]) for i in range(n)]
-
-    # Linked mode: average shadow clip and median across channels
-    avg_c0 = 0.0
-    avg_median = 0.0
-    for ch in channels:
-        avg_c0 += ch.median + STF_SHADOWS_CLIP * ch.avg_dev
-        avg_median += ch.median
-    avg_c0 = max(0.0, min(avg_c0 / n, 1.0))
-    avg_median /= n
-
-    b0 = avg_median - avg_c0
-    if b0 <= 0.0:
-        m = 0.0
-    elif b0 >= 1.0:
-        m = 0.5
-    else:
-        m = _mtf_scalar(b0, STF_TARGET_BG)
-
-    linked_stf = StfParams(shadow=avg_c0, midtone=m, highlight=1.0)
-
-    # Per-channel background deviation from mean median
-    background_delta = [(ch.median - avg_median) for ch in channels]
-
-    # CIE L*a*b* a* median — color balance diagnostic
-    lab_a_median = _compute_lab_a_median(data) if n == 3 else None
-
-    lum = sum(data[i] * w for i, w in enumerate([LUM_R, LUM_G, LUM_B][:n]))
-    lum_flat = lum.ravel()
-    mrf = float(np.count_nonzero((lum_flat >= 0.1) & (lum_flat <= 0.9)) / max(lum_flat.size, 1))
-
-    return ImageStats(
-        color=True,
-        channels=channels,
-        linked_stf=linked_stf,
-        background_delta=background_delta,
-        lab_a_median=lab_a_median,
-        mid_range_fraction=mrf,
-    )
+    channels = [data] if data.ndim == 2 else [data[index] for index in range(data.shape[0])]
+    return _image_stats(channels, channels, units="float", full_scale=1.0)
 
 
 def _compute_lab_a_median(rgb_data: np.ndarray) -> float:
